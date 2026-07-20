@@ -60,6 +60,8 @@ GATED_ENDPOINTS = [
 	("jarvis.chat.user_settings_api", "admin_list_user_usage", {}),
 	("jarvis.chat.user_settings_api", "admin_set_user_limit",
 		{"user": "Administrator", "monthly_token_limit": 0}),
+	("jarvis.chat.user_settings_api", "admin_set_user_model_limit",
+		{"user": "Administrator", "model": "gpt-4o", "monthly_token_limit": 0}),
 	("jarvis.chat.user_settings_api", "admin_sync_usage", {}),
 	# Owner-level theme setter — gated by require_jarvis_access (writes the
 	# caller's own User.desk_theme). A Guest (no Jarvis access) must be refused.

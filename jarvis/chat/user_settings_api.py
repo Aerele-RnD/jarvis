@@ -32,6 +32,32 @@ def _month_tokens_effective(usage_month: str | None, month_tokens) -> int:
 	return int(month_tokens or 0)
 
 
+def _per_model_rows(user: str) -> list[dict]:
+	"""Current-month per-model usage + caps for ``user`` (fleet spec §7). Empty
+	list when no rows. Ordered by usage descending for a stable UI."""
+	rows = frappe.get_all(
+		usage.MODEL_USAGE,
+		filters={
+			"parent": user, "parenttype": USER_SETTINGS,
+			"parentfield": usage.MODEL_USAGE_FIELD, "month_key": usage.current_month_key(),
+		},
+		fields=["model", "month_input_tokens", "month_output_tokens", "monthly_token_limit"],
+		order_by="month_input_tokens desc",
+	)
+	out = []
+	for r in rows:
+		mi = int(r.month_input_tokens or 0)
+		mo = int(r.month_output_tokens or 0)
+		out.append({
+			"model": r.model,
+			"month_input_tokens": mi,
+			"month_output_tokens": mo,
+			"month_tokens": mi + mo,
+			"monthly_token_limit": int(r.monthly_token_limit or 0),
+		})
+	return out
+
+
 def _settings_payload(doc) -> dict:
 	"""Owner-facing view of a settings doc: prefs + own usage + limit."""
 	return {
@@ -46,6 +72,7 @@ def _settings_payload(doc) -> dict:
 		"total_tokens": cint(doc.total_tokens),
 		"last_usage_at": doc.last_usage_at,
 		"last_synced_at": doc.last_synced_at,
+		"per_model": _per_model_rows(doc.user),
 	}
 
 
@@ -116,6 +143,7 @@ def admin_list_user_usage() -> dict:
 			"total_tokens": cint(r.total_tokens),
 			"last_usage_at": r.last_usage_at,
 			"last_synced_at": r.last_synced_at,
+			"per_model": _per_model_rows(r.user),
 		})
 	return {"ok": True, "data": out}
 
@@ -136,6 +164,25 @@ def admin_set_user_limit(user: str, monthly_token_limit: int = 0) -> dict:
 	)
 	frappe.db.commit()
 	return {"ok": True, "data": {"user": user, "monthly_token_limit": limit}}
+
+
+@frappe.whitelist()
+def admin_set_user_model_limit(
+	user: str, model: str, monthly_token_limit: int = 0
+) -> dict:
+	"""Set a user's PER-MODEL monthly token cap (0 = unlimited), creating the
+	settings row + current-month child row if absent. Mirrors admin_set_user_limit.
+	Admins only (server re-checks; the SPA gate is UX)."""
+	require_jarvis_admin()
+	if not user or not frappe.db.exists("User", user):
+		return {"ok": False, "reason": "unknown_user"}
+	model = (model or "").strip()
+	if not model:
+		return {"ok": False, "reason": "invalid_model"}
+	limit = max(0, cint(monthly_token_limit))
+	usage.get_or_create_user_settings(user)
+	usage.set_model_limit(user, model, limit)
+	return {"ok": True, "data": {"user": user, "model": model, "monthly_token_limit": limit}}
 
 
 @frappe.whitelist()

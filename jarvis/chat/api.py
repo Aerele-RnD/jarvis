@@ -1284,6 +1284,7 @@ def _measured_usage(user: str) -> dict | None:
 		"monthly_token_limit": 0,
 		"usage_month": None,
 		"last_usage_at": None,
+		"per_model": [],
 	}
 	row = frappe.db.get_value(
 		"Jarvis User Settings",
@@ -1308,6 +1309,24 @@ def _measured_usage(user: str) -> dict | None:
 		"usage_month": row.usage_month,
 		"last_usage_at": row.last_usage_at,
 	})
+	measured["per_model"] = [
+		{
+			"model": r.model,
+			"month_input_tokens": int(r.month_input_tokens or 0),
+			"month_output_tokens": int(r.month_output_tokens or 0),
+			"month_tokens": int(r.month_input_tokens or 0) + int(r.month_output_tokens or 0),
+			"monthly_token_limit": int(r.monthly_token_limit or 0),
+		}
+		for r in frappe.get_all(
+			"Jarvis User Model Usage",
+			filters={
+				"parent": user, "parenttype": "Jarvis User Settings",
+				"parentfield": "user_model_usage", "month_key": _usage_month_key(),
+			},
+			fields=["model", "month_input_tokens", "month_output_tokens", "monthly_token_limit"],
+			order_by="month_input_tokens desc",
+		)
+	]
 	return measured
 
 
