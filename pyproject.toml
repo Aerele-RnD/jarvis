@@ -83,11 +83,9 @@ ignore = [
     # F841 can be hiding a real bug). Ignored HERE so the rule stays enforced
     # for every other rule and all new code, rather than left un-run.
     # Burn these down file-by-file; delete each line as it hits zero.
+    # Cleared 2026-07-20: B905 (4), F841 (11), RUF007 (2) - the behavioural ones.
     "B007",   # loop control variable not used in the body            (4)
-    "B905",   # zip() without explicit strict=  - BEHAVIOURAL         (4)
-    "F841",   # local variable assigned but never used - may be a bug (11)
     "RUF005", # prefer iterable unpacking over concatenation          (3)
-    "RUF007", # prefer itertools.pairwise over zip                    (2)
     "RUF012", # mutable class default needs ClassVar - may be a bug   (8)
     "RUF013", # implicit Optional in a type annotation                (1)
     "RUF015", # unnecessary allocation to grab the first element      (5)

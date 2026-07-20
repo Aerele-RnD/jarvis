@@ -366,7 +366,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 	# (d) catalog sync idempotency
 	# ------------------------------------------------------------------ #
 	def test_sync_agent_listings_idempotent(self):
-		r1 = agent_catalog.sync_agent_listings()
+		agent_catalog.sync_agent_listings()
 		count1 = frappe.db.count(LISTING)
 		r2 = agent_catalog.sync_agent_listings()
 		count2 = frappe.db.count(LISTING)

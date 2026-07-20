@@ -341,7 +341,11 @@ def _batch_create_card(args: dict, would) -> dict | None:
 	records = []
 	# zip, never filter-then-index: filtering non-dicts out of `created` first would
 	# pair docs[i] with the WRONG created entry from the first bad row onwards.
-	for made, req in list(zip(created, docs))[:_MAX_ROWS]:
+	# strict=False is the DELIBERATE choice: unequal lengths only happen for a
+	# direct caller or a stale preview, and the card must degrade to a partial
+	# render rather than raise (build_card is best-effort; a raise costs the
+	# whole card). Through the gate the lists are always equal and aligned.
+	for made, req in list(zip(created, docs, strict=False))[:_MAX_ROWS]:
 		if not isinstance(made, dict) or not isinstance(req, dict):
 			continue
 		doctype = req.get("doctype") or made.get("doctype")

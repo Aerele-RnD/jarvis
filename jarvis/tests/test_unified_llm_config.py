@@ -1611,6 +1611,10 @@ class TestRT5OnboardingWritesModelsRow(_RT3SettingsTestCase):
 		# Pre-condition: no models rows.
 		settings = frappe.get_single("Jarvis Settings")
 		initial_count = len(settings.get("models") or [])
+		# The comment above states this pre-condition; assert it rather than
+		# assume it - if rows already existed the assertions below could pass
+		# for the wrong reason.
+		self.assertEqual(initial_count, 0)
 
 		with patch("jarvis.admin_client.post_update_llm_creds", return_value={"action": "restart"}):
 			from jarvis import onboarding
@@ -1891,9 +1895,7 @@ class TestFT1MigrationPatch(_RT3SettingsTestCase):
 		)
 
 		with (
-			mock_patch(
-				"jarvis.admin_client.post_update_llm_creds", return_value={"action": "restart"}
-			) as mock_creds,
+			mock_patch("jarvis.admin_client.post_update_llm_creds", return_value={"action": "restart"}),
 			mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
 		):
 			import importlib
@@ -1969,8 +1971,6 @@ class TestFT1MigrationPatch(_RT3SettingsTestCase):
 		)
 
 		enqueued_calls = []
-
-		original_enqueue = frappe.enqueue
 
 		def capture_enqueue(*args, **kwargs):
 			# Capture any enqueue calls

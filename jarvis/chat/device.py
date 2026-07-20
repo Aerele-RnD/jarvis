@@ -146,7 +146,7 @@ def _generate_and_pair_under_lock() -> ChatDeviceCredentials:
 		"chat_device_initial_pair",
 		timeout_s=60,
 		blocking_timeout_s=30.0,
-	) as acquired:
+	) as _acquired:  # deliberately unchecked - see below
 		# Re-check inside the lock window. The winner of a contended cold-
 		# start has already populated Jarvis Settings; followers read those
 		# creds and return without a second pair_chat_device round-trip.

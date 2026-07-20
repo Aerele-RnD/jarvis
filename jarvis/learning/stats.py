@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import math
+from itertools import pairwise
 
 # Strength bands on the Wilson LOWER bound, not raw k/n (plan section 4.1).
 BAND_HIGH = 0.90
@@ -273,7 +274,7 @@ def collapse_bursts(timestamps, max_gap_s: int = 1) -> int:
 	if not ts:
 		return 0
 	units = 1
-	for prev, cur in zip(ts, ts[1:]):
+	for prev, cur in pairwise(ts):
 		if (cur - prev).total_seconds() > max_gap_s:
 			units += 1
 	return units
