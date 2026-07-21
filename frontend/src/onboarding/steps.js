@@ -30,6 +30,19 @@ export function isOnboardComplete(readyResp) {
 	return !!(readyResp && readyResp.ready);
 }
 
+// Used when an older admin sends the Suspended state without a reason string.
+export const SUSPENDED_FALLBACK =
+	"Your subscription is no longer active. Renew to restore access to Jarvis.";
+
+// The renew-banner sentence, or null when not suspended. Kept out of
+// NOT_ONBOARDED_REASONS on purpose: the workspace is set up, not un-onboarded,
+// so it renders normally with a banner rather than the setup poster.
+export function suspensionNotice(readyResp) {
+	if (!readyResp || readyResp.ready) return null;
+	if (readyResp.reason !== "subscription_suspended") return null;
+	return readyResp.detail || SUSPENDED_FALLBACK;
+}
+
 // Branch decision for the "I've verified my email" poll. Admin's
 // get_signup_payment_state (jarvis_admin_v2/billing/signup.py) returns one of
 // THREE shapes: still-pending, paid-plan order handles, or the free/trial

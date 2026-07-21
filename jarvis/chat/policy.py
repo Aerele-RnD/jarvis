@@ -8,7 +8,8 @@ this module's contract.
 
 Returns (True, None) on success or (False, reason: str) on rejection. The
 reason is a machine code the SPA maps to a human toast; the enforcement
-rejection uses reason ``"usage_limit"``.
+rejection uses reason ``"usage_limit"`` and the billing one
+``"subscription_suspended"``.
 """
 
 from __future__ import annotations
@@ -23,7 +24,25 @@ def validate_can_send(user: str) -> tuple[bool, str | None]:
 		return False, "Guest users cannot use Jarvis chat"
 	if _over_monthly_limit(user):
 		return False, "usage_limit"
+	if _subscription_suspended():
+		return False, "subscription_suspended"
 	return True, None
+
+
+def _subscription_suspended() -> bool:
+	"""True iff admin reports the subscription no longer entitles chat. Reuses
+	_admin_chat_gate's cache; fails OPEN (a control-plane hiccup must never block
+	a paying customer, and self-host has no admin)."""
+	try:
+		from jarvis.account import _admin_chat_gate
+
+		return _admin_chat_gate().get("reason") == "subscription_suspended"
+	except Exception:
+		frappe.log_error(
+			title="jarvis policy: entitlement check failed (allowing send)",
+			message=frappe.get_traceback(),
+		)
+		return False
 
 
 def _over_monthly_limit(user: str) -> bool:

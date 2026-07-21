@@ -10,6 +10,8 @@ import {
 	planSuffix,
 	cancelActionLabel,
 	cancellationNotice,
+	shortDate,
+	cancelPillLabel,
 } from "./format.js";
 
 test("statusLabel: maps known states, passes through unknown", () => {
@@ -84,4 +86,18 @@ test("cancellationNotice: names the end date, degrades without one", () => {
 	);
 	assert.match(cancellationNotice(""), /keep full access until then/);
 	assert.match(cancellationNotice(null), /keep full access until then/);
+});
+
+test("shortDate: D MMM, degrades on junk", () => {
+	assert.equal(shortDate("2026-08-21 12:56:09"), "21 Aug");
+	assert.equal(shortDate("2026-01-05"), "5 Jan");
+	assert.equal(shortDate(""), "");
+	assert.equal(shortDate(null), "");
+	assert.equal(shortDate("not-a-date"), "");
+});
+
+test("cancelPillLabel: glanceable end date, not the ambiguous 'Cancelling'", () => {
+	assert.equal(cancelPillLabel("2026-08-21 12:56:09"), "Ends 21 Aug");
+	assert.equal(cancelPillLabel(""), "Ending");
+	assert.equal(cancelPillLabel(null), "Ending");
 });

@@ -18,10 +18,11 @@ from jarvis import admin_client
 from jarvis.onboarding import _surface
 from jarvis.permissions import require_jarvis_admin
 
-# R2-H4 client-side chat-readiness gate. The positive verdict is cached briefly
-# so a boot / SPA-load storm doesn't pay an admin round-trip on every hit.
+# R2-H4 chat-readiness gate, shared by boot, is_ready_for_chat and the send
+# entitlement check. Only "Ready" is cached, so suspension/renewal is still seen
+# promptly; 2 min keeps active-chat admin calls to ~1 per burst.
 _CHAT_GATE_CACHE_KEY = "jarvis:chat_readiness_gate"
-_CHAT_GATE_CACHE_TTL_S = 30
+_CHAT_GATE_CACHE_TTL_S = 120
 
 
 def _admin_chat_gate() -> dict:
@@ -31,9 +32,12 @@ def _admin_chat_gate() -> dict:
 	Called only AFTER the local signup + LLM-credential checks have passed, at
 	the managed ready-exits of ``is_ready_for_chat`` — it is the final gate.
 
-	Returns ``{"ready": True, "reason": None}`` UNLESS the admin is reachable AND
-	reports a ``chat_readiness`` that is PRESENT and != ``"Ready"``, in which case
-	``{"ready": False, "reason": "container_provisioning"}``.
+	Returns ``{"ready": True, "reason": None}`` UNLESS admin is reachable AND
+	reports a ``chat_readiness`` != ``"Ready"``, in which case
+	``{"ready": False, "reason": <code>, "detail": <admin's sentence>}``. The
+	code is ``"subscription_suspended"`` for ``Suspended`` (renew) and
+	``"container_provisioning"`` otherwise (wait) - kept distinct so a suspended
+	customer isn't told to wait for a container that won't come back.
 
 	- v1-tolerance: an ABSENT ``chat_readiness`` key (v1 admin, or a v2 that
 	  doesn't surface it) means the control plane has no opinion → allow.
@@ -51,7 +55,15 @@ def _admin_chat_gate() -> dict:
 		# Fail open on ANY admin error; deliberately no negative cache.
 		return {"ready": True, "reason": None}
 	if "chat_readiness" in conn and conn["chat_readiness"] != "Ready":
-		return {"ready": False, "reason": "container_provisioning"}
+		suspended = conn["chat_readiness"] == "Suspended"
+		return {
+			"ready": False,
+			"reason": "subscription_suspended" if suspended else "container_provisioning",
+			# Admin owns the wording (jarvis_admin_v2.billing.entitlement) so the
+			# two sides can't drift into different explanations. A v1/older admin
+			# sends no reason; the SPA falls back to its own copy.
+			"detail": conn.get("chat_readiness_reason") or "",
+		}
 	# Reachable + (Ready, or v1-absent) → allow and cache the positive verdict.
 	cache.set_value(_CHAT_GATE_CACHE_KEY, 1, expires_in_sec=_CHAT_GATE_CACHE_TTL_S)
 	return {"ready": True, "reason": None}
@@ -292,7 +304,7 @@ def resume_plan() -> dict:
 
 
 def _bust_chat_gate() -> None:
-	"""Drop the 30s chat-readiness cache after a billing state change.
+	"""Drop the chat-readiness cache after a billing state change.
 
 	Belt-and-braces: cancelling does not itself change readiness (entitlement
 	runs to period end), but the pane re-reads immediately afterwards and a
