@@ -12,6 +12,7 @@ import {
 import { PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig } from "./pool.js";
 import { defaultSubscriptionModel } from "./pool.js";
 import { apiKeyModelHealth } from "./pool.js";
+import { LOCAL_PROVIDER_IDS, effectiveApiKey } from "./pool.js";
 
 test("defaultSubscriptionModel: per-upstream default, openai fallback", () => {
 	assert.equal(defaultSubscriptionModel("openai"), "gpt-5.5");
@@ -87,6 +88,15 @@ test("buildCustomModels: order = row index; trims; drops incomplete rows", () =>
 		[0, 1]
 	);
 	assert.equal(models[0].api_key, "sk-o");
+});
+test("buildCustomModels: Ollama/vLLM row with no typed key gets the 'local' placeholder", () => {
+	const rows = [
+		{ provider: "Ollama (local)", model: "llama3", apiKey: "", baseUrl: "" },
+		{ provider: "openai", model: "gpt-5.5", apiKey: "sk-o" },
+	];
+	const models = buildCustomModels(rows);
+	assert.equal(models[0].api_key, "local");
+	assert.equal(models[1].api_key, "sk-o");
 });
 test("buildCustomModels: emits base_url when present, omits when blank", () => {
 	const rows = [
@@ -175,6 +185,42 @@ test("validatePool: api_key model with neither key nor has_key is invalid", () =
 		validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "" }], null).ok,
 		false
 	);
+});
+test("validatePool: Ollama/vLLM don't need a key (label or id, blank api_key)", () => {
+	assert.equal(
+		validatePool([{ provider: "Ollama (local)", model: "llama3", api_key: "" }], null).ok,
+		true
+	);
+	assert.equal(
+		validatePool(
+			[{ provider: "vllm", model: "qwen2.5", api_key: "", base_url: "http://localhost:8000/v1" }],
+			null
+		).ok,
+		true
+	);
+	// vLLM still needs its base_url - only the key is optional.
+	assert.equal(
+		validatePool([{ provider: "vllm", model: "qwen2.5", api_key: "" }], null).ok,
+		false
+	);
+	// A normal provider is unaffected.
+	assert.equal(
+		validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "" }], null).ok,
+		false
+	);
+});
+test("effectiveApiKey: local providers get a placeholder only when blank and unsaved", () => {
+	assert.equal(effectiveApiKey("Ollama (local)", "", false), "local");
+	assert.equal(effectiveApiKey("vllm", "", false), "local");
+	// A typed key always wins.
+	assert.equal(effectiveApiKey("ollama", "sk-real", false), "sk-real");
+	// An already-saved key (has_key) is left blank so the backend keeps it.
+	assert.equal(effectiveApiKey("ollama", "", true), "");
+	// A non-local provider stays blank (validatePool rejects it separately).
+	assert.equal(effectiveApiKey("openai", "", false), "");
+});
+test("LOCAL_PROVIDER_IDS: exactly ollama + vllm", () => {
+	assert.deepEqual([...LOCAL_PROVIDER_IDS].sort(), ["ollama", "vllm"]);
 });
 test("validatePool: OpenAI-Compatible / vLLM require a base_url (label or id)", () => {
 	// Claude-CLI shim path: provider set, model + key present, but no base_url.

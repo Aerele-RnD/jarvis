@@ -353,13 +353,21 @@
 							/>
 						</div>
 						<div class="jv-pool-field">
-							<label class="jv-pool-lab">API key</label>
+							<label class="jv-pool-lab"
+								>API key<span v-if="isLocalProviderRow(panelRow)" class="jv-pool-opt">
+									(optional)</span
+								></label
+							>
 							<input
 								v-model="panelRow.apiKey"
 								:disabled="!editable"
 								type="password"
 								:placeholder="
-									panelRow.hasKey ? 'key set, re-enter to change' : 'API key'
+									panelRow.hasKey
+										? 'key set, re-enter to change'
+										: isLocalProviderRow(panelRow)
+											? 'Not required for local providers'
+											: 'API key'
 								"
 								class="jv-cfg-inp"
 							/>
@@ -1153,7 +1161,13 @@
 							v-model="m.apiKey"
 							:disabled="!editable"
 							type="password"
-							:placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'"
+							:placeholder="
+								m.hasKey
+									? 'key set, re-enter to change'
+									: isLocalProviderRow(m)
+										? 'API key (optional for local providers)'
+										: 'API key'
+							"
 						/>
 						<input
 							v-model="m.baseUrl"
@@ -1555,6 +1569,7 @@ import {
 	defaultSubscriptionModel,
 	apiKeyModelHealth,
 	isCodeOnlyPaste,
+	effectiveApiKey,
 } from "@/llm/pool";
 import { errMessage as _err } from "@/lib/errors";
 import { useConfirm } from "@/composables/useConfirm";
@@ -1626,7 +1641,7 @@ const ready = computed(() => {
 	return !!(
 		(r.provider || "").trim() &&
 		(r.model || "").trim() &&
-		((r.apiKey || "").trim() || r.hasKey)
+		((r.apiKey || "").trim() || r.hasKey || isLocalProviderRow(r))
 	);
 });
 const credTypes = [
@@ -2049,7 +2064,8 @@ function testBlockedReason(row) {
 	if (!row) return "Nothing to test";
 	if (!(row.provider || "").trim()) return "Choose a provider to test";
 	if (!(row.model || "").trim()) return "Enter a model id to test";
-	if (!(row.apiKey || "").trim())
+	// Local providers (Ollama, vLLM) take no key - nothing blocks the probe.
+	if (!(row.apiKey || "").trim() && !isLocalProviderRow(row))
 		return row.hasKey ? "Re-enter the key to test it" : "Enter an API key to test";
 	return "";
 }
@@ -2838,7 +2854,7 @@ function buildSaveModels(sourceRows) {
 		const m = {
 			provider: (r.provider || "").trim(),
 			model: (r.model || "").trim(),
-			api_key: (r.apiKey || "").trim(),
+			api_key: effectiveApiKey(r.provider, r.apiKey, r.hasKey),
 			order: i,
 		};
 		if (r.hasKey) m.has_key = true; // let validatePool + backend merge keep a stored key on re-save

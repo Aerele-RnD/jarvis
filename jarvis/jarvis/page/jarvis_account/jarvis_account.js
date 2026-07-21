@@ -1698,10 +1698,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					},
 				};
 			}
+			const P = window.jarvis_onboarding_llm || {};
 			const m = {
 				provider: (r.provider || "").trim(),
 				model: (r.model || "").trim(),
-				api_key: (r.apiKey || "").trim(),
+				// Local providers (Ollama, vLLM) take no key; effectiveApiKey fills a
+				// harmless placeholder instead of an empty string so this still clears
+				// the backend's blank-api_key guard, matching validatePool above.
+				api_key: P.effectiveApiKey
+					? P.effectiveApiKey(r.provider, r.apiKey, r.has_key)
+					: (r.apiKey || "").trim(),
 				order: i,
 			};
 			const b = (r.baseUrl || "").trim();
