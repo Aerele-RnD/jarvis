@@ -35,6 +35,34 @@ export function pillTone(status, cancelAtPeriodEnd) {
 export function cancelActionLabel(hasMandate) {
 	return hasMandate ? "Cancel auto-renewal" : "Cancel subscription";
 }
+// Short "D MMM" date for pills/inline chips. "2026-08-21 12:00" -> "21 Aug".
+export function shortDate(dt) {
+	const s = (dt || "").trim().split(" ")[0];
+	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	if (!m) return "";
+	const MONTHS = [
+		"Jan",
+		"Feb",
+		"Mar",
+		"Apr",
+		"May",
+		"Jun",
+		"Jul",
+		"Aug",
+		"Sep",
+		"Oct",
+		"Nov",
+		"Dec",
+	];
+	return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}`;
+}
+// Pill text while a cancellation is scheduled: a glanceable end date, not the
+// ambiguous "Cancelling" (which reads as an in-progress operation). The plan is
+// still Active until then; the date is what the customer actually needs.
+export function cancelPillLabel(accessEndsOn) {
+	const d = shortDate(accessEndsOn);
+	return d ? `Ends ${d}` : "Ending";
+}
 // Banner copy while a cancellation is scheduled.
 export function cancellationNotice(accessEndsOn) {
 	const end = (accessEndsOn || "").trim();

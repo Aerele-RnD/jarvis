@@ -433,6 +433,12 @@ class TestRetryMessage(_ChatTestCase):
 	def setUp(self):
 		super().setUp()
 		self.conv = create_conversation()
+		# retry_message now shares send_message's entitlement gate. Pin it to
+		# "entitled" so these tests don't depend on the live control plane's
+		# current subscription state; the suspended case is tested explicitly.
+		gate = patch("jarvis.account._admin_chat_gate", return_value={"ready": True, "reason": None})
+		gate.start()
+		self.addCleanup(gate.stop)
 
 	def test_routes_through_shared_dispatcher(self):
 		"""Retry must use the SAME dispatcher as send_message (after-commit
@@ -530,6 +536,19 @@ class TestRetryMessage(_ChatTestCase):
 			retry_message(asst_id)
 		after = frappe.utils.get_datetime(frappe.get_value(CONV, self.conv, "last_active_at"))
 		self.assertGreaterEqual(after, before)
+
+	def test_rejects_when_subscription_suspended(self):
+		"""The Retry button sits on the exact error a stopped container produces.
+		A suspended retry must be refused HERE, not dispatched to the worker to
+		grind the 25s WS-open loop and error identically all over again."""
+		_u, asst_id = self._make_turn(self.conv, with_error=True)
+		suspended = {"ready": False, "reason": "subscription_suspended", "detail": "expired"}
+		with patch("jarvis.account._admin_chat_gate", return_value=suspended):
+			with patch("jarvis.chat.api._dispatch_turn") as dispatch:
+				result = retry_message(asst_id)
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["reason"], "subscription_suspended")
+		dispatch.assert_not_called()
 
 
 class TestSetConversationModel(_ChatTestCase):

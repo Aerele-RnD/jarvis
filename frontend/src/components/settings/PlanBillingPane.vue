@@ -23,7 +23,9 @@
 							}}
 						</div>
 						<span class="jv-acct-pill" :class="tone">{{
-							statusLabel(account.subscription_status, cancelling)
+							cancelling
+								? cancelPillLabel(account.access_ends_on)
+								: statusLabel(account.subscription_status)
 						}}</span>
 					</div>
 					<div class="jv-acct-renewal">
@@ -32,11 +34,19 @@
 							· Auto-renew on</template
 						>
 					</div>
-					<!-- A scheduled cancellation must be visible on sight: it is the
-						 only affordance that surfaces Resume, and an invisible one
-						 generates support tickets. -->
-					<div v-if="cancelling" class="jv-acct-notice">
-						{{ cancellationNotice(account.access_ends_on) }}
+					<!-- Scheduled cancellation: state it plainly and put Resume right
+						 here, so the one affordance that undoes it is where the customer
+						 is already looking. -->
+					<div v-if="cancelling" class="jv-acct-notice jv-acct-notice--row">
+						<span>{{ cancellationNotice(account.access_ends_on) }}</span>
+						<button
+							type="button"
+							class="jv-btn jv-btn--sm jv-btn--ghost"
+							:disabled="busy"
+							@click="doResume"
+						>
+							Resume
+						</button>
 					</div>
 					<ul v-if="planFeatures.length" class="jv-acct-features">
 						<li v-for="(f, i) in planFeatures" :key="i">
@@ -79,45 +89,46 @@
 						</div>
 					</div>
 				</div>
-				<div v-if="account.plan && account.plan.plan_name" class="jv-acct-actions">
+				<!-- Lapsed: renewing is the point (where the chat suspension banner
+					 sends them), so keep it prominent. -->
+				<div v-if="ended" class="jv-acct-actions">
+					<a :href="billingUrl" class="jv-btn jv-btn--primary">Renew subscription</a>
+				</div>
+				<div v-if="reauthNotice" class="jv-acct-notice">{{ reauthNotice }}</div>
+
+				<!-- Manage footer: the external billing link, with cancel tucked
+					 beside it as a quiet text link. It stays low-key because the confirm
+					 dialog (danger) owns the deliberate red step; a solid red button here
+					 just makes the pane hostile. Hidden while cancelling (Resume is above)
+					 or ended (nothing to cancel). -->
+				<div class="jv-acct-footer">
+					<a :href="billingUrl" class="jv-acct-link">
+						Manage plan &amp; billing
+						<svg
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+							<path d="M15 3h6v6" />
+							<path d="M10 14 21 3" />
+						</svg>
+					</a>
 					<button
-						v-if="cancelling"
+						v-if="!cancelling && !ended"
 						type="button"
-						class="jv-acct-btn-sm"
-						:disabled="busy"
-						@click="doResume"
-					>
-						Resume subscription
-					</button>
-					<button
-						v-else
-						type="button"
-						class="jv-btn jv-btn--danger"
+						class="jv-acct-cancel"
 						:disabled="busy"
 						@click="doCancel"
 					>
 						{{ cancelActionLabel(account.has_mandate) }}
 					</button>
 				</div>
-				<div v-if="reauthNotice" class="jv-acct-notice">{{ reauthNotice }}</div>
-
-				<a :href="billingUrl" class="jv-acct-link">
-					Manage plan &amp; billing
-					<svg
-						width="13"
-						height="13"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					>
-						<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-						<path d="M15 3h6v6" />
-						<path d="M10 14 21 3" />
-					</svg>
-				</a>
 			</template>
 		</section>
 	</div>
@@ -132,6 +143,7 @@ import {
 	planPriceLabel,
 	renewalLabel,
 	cancelActionLabel,
+	cancelPillLabel,
 	cancellationNotice,
 } from "@/account/format.js";
 import { useConfirm } from "@/composables/useConfirm";
@@ -163,6 +175,10 @@ const upgradePlans = computed(() => account.value.upgrade_plans || []);
 // A plan scheduled to end. Server keeps status "Active" through the paid
 // period, so this flag - not the status - drives the cancelling UI.
 const cancelling = computed(() => !!account.value.cancel_at_period_end);
+// Terminal: paid period over, no access left to cancel and no Resume - only a
+// fresh payment restores service. Distinct from `cancelling` (still entitled).
+const ENDED_STATUSES = new Set(["Expired", "Cancelled"]);
+const ended = computed(() => ENDED_STATUSES.has(account.value.subscription_status));
 const tone = computed(() => pillTone(account.value.subscription_status, cancelling.value));
 const busy = ref(false);
 const reauthNotice = ref("");

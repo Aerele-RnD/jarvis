@@ -2075,6 +2075,19 @@
 					background: var(--surface);
 				"
 			>
+				<!-- Lapsed sub: container stopped, so every send would fail. -->
+				<Banner
+					v-if="suspendedNotice"
+					type="warning"
+					title="Chat is paused"
+					:message="suspendedNotice"
+					style="margin-bottom: 10px"
+				>
+					<template #action>
+						<button class="jv-btn jv-btn--sm" @click="goRenew">Renew</button>
+					</template>
+				</Banner>
+
 				<!-- floats just above the composer; jumps the thread to the newest message -->
 				<transition name="jv-sd">
 					<button
@@ -3452,8 +3465,11 @@ import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue";
 import JarvisMark from "@/components/JarvisMark.vue";
 import DraftPreview from "@/components/doc/DraftPreview.vue";
 import ActionError from "@/components/ActionError.vue";
+import Banner from "@/components/Banner.vue";
 import PendingCard from "@/components/PendingCard.vue";
 import ReceiptChip from "@/components/ReceiptChip.vue";
+import { checkReady } from "@/onboarding/readiness.js";
+import { suspensionNotice, SUSPENDED_FALLBACK } from "@/onboarding/steps.js";
 import { useShellStore } from "@/stores/shell";
 import { useJarvisTheme } from "@/theme";
 import { displayName } from "@/lib/user";
@@ -3505,6 +3521,9 @@ const histDraft = ref("");
 const sending = ref(false);
 const waiting = ref(false);
 const ui = ref({});
+// Renew-banner copy when the subscription has lapsed; null while entitled.
+// The composer is disabled alongside it (no send can succeed while stopped).
+const suspendedNotice = ref(null);
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
 // THIS chat. autoApplyNote surfaces the admin-only-enable message.
@@ -3955,6 +3974,10 @@ const liveStatus = computed(() => {
 });
 // Recovery banner copy: compaction (context overflow, retrying) vs a connection
 // hiccup. Both mean "still working, in the background" — not an error.
+// Renew CTA → Settings ▸ Plan & billing, the only surface that takes payment.
+function goRenew() {
+	store.openSettings("plan");
+}
 const recoveringLabel = computed(() =>
 	recovering.value && recovering.value.reason === "compacting"
 		? "That was a big one — reorganizing the conversation and retrying…"
@@ -4292,7 +4315,11 @@ const headerSub = computed(() => {
 	return n ? `${Math.ceil(n / 2)} message${n > 2 ? "s" : ""}` : "ERPNext Assistant";
 });
 const canSend = computed(
-	() => (input.value.trim().length > 0 || pendingFiles.value.length > 0) && !sending.value
+	() =>
+		(input.value.trim().length > 0 || pendingFiles.value.length > 0) &&
+		!sending.value &&
+		// Suspended: the server rejects every send, so keep the button dead.
+		!suspendedNotice.value
 );
 const busy = computed(() => sending.value || waiting.value);
 // A parked write's Confirm dispatches a follow-up agent turn (continuation).
@@ -6436,10 +6463,16 @@ async function retry(messageId) {
 	try {
 		const r = await api.retryMessage(messageId);
 		if (r && r.ok === false) {
-			// e.g. the single-flight guard ("a reply is already in progress").
 			sending.value = false;
 			waiting.value = false;
-			notify(r.reason || "Couldn't retry that.", { type: "error" });
+			// Lapsed sub: raise the persistent banner (as a blocked send does),
+			// not a toast that vanishes before they can renew.
+			if (r.reason === "subscription_suspended") {
+				if (!suspendedNotice.value) suspendedNotice.value = SUSPENDED_FALLBACK;
+			} else {
+				// e.g. the single-flight guard ("a reply is already in progress").
+				notify(r.reason || "Couldn't retry that.", { type: "error" });
+			}
 		}
 	} catch (e) {
 		sending.value = false;
@@ -6548,6 +6581,12 @@ async function send(textArg) {
 			if (fromMain && !input.value) input.value = text;
 			sending.value = false;
 			waiting.value = false;
+			// Lapsed sub: raise the persistent banner (with its Renew link)
+			// rather than a toast that vanishes before they can act on it.
+			if (r.reason === "subscription_suspended") {
+				if (!suspendedNotice.value) suspendedNotice.value = SUSPENDED_FALLBACK;
+				return;
+			}
 			notify(
 				r.reason === "usage_limit"
 					? "Monthly usage limit reached. Ask your Jarvis admin to raise your limit."
@@ -7303,6 +7342,13 @@ onMounted(async () => {
 	api.listTools()
 		.then((t) => {
 			if (Array.isArray(t) && t.length) jarvisTools.value = t;
+		})
+		.catch(() => {});
+	// Billing banner off the boot readiness promise (memoized, already awaited by
+	// AppShell). Not awaited here: it must never delay painting the chat.
+	checkReady()
+		.then((r) => {
+			suspendedNotice.value = suspensionNotice(r);
 		})
 		.catch(() => {});
 	document.addEventListener("pointerdown", onDocClick);
