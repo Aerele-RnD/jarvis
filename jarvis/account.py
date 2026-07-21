@@ -216,7 +216,7 @@ def get_llm_connection_status() -> dict:
 	contract field names. Never returns token material. System-Manager only.
 
 	DIRECT tenants (proxy_active=0, no Bifrost/cliproxy sidecar) short-circuit
-	before the admin round-trip, mirroring get_llm_usage above — there is no
+	before the admin round-trip, mirroring get_llm_usage above - there is no
 	proxy auth profile to report. Before this, the raw admin payload's
 	leftover fields (a stale/default default_model with auth_profile_present
 	false) made the SPA's ConnectionPane render a misleading orange "Not
