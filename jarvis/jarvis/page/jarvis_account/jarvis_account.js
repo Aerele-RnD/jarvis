@@ -268,8 +268,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				// Managed tenants: account management now lives in the Jarvis SPA.
 				// Redirect there unless ?billing=1 (the billing/upgrade flow is not
 				// yet in the SPA — Phase 2). Self-hosted tenants above keep this page.
+				// "/jarvis/account" is a retired route (the account page's content
+				// moved into the SPA settings dialog, which has no URL deep-link
+				// scheme to open a specific pane) - repoint to the SPA root.
 				if (!new URLSearchParams(window.location.search).get("billing")) {
-					window.location.replace("/jarvis/account");
+					window.location.replace("/jarvis/");
 					return null;
 				}
 

@@ -133,6 +133,15 @@ const routes = [
 		component: () => import("@/pages/agents/AgentDetail.vue"),
 		props: true,
 	},
+	// Catch-all: an unknown path (e.g. the retired desk deep-link
+	// "/jarvis/account" - its content now lives in the SPA settings dialog)
+	// used to render a blank white screen. Vue Router 4 ranks a static path
+	// above a wildcard regardless of registration order, so this cannot
+	// shadow any route above it - it only ever matches when nothing else
+	// did. This is a plain path redirect, unrelated to the beforeEach
+	// onboarding guard below (which only ever redirects AWAY FROM
+	// /onboarding, never forces a user INTO it - see the D11 note there).
+	{ path: "/:pathMatch(.*)*", name: "NotFound", redirect: "/" },
 ];
 
 // Served under /jarvis (website_route_rules catch-all → www/jarvis page).
