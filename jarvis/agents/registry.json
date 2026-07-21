@@ -1549,7 +1549,7 @@
       "nature": "operator",
       "delivery": "delegate",
       "version": "0.1.0",
-      "status": "Published",
+      "status": "Coming Soon",
       "description": "Reads each new helpdesk ticket and proposes its routing as an evidence-carrying Approval Request: a suggested category, an SLA-aware priority, the owning team and a candidate agent, plus a duplicate suggestion when a recent ticket from the same requester looks like a match. It proposes only; a human confirms on the Approval Board and the confirmed routing is applied on their behalf. It never resolves, replies, closes, merges, reassigns, or touches an in-progress ticket.",
       "tools_required": [
         "jarvis__get_list",
