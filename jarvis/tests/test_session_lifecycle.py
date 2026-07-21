@@ -335,6 +335,44 @@ class TestSessionLifecycle(FrappeTestCase):
 		self.assertEqual(summary["empty_reaped"], 0)
 		self.assertTrue(frappe.db.exists(CONV, name))
 
+	def test_chat_with_user_message_and_failed_turn_never_reaped(self):
+		# Incident regression (2026-07-21): a conversation whose only assistant
+		# turn FAILED (a terminal agent error - here an empty, errored assistant
+		# row, the exact shape a failed turn leaves behind) still holds the user's
+		# message and is real chat history. The any-message reap filter must spare
+		# it even when every time/status predicate matches, so a failed turn can
+		# never make the user's message auto-deletable. (The live deletion in that
+		# incident was e2e/manual cleanup of a probe conversation, NOT this reaper;
+		# this pins the invariant so a future "reap failed-turn-only conversations"
+		# change cannot regress into deleting user messages.)
+		name = self._conv(idle_days=10)  # matches status/starred/file_box/idle
+		frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": name,
+				"seq": 1,
+				"role": "user",
+				"content": "Reply with exactly one word: PONG",
+			}
+		).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": name,
+				"seq": 2,
+				"role": "assistant",
+				"content": "",  # failed turn: no visible content ...
+				"error": "The model could not complete this response.",  # ... but errored
+				"streaming": 0,
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+		summary = self._run(_fake_sess())
+		self.assertEqual(summary["empty_reaped"], 0)
+		self.assertTrue(frappe.db.exists(CONV, name))
+		# The user's message specifically survives.
+		self.assertTrue(frappe.db.exists(MSG, {"conversation": name, "role": "user"}))
+
 	def test_empty_chat_with_stray_session_freed_then_reaped(self):
 		"""Defensive: a 0-message chat carrying a session (idle within the 30-day
 		session window but past the 7-day empty window) has its stray session
