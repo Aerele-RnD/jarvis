@@ -163,9 +163,7 @@ const upgradePlans = computed(() => account.value.upgrade_plans || []);
 // A plan scheduled to end. Server keeps status "Active" through the paid
 // period, so this flag - not the status - drives the cancelling UI.
 const cancelling = computed(() => !!account.value.cancel_at_period_end);
-const tone = computed(() =>
-	pillTone(account.value.subscription_status, cancelling.value),
-);
+const tone = computed(() => pillTone(account.value.subscription_status, cancelling.value));
 const busy = ref(false);
 const reauthNotice = ref("");
 
