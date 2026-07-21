@@ -26,6 +26,9 @@ from jarvis.chat import agent_runs
 LISTING = "Jarvis Agent Listing"
 INSTALLATION = "Jarvis Agent Installation"
 RUN = "Jarvis Agent Run"
+FINDING = "Jarvis Agent Finding"
+PROVENANCE = "Jarvis Agent Provenance Event"
+DASHBOARD = "Jarvis Dashboard"
 
 SLUG = "platform-false-clean-test-agent"
 TOK_A = "tok_fc_a"
@@ -91,6 +94,26 @@ def _mk_run(owner: str) -> object:
 	return doc
 
 
+def _wipe_residue() -> None:
+	"""Slug-scoped teardown: remove every Run / Finding / Provenance / Dashboard row
+	this module persisted under its test-agent slug, so run-persistence residue never
+	accrues on the shared site. Belt-and-suspenders alongside the ``frappe.flags.in_test``
+	commit gate. Mirrors ``test_platform_activation._wipe``: raw ``frappe.db.delete`` +
+	commit (which also bypasses the append-only Provenance ``on_trash`` guard, legitimate
+	for deleting this module's OWN test residue)."""
+	dashboards = [
+		d
+		for d in frappe.get_all(RUN, filters={"agent": SLUG}, pluck="dashboard", ignore_permissions=True)
+		if d
+	]
+	frappe.db.delete(RUN, {"agent": SLUG})
+	frappe.db.delete(FINDING, {"agent": SLUG})
+	frappe.db.delete(PROVENANCE, {"agent": SLUG})
+	if dashboards:
+		frappe.db.delete(DASHBOARD, {"name": ["in", dashboards]})
+	frappe.db.commit()
+
+
 # --------------------------------------------------------------------------- #
 # PP-3 — the placeholder is filled, never leaked (unit, via _coverage_summary)
 # --------------------------------------------------------------------------- #
@@ -140,6 +163,12 @@ class TestPP2FalseCleanGate(FrappeTestCase):
 		cls.company = frappe.db.get_value("Company", {}, "name")
 		cls.inst = _mk_installation(cls.owner)
 		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		frappe.set_user("Administrator")
+		_wipe_residue()
+		super().tearDownClass()
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -195,6 +224,12 @@ class TestPP3CoverageNoteIsCustomerText(FrappeTestCase):
 		cls.company = frappe.db.get_value("Company", {}, "name")
 		cls.inst = _mk_installation(cls.owner)
 		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		frappe.set_user("Administrator")
+		_wipe_residue()
+		super().tearDownClass()
 
 	def setUp(self):
 		frappe.set_user("Administrator")

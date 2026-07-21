@@ -182,7 +182,11 @@ def save_agent_dashboard(
 			{"owner": visibility_owner, "target_user": visibility_owner},
 			update_modified=False,
 		)
-	frappe.db.commit()
+	# Skip the commit under FrappeTestCase so the enclosing transaction rolls back at
+	# teardown (no leaked Dashboard/Run rows); same-connection asserts still see the
+	# uncommitted writes.
+	if not frappe.flags.in_test:
+		frappe.db.commit()
 
 	return {
 		"run": run_doc.name,

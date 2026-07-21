@@ -949,7 +949,12 @@ def record_delegate_run(
 	if inst.schedule_enabled:
 		inst_values["next_run_at"] = compute_next_run(inst.schedule_frequency, inst.schedule_time)
 	frappe.db.set_value(INSTALLATION, inst.name, inst_values, update_modified=False)
-	frappe.db.commit()
+	# Under FrappeTestCase the enclosing transaction is rolled back at teardown; a
+	# mid-test commit would defeat that and leak Run/Finding/Provenance/Dashboard
+	# rows onto the shared site. All in-test asserts read the same connection, so the
+	# uncommitted writes are visible without it.
+	if not frappe.flags.in_test:
+		frappe.db.commit()
 
 	run_doc.reload()
 	return run_doc

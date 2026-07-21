@@ -36,6 +36,8 @@ LISTING = "Jarvis Agent Listing"
 INSTALLATION = "Jarvis Agent Installation"
 RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
+PROVENANCE = "Jarvis Agent Provenance Event"
+DASHBOARD = "Jarvis Dashboard"
 
 SLUG = "platform-writeback-test-agent"
 TOKEN = "tok_pw_1"
@@ -118,6 +120,28 @@ def _finding(**over) -> dict:
 	}
 	f.update(over)
 	return f
+
+
+def _wipe_residue() -> None:
+	"""Slug-scoped teardown: remove every Run / Finding / Provenance / Dashboard row
+	this module persisted under its test-agent slug, so run-persistence residue never
+	accrues on the shared site. Belt-and-suspenders alongside the ``frappe.flags.in_test``
+	commit gate — this module's ``setUp`` commits per test, which would otherwise make a
+	prior test's in-transaction run/dashboard durable past the class-end rollback. Mirrors
+	``test_platform_activation._wipe``: raw ``frappe.db.delete`` + commit (which also
+	bypasses the append-only Provenance ``on_trash`` guard, legitimate for deleting this
+	module's OWN test residue)."""
+	dashboards = [
+		d
+		for d in frappe.get_all(RUN, filters={"agent": SLUG}, pluck="dashboard", ignore_permissions=True)
+		if d
+	]
+	frappe.db.delete(RUN, {"agent": SLUG})
+	frappe.db.delete(FINDING, {"agent": SLUG})
+	frappe.db.delete(PROVENANCE, {"agent": SLUG})
+	if dashboards:
+		frappe.db.delete(DASHBOARD, {"name": ["in", dashboards]})
+	frappe.db.commit()
 
 
 # --------------------------------------------------------------------------- #
@@ -356,6 +380,12 @@ class TestWritebackIntegration(FrappeTestCase):
 		cls.company = frappe.db.get_value("Company", {}, "name")
 		cls.inst = _mk_installation(cls.owner)
 		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		frappe.set_user("Administrator")
+		_wipe_residue()
+		super().tearDownClass()
 
 	def setUp(self):
 		frappe.set_user("Administrator")
