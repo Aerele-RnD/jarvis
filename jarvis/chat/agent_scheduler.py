@@ -222,6 +222,23 @@ def _launch_audit(inst, trigger: str) -> dict:
 	conv.flags.ignore_permissions = True
 	conv.insert()
 
+	# PP-5: the run's IMMUTABLE launch-time provenance, stamped once at insert (the
+	# controller's _IMMUTABLE_LAUNCH_FIELDS guard refuses any later ORM change):
+	#   * bundle_version — a SNAPSHOT of the version this run actually executes, taken
+	#     from the installation's installed_version (falling back to the listing) so it
+	#     is fixed even though the listing/installation versions are mutable.
+	#   * preparation_mode — a snapshot of the installation's activation_state
+	#     (shadow|live) at launch, so a run made in shadow is forever attributable as
+	#     such even after the install is later promoted.
+	#   * initiating_human — the human who triggered a MANUAL run; None for a
+	#     scheduled cron run (no human initiated it). On the manual path the caller has
+	#     switched the session to the run-as user, so frappe.session.user is the
+	#     triggering human ONLY on a self-mapped install (run_as == triggerer); see the
+	#     cross-file note for the run_as != triggerer case.
+	bundle_version = inst.installed_version or listing.version or None
+	preparation_mode = inst.activation_state or "shadow"
+	initiating_human = frappe.session.user if trigger == "manual" else None
+
 	run = frappe.get_doc(
 		{
 			"doctype": RUN,
@@ -231,6 +248,9 @@ def _launch_audit(inst, trigger: str) -> dict:
 			"status": "running",
 			"conversation": conv.name,
 			"started_at": frappe.utils.now(),
+			"bundle_version": bundle_version,
+			"preparation_mode": preparation_mode,
+			"initiating_human": initiating_human,
 		}
 	)
 	run.flags.ignore_permissions = True

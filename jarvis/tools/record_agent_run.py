@@ -31,6 +31,7 @@ import json
 
 import frappe
 
+from jarvis.chat import coverage_reasons as cr
 from jarvis.exceptions import InvalidArgumentError
 
 RUN = "Jarvis Agent Run"
@@ -80,10 +81,32 @@ def _ref_verifiable(ref_doctype: str, ref_name: str) -> tuple[bool, str]:
 	return True, ""
 
 
+def _validate_result_class(f: dict) -> str | None:
+	"""PP-1: the per-finding epistemic-class gate. Returns a drop reason string,
+	or ``None`` when the row's ``result_class`` contract is satisfied.
+
+	  (a) ``result_class`` must be present and in the fixed four-class enum;
+	  (b) ``confirmed_outcome`` is RESERVED — an evaluator may never emit it (it is
+	      written only by the PP-5 provenance ledger), so it is dropped here;
+	  (c) a ``derived_candidate`` / ``legal_scenario`` row must carry its
+	      class-conditional metadata (confidence/match_basis/false_positive_path
+	      resp. rule_version/source/reviewer), else it is dropped."""
+	rc = f.get("result_class")
+	if not cr.is_result_class(rc):
+		return "missing/invalid result_class"
+	if rc == cr.RESERVED_RESULT_CLASS:
+		return "evaluator may not emit confirmed_outcome"
+	missing = cr.missing_metadata(rc, f)
+	if missing:
+		return f"{rc} missing {', '.join(missing)}"
+	return None
+
+
 def _validate_findings(raw_findings: list, token_set: set, allowed_refs: set):
 	"""Split evaluator findings into (valid, dropped). A row is valid iff its
 	token is a known agent token, its ref_doctype is allowed, its ref exists for
-	the run-as user, amount is numeric and severity is known. Dropped rows carry a
+	the run-as user, amount is numeric, severity is known, and it carries a valid
+	PP-1 ``result_class`` with its class-conditional metadata. Dropped rows carry a
 	reason so the Run coverage names the rejected refs (A16 — never a silent zero
 	pass, never persist an unverifiable row)."""
 	valid, dropped = [], []
@@ -110,6 +133,8 @@ def _validate_findings(raw_findings: list, token_set: set, allowed_refs: set):
 				ok, why = _ref_verifiable(rdt, rname)
 				if not ok:
 					reason = why
+			if reason is None:
+				reason = _validate_result_class(f)
 		if reason:
 			dropped.append({"ref_doctype": rdt, "ref_name": rname, "reason": reason, "token": token})
 		else:
@@ -130,9 +155,19 @@ def record_agent_run(
 	"""Land a delegate's evaluator output on its running Jarvis Agent Run.
 
 	Args (all from the evaluator's JSON, passed verbatim by the delegate):
-	  findings: list of ``{token, ref_doctype, ref_name, amount, severity, note}``.
-	  coverage: per-rule manifest ``{token: "evaluated"|"not_evaluable(reason)"|
-	    "truncated"}`` — gates coverage-scoped auto-resolve (A16).
+	  findings: list of ``{token, ref_doctype, ref_name, amount, severity, note,
+	    result_class, ...}``. ``result_class`` (PP-1) is REQUIRED per row and must be
+	    one of ``observed_fact|derived_candidate|legal_scenario`` — an evaluator may
+	    NOT emit ``confirmed_outcome`` (reserved for the PP-5 ledger). A
+	    ``derived_candidate`` must carry ``confidence``/``match_basis``/
+	    ``false_positive_path``; a ``legal_scenario`` must carry ``rule_version``/
+	    ``source``/``reviewer``. A row missing/failing any of these is DROPPED and the
+	    run goes partial (same path as an unverifiable ref).
+	  coverage: per-check manifest — either the typed form
+	    ``{token: {state, reason_code, detail}}`` (PP-3) or the legacy string form
+	    ``{token: "evaluated"|"not_evaluable(reason)"|"truncated"}``; a reason outside
+	    the closed PP-3 enum is coerced to ``unsupported_customisation`` (never
+	    dropped). Gates coverage-scoped auto-resolve (A16) and the PP-2 run state.
 	  scope: the resolved run scope ``{company, fiscal_year, from_date, to_date,
 	    ...}`` — company is stamped on each Finding + scopes auto-resolve + the
 	    watermark recompute.

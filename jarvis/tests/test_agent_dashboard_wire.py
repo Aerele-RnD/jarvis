@@ -117,6 +117,12 @@ class TestAgentDashboardWire(unittest.TestCase):
 				"agent": AGENT,
 				"enabled": 1,
 				"run_as_user": cls.owner,
+				# PP-4: these wire tests assert the LIVE owner-facing attestation surface
+				# ("No exceptions were found", owner-owned dashboard). A shadow install
+				# would (correctly) suppress the clean attestation and re-home the output
+				# to the reviewer, so activate live for this attestation fixture.
+				"reviewer": cls.owner,
+				"activation_state": "live",
 				"schedule_enabled": 0,
 				"config": json.dumps({"company": COMPANY, "fiscal_year": FY}),
 			}
@@ -207,6 +213,9 @@ class TestAgentDashboardWire(unittest.TestCase):
 			"ref_name": COMPANY,
 			"amount": 1000.0,
 			"severity": "blocker",
+			# PP-1: every evaluator finding carries its epistemic result_class or it is
+			# dropped at the tool boundary (a TB imbalance is a direct record fact).
+			"result_class": "observed_fact",
 			"note": "Trial balance does not balance: debits vs credits out by 1000.00.",
 		}
 
@@ -243,8 +252,15 @@ class TestAgentDashboardWire(unittest.TestCase):
 	def test_all_clear_run_still_gets_a_dashboard(self):
 		sk = "agent:agent-close-auditor:dash-clear"
 		self._mk_run(sk)
+		# PP-2: a genuine all-clear must evaluate EVERY declared required check (the
+		# authoritative bar is the listing's rule_tokens). A subset-coverage run is
+		# correctly partial and suppresses the "No exceptions" attestation.
+		declared = json.loads(frappe.db.get_value(LISTING, AGENT, "rule_tokens") or "[]")
 		out = self._call_record(
-			sk, findings=[], coverage={TB_TOKEN: "evaluated"}, scope={"company": COMPANY, "fiscal_year": FY}
+			sk,
+			findings=[],
+			coverage={t: "evaluated" for t in declared},
+			scope={"company": COMPANY, "fiscal_year": FY},
 		)
 		self.assertEqual(out["status"], "completed")
 		self.assertTrue(out["dashboard"])

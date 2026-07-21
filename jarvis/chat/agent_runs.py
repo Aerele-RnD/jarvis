@@ -19,6 +19,7 @@ import hashlib
 import frappe
 from frappe.utils import getdate
 
+from jarvis.chat import coverage_reasons as cr
 from jarvis.chat.agent_activity import log_activity
 from jarvis.chat.macro_scheduler import compute_next_run
 
@@ -86,14 +87,62 @@ def _esc(value) -> str:
 	return escape_html(str(value if value is not None else ""))
 
 
-def _fallback_dashboard_html(title: str, findings: list, counts: dict, coverage_note: str) -> str:
+# PP-2: the in-body (screenshot-safe) coverage-verdict heading. Label + colour
+# per state; rendered as a first-class block inside the document body, NEVER as a
+# detachable banner, so a crop/PDF keeps it.
+_STATE_HEADING = {
+	"evaluated_clean": ("Evaluated — clean coverage", "#065f46", "#d1fae5"),
+	"partial": ("Partial coverage — not a clean result", "#92400e", "#fef3c7"),
+	"not_evaluable": ("Not evaluable — required checks could not run", "#991b1b", "#fee2e2"),
+	"failed": ("Run failed — no result produced", "#991b1b", "#fee2e2"),
+}
+
+# PP-2: the empty-findings sentence is state-conditional. "No exceptions were
+# found" is UNREACHABLE unless result_state == evaluated_clean.
+_EMPTY_SENTENCE = {
+	"evaluated_clean": "No exceptions were found for this run.",
+	"partial": (
+		"Partial coverage — this run did not evaluate every required check; "
+		"absence of findings is not a clean result."
+	),
+	"not_evaluable": "This run could not evaluate the required checks (see reasons below).",
+	"failed": "This run failed to produce a result.",
+}
+
+
+def _fallback_dashboard_html(
+	title: str,
+	findings: list,
+	counts: dict,
+	coverage_note: str,
+	*,
+	result_state: str = "partial",
+	coverage_notes: list | None = None,
+	shadow: bool = False,
+	integrity_digest: str | None = None,
+) -> str:
 	"""A minimal, self-contained, A2-safe findings summary — the server-generated
 	FLOOR used only when the delegate produced findings but authored no dashboard
 	(so a completed/partial run always yields ONE saved dashboard). It renders the
 	already-persisted, already-lossy finding fields (authored ``note`` + ref +
-	amount + severity) — NEVER the opaque token, and never any rule id/threshold.
-	Inline styles only (CSP sandbox). The Jarvis theme injects the surrounding CSS
-	variables; sane fallbacks keep it legible standalone."""
+	amount + severity + PP-1 ``result_class``) — NEVER the opaque token, and never
+	any rule id/threshold. Inline styles only (CSP sandbox). The Jarvis theme
+	injects the surrounding CSS variables; sane fallbacks keep it legible standalone.
+
+	PP-1: every row shows its ``result_class`` label beside the amount, and its
+	authored note is routed through the strong-verb helper so "saved/recovered/
+	prevented" can never render for a non-``confirmed_outcome`` row. PP-2: the
+	coverage-verdict ``result_state`` is rendered as an in-body heading and the
+	empty-findings sentence is state-conditional. PP-3: the coverage gaps section
+	surfaces each not_evaluable check's typed remediation text.
+
+	PP-4: when ``shadow`` is set the artifact is a reviewer-only PREVIEW — no
+	outward clean/compliant attestation renders even when ``result_state ==
+	evaluated_clean`` (the clean heading and the "No exceptions were found" sentence
+	are both suppressed in favour of an explicit preview banner). PP-6: when an
+	``integrity_digest`` is supplied it is stamped into the document BODY (same
+	in-body, screenshot-safe placement as the state block) so the coverage/integrity
+	digest travels with the numbers on a saved/exported meter artifact."""
 	total = sum(counts.get(s, 0) for s in ("blocker", "warning", "note"))
 	cards = "".join(
 		f'<div style="flex:1;min-width:120px;padding:14px 16px;border:1px solid var(--jarvis-border,#e5e7eb);'
@@ -112,19 +161,85 @@ def _fallback_dashboard_html(title: str, findings: list, counts: dict, coverage_
 			amt = f"{float(amt):,.2f}"
 		except (TypeError, ValueError):
 			amt = _esc(amt)
+		# PP-1 strong-verb gate: an evaluator row is never confirmed_outcome, so the
+		# helper strips saved/recovered/prevented/… from the authored note.
+		safe_note = cr.render_value_text(
+			f.get("note"), f.get("result_class"), outcome_provenance=f.get("outcome_provenance")
+		)
 		rows += (
 			f'<tr style="border-top:1px solid var(--jarvis-border,#e5e7eb)">'
 			f'<td style="padding:8px 10px;white-space:nowrap;text-transform:capitalize">{_esc(sev)}</td>'
-			f'<td style="padding:8px 10px">{_esc(f.get("note"))}</td>'
+			f'<td style="padding:8px 10px;white-space:nowrap;color:var(--jarvis-muted,#6b7280)">'
+			f"{_esc(f.get('result_class'))}</td>"
+			f'<td style="padding:8px 10px">{_esc(safe_note)}</td>'
 			f'<td style="padding:8px 10px;white-space:nowrap;color:var(--jarvis-muted,#6b7280)">'
 			f"{_esc(f.get('ref_doctype'))} · {_esc(f.get('ref_name'))}</td>"
 			f'<td style="padding:8px 10px;text-align:right;white-space:nowrap">{amt}</td></tr>'
 		)
 	if not rows:
+		# PP-4: in shadow the clean "No exceptions were found" sentence is UNREACHABLE
+		# even when result_state == evaluated_clean — a preview run issues no outward
+		# clean/compliant claim. Otherwise the sentence is PP-2 state-conditional.
+		if shadow:
+			sentence = (
+				"Preview (shadow) run — findings are visible to the reviewer only; "
+				"no clean or compliant attestation is issued while this capability is in preview."
+			)
+		else:
+			sentence = _EMPTY_SENTENCE.get(result_state, _EMPTY_SENTENCE["partial"])
 		rows = (
-			'<tr><td colspan="4" style="padding:14px 10px;color:var(--jarvis-muted,#6b7280)">'
-			"No exceptions were found for this run.</td></tr>"
+			'<tr><td colspan="5" style="padding:14px 10px;color:var(--jarvis-muted,#6b7280)">'
+			f"{_esc(sentence)}</td></tr>"
 		)
+
+	# PP-2 in-body coverage-verdict heading (screenshot-safe — inside the body).
+	# PP-4: in shadow the outward clean/compliant heading is REPLACED by a preview
+	# banner, so a computed evaluated_clean never surfaces as an outward attestation.
+	if shadow:
+		label, fg, bg = ("Preview (shadow) — not a compliant attestation", "#3730a3", "#e0e7ff")
+		state_attr = "shadow"
+	else:
+		label, fg, bg = _STATE_HEADING.get(result_state, _STATE_HEADING["partial"])
+		state_attr = result_state
+	state_block = (
+		f'<div data-result-state="{_esc(state_attr)}" '
+		f'style="display:inline-block;margin:0 0 16px;padding:6px 12px;border-radius:8px;'
+		f'font-size:13px;font-weight:600;color:{fg};background:{bg}">{_esc(label)}</div>'
+	)
+
+	# PP-6 in-body coverage/integrity digest — stamped onto the numbers, screenshot-
+	# safe (inside the body, never a separable page), so a saved/exported meter
+	# artifact always carries its evaluator integrity digest and coverage caveat.
+	digest_block = ""
+	if integrity_digest:
+		caveat = _esc(coverage_note) if coverage_note else "full coverage for the reported windows"
+		digest_block = (
+			f'<div data-digest-block style="margin:20px 0 0;padding:12px 14px;'
+			f"border:1px dashed var(--jarvis-border,#e5e7eb);border-radius:8px;"
+			f'color:var(--jarvis-muted,#6b7280);font-size:12px">'
+			f'<div style="text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin:0 0 6px">'
+			f"Coverage &amp; integrity digest</div>"
+			f"<div>Evaluator integrity digest: <code>{_esc(integrity_digest)}</code></div>"
+			f"<div>Coverage caveats: {caveat}</div>"
+			f"<div>Reporting windows are computed server-side and fixed on this artifact.</div>"
+			f"</div>"
+		)
+
+	# PP-3 coverage-gaps section: typed remediation text per not_evaluable check.
+	gaps = ""
+	if coverage_notes:
+		items = "".join(
+			f'<li style="margin:0 0 6px"><strong>{_esc(n.get("reason_code"))}</strong> — '
+			f"{_esc(n.get('remediation'))}"
+			f"{(' (' + _esc(n.get('detail')) + ')') if n.get('detail') else ''}</li>"
+			for n in coverage_notes
+		)
+		gaps = (
+			f'<div style="margin:20px 0 0"><h2 style="font-size:15px;margin:0 0 8px">Coverage gaps</h2>'
+			f'<ul style="margin:0;padding-left:18px;color:var(--jarvis-text,#111827);font-size:13px">'
+			f"{items}</ul></div>"
+		)
+
 	banner = ""
 	if coverage_note:
 		banner = (
@@ -137,7 +252,8 @@ def _fallback_dashboard_html(title: str, findings: list, counts: dict, coverage_
 		f"<title>{_esc(title)}</title></head>"
 		f'<body style="margin:0;font-family:var(--jarvis-font,system-ui,-apple-system,Segoe UI,Roboto,sans-serif);'
 		f'color:var(--jarvis-text,#111827);background:var(--jarvis-bg,#f9fafb);padding:24px">'
-		f'<h1 style="font-size:20px;margin:0 0 4px">{_esc(title)}</h1>'
+		f'<h1 style="font-size:20px;margin:0 0 8px">{_esc(title)}</h1>'
+		f"{state_block}"
 		f'<p style="margin:0 0 18px;color:var(--jarvis-muted,#6b7280);font-size:13px">'
 		f"{total} finding(s) this run.</p>"
 		f"{banner}"
@@ -145,15 +261,30 @@ def _fallback_dashboard_html(title: str, findings: list, counts: dict, coverage_
 		f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:14px">'
 		f'<thead><tr style="text-align:left;color:var(--jarvis-muted,#6b7280);font-size:12px;'
 		f'text-transform:uppercase;letter-spacing:.04em">'
-		f'<th style="padding:8px 10px">Severity</th><th style="padding:8px 10px">Finding</th>'
+		f'<th style="padding:8px 10px">Severity</th><th style="padding:8px 10px">Class</th>'
+		f'<th style="padding:8px 10px">Finding</th>'
 		f'<th style="padding:8px 10px">Reference</th>'
 		f'<th style="padding:8px 10px;text-align:right">Amount</th></tr></thead>'
-		f"<tbody>{rows}</tbody></table></div></body></html>"
+		f"<tbody>{rows}</tbody></table></div>"
+		f"{gaps}{digest_block}</body></html>"
 	)
 
 
+def _visibility_owner(inst) -> str:
+	"""PP-4 — WHO may see this installation's outputs. While ``shadow`` the named
+	reviewer alone sees the findings/dashboards/activity (not the general owner
+	surface, not any customer-facing attestation); once ``live`` the installer owner
+	sees them. The agent permission-query hooks (``agent_permissions``) and the
+	dashboard scope condition both gate reads on the row ``owner``/``target_user``,
+	so re-homing the persisted rows to THIS identity is what enforces shadow
+	visibility on every read path — the SPA, the Desk, and generic REST alike."""
+	if (inst.get("activation_state") or "shadow") == "shadow":
+		return inst.get("reviewer") or inst.owner
+	return inst.owner
+
+
 def persist_agent_dashboard(
-	run_doc, inst, html: str, *, title=None, description=None, set_on_run: bool = True
+	run_doc, inst, html: str, *, title=None, description=None, set_on_run: bool = True, owner_override=None
 ) -> str:
 	"""Create ONE ``Jarvis Dashboard`` from a self-contained HTML document and
 	(by default) link it on the Run.
@@ -164,8 +295,13 @@ def persist_agent_dashboard(
 	the (possibly service-account) run_as_user. User-scoped, Static (no live
 	sources → no query specs that could leak rule shape; the summary is
 	self-contained). The controller enforces the html/title caps + CSP contract.
-	Returns the new dashboard name."""
-	owner = inst.owner
+	Returns the new dashboard name.
+
+	PP-4: ``owner_override`` re-homes the saved dashboard to the reviewer while the
+	installation is in shadow (so ``_validate_scope`` pins ``target_user`` to the
+	reviewer and the owner surface never shows a shadow dashboard); it defaults to
+	the installer owner for a live installation."""
+	owner = owner_override or inst.owner
 	listing_title = frappe.db.get_value(LISTING, run_doc.agent, "title") or run_doc.agent
 	dash_title = (title or "").strip()[:140] or _default_dashboard_title(run_doc, listing_title)
 
@@ -254,17 +390,111 @@ def _reassign_owner(doctype: str, name: str, owner: str) -> None:
 # auto-resolve is coverage-scoped and gated (drift / scoped / under-read), so it
 # never silently closes real blockers a chunk-scoped/partial run never observed.
 # --------------------------------------------------------------------------- #
+def _parse_legacy_coverage(st: str) -> tuple[str, str | None, str]:
+	"""Map a legacy free-string per-token coverage value to
+	``(state, reason_code_or_None, detail)``. Handles ``evaluated``,
+	``not_evaluable`` / ``not_evaluable(<reason>)``, ``truncated`` and any other
+	free string (treated as a not_evaluable whose raw text is preserved as
+	``detail`` so PP-3 fail-safe coercion keeps it)."""
+	if st == "evaluated":
+		return "evaluated", None, ""
+	if st.startswith("truncated"):
+		return "truncated", "run_truncated_watermark", ""
+	if st.startswith("not_evaluable"):
+		inner = ""
+		if "(" in st and st.endswith(")"):
+			inner = st[st.index("(") + 1 : -1].strip()
+		return "not_evaluable", (inner or None), ""
+	# an unrecognised free string — keep it, let coerce_reason_code preserve it.
+	return "not_evaluable", st, ""
+
+
+# PP-3: each placeholdered reason-code template names ONE substitution key; the
+# typed coverage manifest's ``detail`` is the concrete subject that fills it (the
+# app name, the setting, the doctype, ...). Threading it here — with a neutral noun
+# when the evaluator supplied no detail — is what stops the LITERAL ``{app}`` /
+# ``{setting}`` brace-string leaking to the customer in the coverage-gap remediation
+# text (``remediation_for`` called with no fmt renders the raw, unsubstituted brace).
+_REASON_PLACEHOLDER = {
+	"app_absent_or_ineligible": ("app", "the required app"),
+	"configuration_missing": ("setting", "the required setting"),
+	"record_coverage_insufficient": ("records", "records"),
+	"source_stale": ("source", "source"),
+	"external_evidence_absent": ("evidence", "the required evidence"),
+	"unsupported_customisation": ("doctype", "this doctype"),
+}
+
+
+def _remediation_text(reason_code: str, detail: str = "") -> str:
+	"""Customer-facing PP-3 remediation for a reason code, with its ``{...}``
+	placeholder filled from the typed manifest ``detail`` (a neutral noun when the
+	evaluator supplied none) so a literal ``{app}`` / ``{setting}`` brace NEVER
+	reaches the customer. Reason codes without a placeholder pass straight through."""
+	slot = _REASON_PLACEHOLDER.get(reason_code)
+	if not slot:
+		return cr.remediation_for(reason_code)
+	key, default = slot
+	subject = (detail or "").strip() or default
+	return cr.remediation_for(reason_code, **{key: subject})
+
+
+def _listing_rule_tokens(agent: str) -> set:
+	"""The agent's DECLARED opaque rule-token manifest (``Jarvis Agent Listing.
+	rule_tokens``) — the AUTHORITATIVE required-check set for the PP-2 coverage
+	verdict. Sourcing the required tokens from the listing here (NOT from the
+	writeback-supplied coverage keys) is what stops a delegate under-reporting its
+	coverage to earn a false ``evaluated_clean``: a declared token the run never
+	returns ``evaluated`` is un-evaluated required coverage. Empty for operators /
+	legacy agents (no rule tokens -> no coverage bar to fail)."""
+	import json as _json
+
+	raw = frappe.db.get_value(LISTING, agent, "rule_tokens")
+	if not raw:
+		return set()
+	try:
+		parsed = _json.loads(raw)
+	except Exception:
+		return set()
+	return {str(t) for t in parsed if t} if isinstance(parsed, list) else set()
+
+
 def _coverage_summary(coverage: dict) -> tuple[set, list]:
-	"""(fully-evaluated token set, [not_evaluable/truncated notes]) from the
-	per-rule coverage manifest ``{token: "evaluated"|"not_evaluable(reason)"|
-	"truncated"}`` the evaluator emits (A16)."""
+	"""Resolve the per-check coverage manifest into
+	``(fully-evaluated token set, [typed not_evaluable/truncated notes])`` (PP-3).
+
+	Each manifest value is either the typed form
+	``{state, reason_code, detail}`` or the legacy string form
+	``{token: "evaluated"|"not_evaluable(reason)"|"truncated"}``. A non-``evaluated``
+	token yields a typed note dict carrying the closed PP-3 ``reason_code`` (an
+	unknown code is coerced to ``unsupported_customisation`` with the raw string in
+	``detail`` — never dropped) plus its customer remediation, retryability and
+	support routing, so the dashboard / support UI / telemetry all read one shape."""
 	evaluated, notes = set(), []
-	for token, state in (coverage or {}).items():
-		st = str(state or "")
-		if st == "evaluated":
+	for token, raw in (coverage or {}).items():
+		if isinstance(raw, dict):
+			state = str(raw.get("state") or "")
+			reason_raw = raw.get("reason_code")
+			detail = str(raw.get("detail") or "")
+		else:
+			state, reason_raw, detail = _parse_legacy_coverage(str(raw or ""))
+		if state == "evaluated":
 			evaluated.add(token)
-		elif st:
-			notes.append(f"{token}: {st}")
+			continue
+		if not state and reason_raw is None and not detail:
+			continue  # empty / unset token — no coverage signal
+		code, coerced_detail = cr.coerce_reason_code(reason_raw)
+		detail = detail or coerced_detail
+		notes.append(
+			{
+				"token": token,
+				"state": state or "not_evaluable",
+				"reason_code": code,
+				"detail": detail,
+				"remediation": _remediation_text(code, detail),
+				"retryable": cr.is_retryable(code),
+				"routing": cr.routing_for(code),
+			}
+		)
 	return evaluated, notes
 
 
@@ -389,6 +619,13 @@ def record_delegate_run(
 	inst = installation if hasattr(installation, "owner") else frappe.get_doc(INSTALLATION, installation)
 	run_doc = run if hasattr(run, "name") else frappe.get_doc(RUN, run)
 	owner = inst.owner
+	# PP-4: WHO the persisted run/findings/dashboard are re-homed to for read
+	# visibility — the reviewer while shadow, the installer once live. The row
+	# ``owner`` is the single axis the agent permission hooks scope on, so this
+	# reassignment IS the shadow-visibility enforcement (owner cannot read shadow
+	# output; the named reviewer can).
+	shadow = (inst.get("activation_state") or "shadow") == "shadow"
+	visibility_owner = _visibility_owner(inst)
 	agent = inst.agent
 	coverage = coverage or {}
 	scope = scope or {}
@@ -420,6 +657,12 @@ def record_delegate_run(
 			frappe.db.set_value(FINDING, existing, "last_seen_run", run_doc.name, update_modified=False)
 			continue
 
+		# PP-1: the epistemic class + its class-conditional metadata, already
+		# validated by the tool (result_class in-enum, never confirmed_outcome, and
+		# the required candidate/legal fields present). Persisted verbatim; the
+		# controller set-once guard makes result_class immutable thereafter, and
+		# confirmation_status stays ``unconfirmed`` until the PP-5 ledger moves it.
+		result_class = f.get("result_class")
 		fd = frappe.get_doc(
 			{
 				"doctype": FINDING,
@@ -429,18 +672,30 @@ def record_delegate_run(
 				# identifier never reaches the bench; fingerprint dedup keeps working.
 				"rule_id": token or "",
 				"severity": sev,
+				"result_class": result_class,
 				# A2: authored, outcome-level text only (the evaluator's fixed-template
 				# note). No as-coded threshold / carve-out text.
 				"title": note[:140],
 				"detail_md": note,
-				"section": "",
+				"section": f.get("section") or "",
+				"effective_date": _safe_date(f.get("effective_date")),
+				# derived_candidate metadata (empty for other classes).
+				"confidence": f.get("confidence"),
+				"match_basis": f.get("match_basis") or "",
+				"false_positive_path": f.get("false_positive_path") or "",
+				# legal_scenario metadata (empty for other classes).
+				"rule_version": f.get("rule_version") or "",
+				"assumptions": f.get("assumptions") or "",
+				"known_exceptions": f.get("known_exceptions") or "",
+				"source": f.get("source") or "",
+				"reviewer": f.get("reviewer") or None,
 				"ref_doctype": f.get("ref_doctype") or "",
 				"ref_name": f.get("ref_name") or "",
 				# A16: stamp the company scope so a Company-B run never auto-resolves a
 				# Company-A finding; empty legacy rows are exempt until re-seen.
 				"company": company or None,
 				"amount": f.get("amount") or 0,
-				"disclaimer": "",
+				"disclaimer": f.get("disclaimer") or "",
 				"fingerprint": fp,
 				"state": "open",
 				"first_seen_run": run_doc.name,
@@ -449,7 +704,9 @@ def record_delegate_run(
 		)
 		fd.flags.ignore_permissions = True
 		fd.insert()
-		_reassign_owner(FINDING, fd.name, owner)
+		# PP-4: re-home to the reviewer while shadow (visibility_owner), the installer
+		# once live — the row owner is what the finding read path gates on.
+		_reassign_owner(FINDING, fd.name, visibility_owner)
 
 	# --- A17 watermark recheck (FIX 2: HOISTED before the A16 gate) ------------
 	# Computed BEFORE the auto-resolve loop so it can gate it: a run that observed an
@@ -479,6 +736,16 @@ def record_delegate_run(
 	# belong to THIS run's company scope are eligible; empty-company legacy rows are
 	# exempt.
 	evaluated_tokens, coverage_notes = _coverage_summary(coverage)
+
+	# PP-2 (false-clean gate): the required-check set is the agent's DECLARED
+	# rule-token manifest (authoritative), NEVER the writeback-supplied coverage
+	# keys — a delegate under-reporting its coverage must not be able to define its
+	# own bar. A declared token the run never returned ``evaluated`` (absent from,
+	# or not_evaluable in, the coverage payload) is un-evaluated required coverage:
+	# it forces the run partial so an empty/narrow manifest can never read as clean.
+	required_tokens = _listing_rule_tokens(agent)
+	required_unevaluated = required_tokens - evaluated_tokens
+
 	if not truncated and not wm_drift and not scoped and not row_shortfall and evaluated_tokens:
 		candidates = frappe.get_all(
 			FINDING,
@@ -498,7 +765,20 @@ def record_delegate_run(
 			# legacy row, is left untouched (exempt) — never cross-company resolved.
 			if not company or not c.company or c.company != company:
 				continue
-			frappe.db.set_value(FINDING, c.name, "state", "resolved", update_modified=False)
+			# PP-5 review provenance: an A16 coverage-scoped auto-resolve is machine,
+			# not human — stamp resolution_kind + resolved_at so a coverage close is
+			# forever separable from a person acknowledging the finding (which stamps
+			# resolution_kind = human + resolved_by).
+			frappe.db.set_value(
+				FINDING,
+				c.name,
+				{
+					"state": "resolved",
+					"resolution_kind": "auto_coverage",
+					"resolved_at": frappe.utils.now(),
+				},
+				update_modified=False,
+			)
 
 	# --- status + coverage note ------------------------------------------------
 	dropped_notes = [
@@ -507,6 +787,23 @@ def record_delegate_run(
 	]
 	partial = bool(truncated) or wm_drift or scoped or row_shortfall or bool(dropped) or bool(coverage_notes)
 	status = "partial" if partial else "completed"
+
+	# PP-2: resolve EXACTLY one coverage-verdict run_state from the DECLARED required
+	# checks. This is a SEPARATE axis from the execution-lifecycle ``status`` (which
+	# stays ``completed`` for a run that finished executing) — a run can complete yet
+	# leave required coverage incomplete. ``required_tokens`` is the agent's declared
+	# manifest (resolved above, NOT the writeback coverage keys, so a delegate cannot
+	# under-report to define its own bar): all-required-unevaluated -> not_evaluable;
+	# some required token unevaluated -> partial; else evaluated_clean. A declared
+	# required token the run never evaluated drives the coverage verdict off
+	# ``evaluated_clean`` WITHOUT touching ``status``. "No exceptions" is unreachable
+	# unless evaluated_clean.
+	result_state = cr.resolve_run_state(
+		required_tokens=required_tokens,
+		evaluated_tokens=evaluated_tokens,
+		partial=partial or bool(required_unevaluated),
+		failed=False,
+	)
 
 	note_parts = []
 	if truncated:
@@ -518,7 +815,18 @@ def record_delegate_run(
 	if row_shortfall:
 		note_parts.append("ledger under-read vs watermark — re-run advised")
 	if coverage_notes:
-		note_parts.append("not evaluable: " + "; ".join(coverage_notes))
+		# PP-3: surface the CUSTOMER remediation sentence (placeholder-filled) that the
+		# amber "Partial scan — {coverageNote}" banner reads day to day, NOT the raw
+		# internal reason-code enum slug.
+		note_parts.append(
+			"not evaluable: " + "; ".join(f"{n['token']}: {n['remediation']}" for n in coverage_notes)
+		)
+	# PP-2: a DECLARED required token entirely omitted from the coverage manifest
+	# (no evaluator note of its own) still made the run partial — name the shortfall
+	# so the banner is not silently blank when that is the only reason for partial.
+	absent_required = required_unevaluated - {n["token"] for n in coverage_notes}
+	if absent_required:
+		note_parts.append(f"{len(absent_required)} required check(s) not evaluated this run")
 	if dropped_notes:
 		note_parts.append("dropped: " + "; ".join(dropped_notes))
 	coverage_note = " | ".join(note_parts)
@@ -531,6 +839,8 @@ def record_delegate_run(
 	coverage_blob = _json.dumps(
 		{
 			"coverage": coverage,
+			"required_tokens": sorted(required_tokens),
+			"result_state": result_state,
 			"not_evaluable": coverage_notes,
 			"not_evaluable_scoped": sorted(evaluated_tokens) if scoped else [],
 			"dropped": dropped,
@@ -547,6 +857,7 @@ def record_delegate_run(
 
 	run_values = {
 		"status": status,
+		"result_state": result_state,
 		"findings_count": len(seen_fps),
 		"blocker_count": counts.get("blocker", 0),
 		"finished_at": frappe.utils.now(),
@@ -560,6 +871,12 @@ def record_delegate_run(
 	if canvas_ref:
 		run_values["canvas_ref"] = str(canvas_ref)[:255]
 	frappe.db.set_value(RUN, run_doc.name, run_values, update_modified=False)
+
+	# PP-4: re-home the run itself to the visibility owner (reviewer while shadow,
+	# installer once live) so the run history read path (owner-scoped) shows a shadow
+	# run only to its reviewer. Raw set_value bypasses the launch-fields controller.
+	if visibility_owner and frappe.db.get_value(RUN, run_doc.name, "owner") != visibility_owner:
+		frappe.db.set_value(RUN, run_doc.name, "owner", visibility_owner, update_modified=False)
 
 	# --- Phase 4: exactly ONE saved Jarvis Dashboard per run ------------------
 	# Precedence: (1) a dashboard the delegate already authored via
@@ -576,15 +893,31 @@ def record_delegate_run(
 	if not dashboard_name:
 		try:
 			title = _default_dashboard_title(run_doc, agent_title)
-			html = _fallback_dashboard_html(title, list(by_fp.values()), counts, coverage_note)
-			dashboard_name = persist_agent_dashboard(run_doc, inst, html, title=title)
+			html = _fallback_dashboard_html(
+				title,
+				list(by_fp.values()),
+				counts,
+				coverage_note,
+				result_state=result_state,
+				coverage_notes=coverage_notes,
+				# PP-4: a shadow run's fallback artifact issues no outward clean/compliant
+				# attestation. PP-6: stamp the evaluator integrity digest in-body.
+				shadow=shadow,
+				integrity_digest=integrity_digest,
+			)
+			dashboard_name = persist_agent_dashboard(
+				run_doc, inst, html, title=title, owner_override=visibility_owner
+			)
 		except Exception:
 			frappe.log_error(
 				title="jarvis agent: fallback dashboard build failed",
 				message=frappe.get_traceback(),
 			)
 
-	# Activity trail (best-effort, owner-scoped, Link-free) + owner notification.
+	# Activity trail (best-effort, Link-free) + completion notification. PP-4: the
+	# completion row + bell carry finding COUNTS, so in shadow they go to the reviewer
+	# (visibility_owner), never the general owner surface — the owner sees the
+	# preview's results only after promotion re-homes them.
 	log_activity(
 		agent=agent,
 		agent_title=agent_title,
@@ -594,11 +927,17 @@ def record_delegate_run(
 		detail=f"{len(seen_fps)} findings, {counts.get('blocker', 0)} blockers"
 		+ (f"; {coverage_note}" if coverage_note else "")
 		+ (f"; dashboard {dashboard_name}" if dashboard_name else ""),
-		owner=owner,
+		owner=visibility_owner,
 	)
 	if dashboard_name:
 		_notify_owner_dashboard(
-			owner, run_doc.name, dashboard_name, agent_title, status, len(seen_fps), counts.get("blocker", 0)
+			visibility_owner,
+			run_doc.name,
+			dashboard_name,
+			agent_title,
+			status,
+			len(seen_fps),
+			counts.get("blocker", 0),
 		)
 
 	# A8 (zero-trace): the per-run session bearer must not outlive the run.

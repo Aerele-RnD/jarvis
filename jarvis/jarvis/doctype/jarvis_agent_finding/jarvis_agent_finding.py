@@ -9,10 +9,15 @@ cannot forge or reassign one (rows are inserted server-side and owned by the
 installation owner).
 """
 
+import frappe
+from frappe import _
 from frappe.model.document import Document
 
 # Engine-owned audit fields — everything except the user-actionable ``state``.
 # Frozen on any customer save so the audited party cannot rewrite/erase a finding.
+# PP-5 review-provenance fields are included: once the engine/ledger stamps them
+# (via ``db.set_value``, which bypasses this controller) a customer ORM save can
+# never rewrite who/when/what-kind resolved the finding, nor forge a result link.
 _FROZEN_FIELDS = (
 	"run",
 	"agent",
@@ -29,12 +34,40 @@ _FROZEN_FIELDS = (
 	"fingerprint",
 	"first_seen_run",
 	"last_seen_run",
+	# PP-5 provenance / review fields (immutable-once-written at the ORM level).
+	"confirmation_status",
+	"outcome_provenance",
+	"resolved_by",
+	"resolved_at",
+	"resolution_kind",
+	"result_link_doctype",
+	"result_link_name",
 )
 
 
 class JarvisAgentFinding(Document):
 	def validate(self):
+		self._guard_result_class_set_once()
 		self._freeze_audit_fields()
+
+	def _guard_result_class_set_once(self):
+		"""PP-1: ``result_class`` is the immutable epistemic class of the finding —
+		set once at writeback and never editable afterwards. Unlike the audit fields
+		(silently restored), a changed class is a contract violation, so this RAISES.
+		The insert (``is_new``) is exempt (the one legitimate write); the engine /
+		ledger never re-classes a finding via the ORM, so the guard fires regardless
+		of ``ignore_permissions`` — the class is a hard, one-way commit."""
+		if self.is_new():
+			return
+		before = self.get_doc_before_save()
+		if not before:
+			return
+		stored = before.get("result_class")
+		if stored and self.result_class != stored:
+			frappe.throw(
+				_("result_class is set once at writeback (PP-1) and cannot be changed afterwards."),
+				frappe.PermissionError,
+			)
 
 	def _freeze_audit_fields(self):
 		"""TASK 31 (AGENTS-3): a finding is the reproducibility guarantee of an

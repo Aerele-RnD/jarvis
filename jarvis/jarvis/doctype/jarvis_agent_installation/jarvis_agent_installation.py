@@ -41,13 +41,59 @@ _GL_SCOPED_DIMENSIONS = (
 
 class JarvisAgentInstallation(Document):
 	def validate(self):
+		self._default_reviewer()
 		self._validate_unique_per_owner()
 		self._validate_owner_cap()
 		self._validate_run_as_user()
 		self._validate_schedule_budget()
+		self._guard_activation_transition()
 
 	def on_update(self):
 		self._audit_cross_user_run_as()
+
+	def _default_reviewer(self):
+		"""PP-4: ``reviewer`` is reqd — the named human who sees this installation's
+		SHADOW output (findings/dashboards) and whose explicit sign-off is the only
+		path to ``live``. Default it to the run-as user (which itself defaults to the
+		installer) so every write surface (SPA / Desk / data import / direct save /
+		test) gets a sensible reviewer without the caller having to supply one; a
+		Jarvis Admin may retarget it. Never leave it empty — a shadow install with no
+		reviewer would have no one who can see its output or promote it. Runs before
+		Frappe's mandatory check, so it satisfies ``reqd`` on every surface."""
+		if not (self.reviewer or "").strip():
+			self.reviewer = self.run_as_user or self.owner or frappe.session.user
+
+	def _guard_activation_transition(self):
+		"""PP-4 / PP-6: ``activation_state`` is THE flag. A fresh install is always
+		born in ``shadow`` (it may not skip the reviewer-calibration stage), and the
+		flip ``shadow -> live`` happens ONLY through the reviewer promotion path
+		(``agents_api.promote_installation``, which stamps ``promoted_by``/
+		``promoted_at``, checks the PP-6 global activation budget and writes a PP-5
+		provenance event) and ``live -> shadow`` ONLY through the demotion/kill path —
+		each sets its dedicated flag. A plain ORM save (a customer editing the row, a
+		generic-REST PUT) may NOT flip it: that would bypass the sign-off, the who/when
+		audit and the budget ceiling."""
+		if self.is_new():
+			if (self.activation_state or "shadow") != "shadow":
+				frappe.throw(
+					_("A new installation activates in shadow; promote it via reviewer sign-off (PP-4).")
+				)
+			return
+		before = self.get_doc_before_save()
+		if not before:
+			return
+		old = before.get("activation_state") or "shadow"
+		new = self.activation_state or "shadow"
+		if old == new:
+			return
+		if old == "shadow" and new == "live" and self.flags.get("promoting"):
+			return
+		if old == "live" and new == "shadow" and self.flags.get("demoting"):
+			return
+		frappe.throw(
+			_("activation_state flips only via the reviewer promotion / demotion path (PP-4)."),
+			frappe.PermissionError,
+		)
 
 	def _validate_schedule_budget(self):
 		"""A14: warn (do not hard-block) when an enabled schedule's expected monthly

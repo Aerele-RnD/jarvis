@@ -17,6 +17,7 @@ import frappe
 from frappe import _
 
 from jarvis._session import impersonate
+from jarvis.chat import coverage_reasons as cr
 from jarvis.chat.agent_activity import log_activity
 from jarvis.chat.agent_catalog import build_agent_push_payload
 from jarvis.chat.filebox import _clamp_page, _lk
@@ -32,8 +33,16 @@ INSTALLATION = "Jarvis Agent Installation"
 RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
 ACTIVITY = "Jarvis Agent Activity"
+DASHBOARD = "Jarvis Dashboard"
+PROVENANCE = "Jarvis Agent Provenance Event"
 ALLOWED_ROLE = "Jarvis Agent Allowed Role"
 _SETTINGS = "Jarvis Settings"
+
+# PP-6 — the stage-maximum global activation ceiling. The initial ceiling is 1
+# (every customer starts with a single live module); a Jarvis Admin may raise it
+# to 2 (this maximum) with a recorded reviewer-capacity justification. No path to
+# 3+ exists at this stage.
+_ACTIVATION_CEILING_MAX = 2
 _PUSH_JOB_ID = "jarvis_agent_skills_push"
 _LOCK_NAME = "jarvis_agent_skills_push"
 
@@ -343,6 +352,13 @@ def get_installations() -> list[dict]:
 			"name",
 			"agent",
 			"enabled",
+			# PP-4: the activation state + named reviewer + promotion stamp so the SPA
+			# can surface a customer's SHADOW installations as a distinct set and wire the
+			# promote/demote actions (the reviewer's "one clear action") to them.
+			"activation_state",
+			"reviewer",
+			"promoted_by",
+			"promoted_at",
 			"installed_version",
 			"installed_at",
 			"config",
@@ -564,6 +580,12 @@ def install_agent(agent_slug: str) -> dict:
 			# which the controller's escalation guard always permits. An admin may
 			# retarget it later via set_run_as_user.
 			"run_as_user": me,
+			# PP-4: every capability activates per customer in preview/SHADOW first,
+			# with the installer as the initial named reviewer (retargetable by an
+			# admin). The controller also defaults reviewer + forbids a non-shadow
+			# birth, but set it explicitly here so the install intent is on the record.
+			"activation_state": "shadow",
+			"reviewer": me,
 			"installed_version": listing.version,
 			"installed_at": frappe.utils.now(),
 			"schedule_enabled": int(sched.get("schedule_enabled") or 0),
@@ -725,13 +747,30 @@ def uninstall_agent(installation: str) -> dict:
 		installation=doc.name,
 		action="uninstalled",
 	)
-	run_names = frappe.get_all(RUN, filters={"installation": doc.name}, pluck="name")
+	# PP-4: a shadow installation's runs/findings are re-homed to the REVIEWER (not
+	# the installer owner), so the owner-scoped permission-query hook would hide them
+	# from this owner-initiated cascade and leave orphans that block the delete.
+	# ignore_permissions here finds every row regardless of its current visibility
+	# owner; the delete itself is already ignore_permissions + owner-gated above.
+	run_names = frappe.get_all(RUN, filters={"installation": doc.name}, pluck="name", ignore_permissions=True)
+	# Findings for this install are owned by the installer (live) OR the reviewer
+	# (shadow) — cover both, plus (belt-and-braces) any finding whose run pointers
+	# land in this install's runs.
 	finding_names = set(
-		frappe.get_all(FINDING, filters={"owner": doc.owner, "agent": doc.agent}, pluck="name")
+		frappe.get_all(
+			FINDING,
+			filters={"agent": doc.agent, "owner": ["in", [doc.owner, doc.reviewer]]},
+			pluck="name",
+			ignore_permissions=True,
+		)
 	)
 	if run_names:
 		for field in ("run", "first_seen_run", "last_seen_run"):
-			finding_names.update(frappe.get_all(FINDING, filters={field: ["in", run_names]}, pluck="name"))
+			finding_names.update(
+				frappe.get_all(
+					FINDING, filters={field: ["in", run_names]}, pluck="name", ignore_permissions=True
+				)
+			)
 	for name in finding_names:
 		frappe.delete_doc(FINDING, name, ignore_permissions=True, force=True)
 	for name in run_names:
@@ -807,6 +846,297 @@ def run_agent_now(installation: str) -> dict:
 			doc = frappe.get_doc(INSTALLATION, installation)  # re-fetch under run_as
 		result = _launch_audit(doc, trigger="manual")
 	return {"ok": True, "data": result}
+
+
+# --------------------------------------------------------------------------- #
+# PP-4 shadow activation + PP-6 global activation budget
+# --------------------------------------------------------------------------- #
+def _has_ceiling_grant(customer: str) -> bool:
+	"""PP-6 — True iff a Jarvis Admin has recorded an ``activation_ceiling_raised``
+	provenance grant BOUND TO THIS CUSTOMER. The grant is stored on the append-only
+	ledger, keyed to the customer via ``result_link_doctype='User' / result_link_name
+	=<owner>`` — never a global singleton — so a raise justified by ONE customer's
+	reviewer can never silently unlock a second live module for every other customer
+	on the site (the exact detachment the global-singleton read caused)."""
+	if not customer:
+		return False
+	return bool(
+		frappe.db.exists(
+			PROVENANCE,
+			{
+				"event_type": "activation_ceiling_raised",
+				"result_link_doctype": "User",
+				"result_link_name": customer,
+			},
+		)
+	)
+
+
+def _activation_ceiling(customer: str) -> int:
+	"""PP-6 — the LIVE-module ceiling FOR THIS CUSTOMER. Base 1 (every customer starts
+	with a single live module); raised to the stage maximum only for a customer who
+	has a recorded per-customer grant (``_has_ceiling_grant``). Per-customer, never a
+	site-wide singleton — the budget is a per-customer ceiling (Round-4 condition 2),
+	so its raise must bind to the customer it was justified for."""
+	return _ACTIVATION_CEILING_MAX if _has_ceiling_grant(customer) else 1
+
+
+def _verify_reviewer_two_pack_capacity(customer: str) -> str:
+	"""PP-6 reviewer-capacity gate (system-verified, not free text): a second live
+	module needs a named reviewer who can own it, so require this customer to have a
+	single named ``reviewer`` who is the reviewer-of-record across installations
+	spanning at least TWO DISTINCT packs. Returns that reviewer; throws if none
+	qualifies. Pack identity is the listing ``rule_pack`` (falling back to the agent
+	slug when a listing declares no pack), so two distinct agents count as two packs."""
+	rows = frappe.get_all(INSTALLATION, filters={"owner": customer}, fields=["reviewer", "agent"])
+	packs_by_reviewer: dict[str, set] = {}
+	for r in rows:
+		if not r.reviewer:
+			continue
+		pack = frappe.db.get_value(LISTING, r.agent, "rule_pack") or r.agent
+		packs_by_reviewer.setdefault(r.reviewer, set()).add(pack)
+	for reviewer, packs in packs_by_reviewer.items():
+		if len(packs) >= 2:
+			return reviewer
+	frappe.throw(
+		_(
+			"No named reviewer for this customer covers two packs. A second live module "
+			"needs a reviewer who is the reviewer-of-record on installations spanning at "
+			"least two distinct packs before the activation ceiling may be raised."
+		)
+	)
+
+
+def _append_provenance_event(**fields) -> str:
+	"""PP-5 — append ONE immutable provenance event. The controller enforces
+	append-only + stamps ``occurred_at``; this is the only ledger writer Phase C
+	needs (``agent_promoted_to_live`` on promotion, ``activation_ceiling_raised`` on
+	a budget raise). ignore_permissions — trusted server infrastructure, exactly
+	like the finding/run inserts (the ledger perm grants create to System Manager
+	only, but a reviewer/admin action legitimately records one)."""
+	doc = frappe.get_doc({"doctype": PROVENANCE, **fields})
+	doc.flags.ignore_permissions = True
+	doc.insert(ignore_permissions=True)
+	return doc.name
+
+
+def _rehome_installation_outputs(inst, to_owner: str) -> None:
+	"""PP-4 — move the VISIBILITY ownership of this installation's already-persisted
+	runs / findings / dashboards / activity to ``to_owner``: the reviewer while
+	shadow, the installer once promoted to live. The agent permission-query hooks
+	and the dashboard scope condition gate reads on ``owner``/``target_user``, so
+	re-homing is how promotion OPENS the owner surface (and demotion re-closes it).
+	Raw ``db.set_value`` bypasses the finding/run immutability controllers. Rows are
+	located precisely by installation membership (never a broad owner+agent match
+	that could sweep a different install of the same agent)."""
+	run_names = frappe.get_all(
+		RUN, filters={"installation": inst.name}, pluck="name", ignore_permissions=True
+	)
+	dash_names, finding_names = set(), set()
+	if run_names:
+		for r in frappe.get_all(
+			RUN, filters={"name": ["in", run_names]}, fields=["dashboard"], ignore_permissions=True
+		):
+			if r.dashboard:
+				dash_names.add(r.dashboard)
+		for field in ("run", "first_seen_run", "last_seen_run"):
+			finding_names.update(
+				frappe.get_all(
+					FINDING, filters={field: ["in", run_names]}, pluck="name", ignore_permissions=True
+				)
+			)
+	for rn in run_names:
+		frappe.db.set_value(RUN, rn, "owner", to_owner, update_modified=False)
+	for fn in finding_names:
+		frappe.db.set_value(FINDING, fn, "owner", to_owner, update_modified=False)
+	for dn in dash_names:
+		frappe.db.set_value(
+			DASHBOARD, dn, {"owner": to_owner, "target_user": to_owner}, update_modified=False
+		)
+	for an in frappe.get_all(
+		ACTIVITY, filters={"installation": inst.name}, pluck="name", ignore_permissions=True
+	):
+		frappe.db.set_value(ACTIVITY, an, "owner", to_owner, update_modified=False)
+
+
+@frappe.whitelist()
+def promote_installation(installation: str, justification: str | None = None) -> dict:
+	"""PP-4 — promote a shadow installation to LIVE by the named reviewer's explicit
+	sign-off. This is the SINGLE choke point PP-4 (calibration) and PP-6 (budget)
+	both enforce:
+
+	  * Authority: the named ``reviewer`` (their sign-off), or an authorised approver
+	    (Jarvis Admin / System Manager). NOT the owner surface — ``check_permission``
+	    gates on ``if_owner`` and the reviewer may not be the owner, so authority is
+	    checked explicitly here.
+	  * PP-6 budget: refuse when this customer already has ``activation_module_ceiling``
+	    live modules (global across all packs, per customer; default 1).
+	  * Records who/when (``promoted_by``/``promoted_at``, track_changes audited) and
+	    writes an append-only ``agent_promoted_to_live`` provenance event.
+	  * Re-homes the installation's runs/findings/dashboards to the owner so the
+	    owner surface + attestation become available only AFTER sign-off."""
+	from jarvis._redis_lock import redis_lock
+
+	doc = frappe.get_doc(INSTALLATION, installation)
+	me = frappe.session.user
+	if me != doc.reviewer and not has_jarvis_admin_access(me):
+		frappe.throw(
+			_("Only the named reviewer or a Jarvis Admin may promote this installation to live."),
+			frappe.PermissionError,
+		)
+	if doc.activation_state == "live":
+		frappe.throw(_("This installation is already live."))
+
+	# PP-6 activation-budget enforcement must be RACE-FREE: the read-check-flip below
+	# (count live -> compare to ceiling -> save live) is a TOCTOU window. Two concurrent
+	# promotions for the same customer would both read live_count=0 against ceiling 1 and
+	# both flip to live, exceeding the per-customer ceiling. Serialize every activation
+	# change for a customer on a redis lock keyed on the OWNER, and — inside the lock —
+	# force a fresh transaction snapshot (``commit`` ends the REPEATABLE-READ snapshot the
+	# earlier ``get_doc`` opened, so the count reflects any promotion another request has
+	# committed) before re-reading state and re-checking the ceiling.
+	owner = doc.owner
+	with redis_lock(f"jarvis_agent_activation:{owner}", timeout_s=30, blocking_timeout_s=10.0) as acquired:
+		if not acquired:
+			frappe.throw(
+				_("Another activation change for this customer is in progress — please retry in a moment.")
+			)
+		frappe.db.commit()  # fresh snapshot under the lock (defeats stale REPEATABLE-READ count)
+		doc = frappe.get_doc(INSTALLATION, installation)  # re-read the row under the lock
+		if doc.activation_state == "live":
+			frappe.throw(_("This installation is already live."))
+
+		ceiling = _activation_ceiling(owner)
+		live_count = frappe.db.count(INSTALLATION, {"owner": owner, "activation_state": "live"})
+		if live_count >= ceiling:
+			frappe.throw(
+				_(
+					"Activation budget reached: this customer already has {0} live module(s) and the "
+					"activation ceiling is {1}. The initial budget is a single live module; a Jarvis Admin "
+					"can raise the ceiling to {2} once the reviewer covers a second pack."
+				).format(live_count, ceiling, _ACTIVATION_CEILING_MAX)
+			)
+
+		doc.activation_state = "live"
+		doc.promoted_by = me
+		doc.promoted_at = frappe.utils.now()
+		doc.flags.promoting = True  # authorises the shadow->live transition guard
+		doc.save(ignore_permissions=True)
+
+		_rehome_installation_outputs(doc, owner)
+		event = _append_provenance_event(
+			event_type="agent_promoted_to_live",
+			agent=doc.agent,
+			installation=doc.name,
+			preparation_mode="live",
+			reviewing_human=me,
+			detail=((justification or "").strip()[:500] or None),
+		)
+		log_activity(
+			agent=doc.agent,
+			agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
+			installation=doc.name,
+			action="promoted_to_live",
+			detail=f"signed off by {me}",
+			owner=owner,
+		)
+		frappe.db.commit()
+	return {
+		"ok": True,
+		"data": {
+			"name": doc.name,
+			"activation_state": "live",
+			"promoted_by": me,
+			"promoted_at": str(doc.promoted_at),
+			"provenance_event": event,
+		},
+	}
+
+
+@frappe.whitelist()
+def demote_installation(installation: str, reason: str | None = None) -> dict:
+	"""PP-4 — the demotion / kill path: send a live installation back to SHADOW
+	(re-closing the owner surface, freeing a global activation-budget slot). Same
+	authority as promotion (named reviewer or a Jarvis Admin). Clears the promotion
+	stamp and re-homes outputs back to the reviewer-only surface; audited via
+	track_changes + the activity feed."""
+	doc = frappe.get_doc(INSTALLATION, installation)
+	me = frappe.session.user
+	if me != doc.reviewer and not has_jarvis_admin_access(me):
+		frappe.throw(
+			_("Only the named reviewer or a Jarvis Admin may demote this installation."),
+			frappe.PermissionError,
+		)
+	if doc.activation_state != "live":
+		frappe.throw(_("This installation is not live."))
+	doc.activation_state = "shadow"
+	doc.promoted_by = None
+	doc.promoted_at = None
+	doc.flags.demoting = True  # authorises the live->shadow transition guard
+	doc.save(ignore_permissions=True)
+	_rehome_installation_outputs(doc, doc.reviewer or doc.owner)
+	log_activity(
+		agent=doc.agent,
+		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
+		installation=doc.name,
+		action="demoted_to_shadow",
+		detail=((reason or "").strip()[:140] or f"by {me}"),
+		owner=doc.owner,
+	)
+	frappe.db.commit()
+	return {"ok": True, "data": {"name": doc.name, "activation_state": "shadow"}}
+
+
+@frappe.whitelist()
+def raise_activation_ceiling(customer: str, justification: str, new_ceiling: int = 2) -> dict:
+	"""PP-6 — raise the activation ceiling from 1 to 2 (the stage maximum) FOR ONE
+	NAMED CUSTOMER. Restricted to a Jarvis Admin. The raise is per-customer, never a
+	site-wide singleton: it must name the ``customer`` (owner) being raised, is granted
+	only when that customer's named reviewer is system-verified to cover two packs'
+	competency (``_verify_reviewer_two_pack_capacity`` — the reviewer-capacity signal,
+	not a free-text claim), and is recorded as an append-only ``activation_ceiling_raised``
+	provenance event bound to the customer (who / when / customer / reviewer /
+	justification / new ceiling). Any value above 2 is rejected — no path to 3+ here."""
+	require_jarvis_admin()
+	just = (justification or "").strip()
+	if not just:
+		frappe.throw(_("A reviewer-capacity justification is required to raise the activation ceiling."))
+	nc = frappe.utils.cint(new_ceiling)
+	if nc != _ACTIVATION_CEILING_MAX:
+		frappe.throw(
+			_("The activation ceiling may be raised only to {0} (the stage maximum).").format(
+				_ACTIVATION_CEILING_MAX
+			)
+		)
+	customer = (customer or "").strip()
+	if not customer or not frappe.db.exists("User", customer):
+		frappe.throw(_("Name the customer (installation owner) whose activation ceiling is being raised."))
+	# System-verified reviewer-capacity gate (not just a free-text justification): a
+	# second live module needs a named reviewer who can own it.
+	reviewer = _verify_reviewer_two_pack_capacity(customer)
+	me = frappe.session.user
+	# The grant lives ONLY on the append-only ledger, bound to this customer via
+	# result_link_doctype/name — no global singleton is written, so the raise cannot
+	# leak a second live module to any other customer. Idempotent: one grant per
+	# customer already lifts _activation_ceiling(customer) to the maximum.
+	event = _append_provenance_event(
+		event_type="activation_ceiling_raised",
+		initiating_human=me,
+		reviewing_human=reviewer,
+		result_link_doctype="User",
+		result_link_name=customer,
+		detail=f"activation_module_ceiling -> {nc} for {customer}; reviewer {reviewer}; {just}"[:500],
+	)
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"data": {
+			"customer": customer,
+			"reviewer": reviewer,
+			"activation_module_ceiling": nc,
+			"provenance_event": event,
+		},
+	}
 
 
 # --------------------------------------------------------------------------- #
@@ -999,6 +1329,21 @@ def list_findings(
 			"agent",
 			"rule_id",
 			"severity",
+			# PP-1: the immutable result class + its class-conditional metadata ride on
+			# EVERY read row so the SPA can label the class beside the amount and mark a
+			# derived_candidate / legal_scenario as unconfirmed — a candidate must never
+			# render indistinguishable from an observed_fact on the primary triage surface.
+			"result_class",
+			"confidence",
+			"match_basis",
+			"false_positive_path",
+			"confirmation_status",
+			"rule_version",
+			"assumptions",
+			"known_exceptions",
+			"source",
+			"reviewer",
+			"outcome_provenance",
 			"title",
 			"detail_md",
 			"section",
@@ -1019,6 +1364,18 @@ def list_findings(
 	# Derived recurrence label: dedupe only ever bumps ``last_seen_run`` while a
 	# finding stays open, so a span wider than one run means it recurred.
 	for r in rows:
+		# PP-1 strong-verb gate on the READ path (angle-6): the stored authored
+		# ``title``/``detail_md`` is served through the SAME shared helper the fallback
+		# dashboard uses, so a "saved/recovered/prevented" token on any row that is NOT a
+		# confirmed_outcome with a resolving provenance link is neutralised server-side —
+		# no read surface (this list, FindingsPanel's v-html) can emit an unearned strong
+		# verb, and the guard holds by construction, not author discipline.
+		_rc = r.get("result_class")
+		_op = r.get("outcome_provenance")
+		if r.get("title"):
+			r["title"] = cr.render_value_text(r["title"], _rc, outcome_provenance=_op)
+		if r.get("detail_md"):
+			r["detail_md"] = cr.render_value_text(r["detail_md"], _rc, outcome_provenance=_op)
 		if r.state == "resolved":
 			r["recurrence"] = "resolved"
 		elif r.first_seen_run and r.first_seen_run != r.last_seen_run:

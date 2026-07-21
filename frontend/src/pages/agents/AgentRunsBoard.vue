@@ -73,6 +73,19 @@
 									class="mt-1 size-3.5 shrink-0 text-ink-amber-3"
 								/>
 							</Tooltip>
+							<!-- PP-4 preview/shadow: a shadow run is reviewer-only and NOT a
+							     compliant attestation, so it must never read the same as a
+							     live run. The lifecycle status badge (running/completed/…) is
+							     an orthogonal axis; this violet pill carries the activation
+							     axis independently. Badge has no violet theme in
+							     frappe-ui 0.1.278, so this reuses the app's violet-pill
+							     recipe (see triggers/TriggersListPane.vue). -->
+							<span
+								v-if="row.preparation_mode === 'shadow'"
+								class="mt-0.5 inline-flex h-5 shrink-0 select-none items-center whitespace-nowrap rounded-full bg-surface-violet-1 px-1.5 text-xs text-ink-violet-1"
+							>
+								Preview
+							</span>
 							<Badge
 								class="mt-0.5 shrink-0"
 								variant="subtle"
@@ -121,6 +134,21 @@
 
 			<!-- RIGHT pane: the selected run's findings -->
 			<div class="flex-1 overflow-y-auto">
+				<!-- PP-4 shadow banner: the honest "Preview (shadow) - not a compliant
+				     attestation" statement must live in the reviewer's primary screen,
+				     not only in the detached fallback-dashboard HTML. Shown whenever the
+				     selected run was prepared in shadow, above the findings pane. -->
+				<div
+					v-if="selectedRun && selectedRun.preparation_mode === 'shadow'"
+					class="flex items-start gap-2 border-b bg-surface-violet-1 px-6 py-2.5 text-sm text-ink-violet-1"
+				>
+					<FeatherIcon name="eye" class="mt-0.5 size-4 shrink-0" />
+					<span>
+						Preview (shadow) - this run is visible to the named reviewer only and is
+						not a compliant attestation. Promote the capability to live before relying
+						on its results.
+					</span>
+				</div>
 				<div
 					v-if="!selectedRun"
 					class="flex h-full flex-col items-center justify-center gap-3 px-8 text-center"
@@ -158,6 +186,11 @@ const props = defineProps({
 	agentName: { type: String, required: true }, // listing docname (list_runs_page filter)
 });
 
+// lifecycle status (did the run finish) is ONE axis; PP-4 preparation_mode
+// ('shadow'|'live', snapshot of the installation's activation_state at launch)
+// is an orthogonal axis rendered separately as the "Preview" pill/banner above.
+// A shadow run must never read the same as a live one. preparation_mode is
+// supplied per row by list_runs_page (agents_api.py) — see cross-file note.
 const STATUS_THEME = { running: "blue", completed: "green", partial: "orange", failed: "red" };
 const STATUS_OPTIONS = [
 	{ label: "All statuses", value: "" },
