@@ -445,16 +445,22 @@
 										</p>
 										<p class="jv-ob-devblock-body">
 											This admin has turned off browser dev signup on
-											purpose. An operator finishes it in two bench
-											commands, then reload this page.
+											purpose. An operator finishes it in two bench commands,
+											then reload this page.
 										</p>
 										<ol class="jv-ob-devblock-steps">
 											<li>
-												<span>On the admin bench, print the connection:</span>
+												<span
+													>On the admin bench, print the
+													connection:</span
+												>
 												<code>{{ devAdminCmd }}</code>
 											</li>
 											<li>
-												<span>On this bench, apply the JSON it printed:</span>
+												<span
+													>On this bench, apply the JSON it
+													printed:</span
+												>
 												<code>{{ devApplyCmd }}</code>
 											</li>
 										</ol>
@@ -957,10 +963,10 @@ const devAdminCmd = computed(
 			company_name: state.company || "...",
 			plan: state.planName || "...",
 		}) +
-		"'",
+		"'"
 );
 const devApplyCmd =
-	'bench --site <this-site> execute jarvis.onboarding.apply_dev_connection --kwargs \'{"data": { ...paste the JSON from step 1... }}\'';
+	"bench --site <this-site> execute jarvis.onboarding.apply_dev_connection --kwargs '{\"data\": { ...paste the JSON from step 1... }}'";
 
 // Review-card labels (preview .rev): "Pro · Monthly" plan row and a plain
 // amount in the emphasized total row.
