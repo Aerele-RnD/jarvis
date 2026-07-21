@@ -62,7 +62,16 @@ class TestGetLlmUsage(FrappeTestCase):
 
 
 class TestGetLlmConnectionStatus(FrappeTestCase):
+	def setUp(self):
+		self._proxy = frappe.db.get_single_value("Jarvis Settings", "proxy_active")
+
+	def tearDown(self):
+		frappe.db.set_single_value("Jarvis Settings", "proxy_active", self._proxy or 0)
+		frappe.db.commit()
+
 	def test_remaps_admin_auth_status_fields(self):
+		frappe.db.set_single_value("Jarvis Settings", "proxy_active", 1)
+		frappe.db.commit()
 		raw = {
 			"ok": True,
 			"data": {
@@ -75,6 +84,21 @@ class TestGetLlmConnectionStatus(FrappeTestCase):
 		with patch.object(admin_client, "post_llm_auth_status", return_value=raw) as m:
 			out = account.get_llm_connection_status()
 		m.assert_called_once_with()
+		self.assertEqual(out["proxy_active"], True)
 		self.assertEqual(out["auth_present"], True)
 		self.assertEqual(out["oauth_expires_at"], 1893456000000)
 		self.assertEqual(out["default_model"], "gpt-5.5")
+
+	def test_direct_tenant_short_circuits_without_admin_call(self):
+		# A DIRECT (single-model) tenant has no proxy auth profile to report -
+		# the SPA's ConnectionPane used to render this as a misleading orange
+		# "Not connected" instead of an accurate "Direct" state.
+		frappe.db.set_single_value("Jarvis Settings", "proxy_active", 0)
+		frappe.db.set_single_value("Jarvis Settings", "llm_model", "gpt-4o")
+		frappe.db.commit()
+		with patch.object(admin_client, "post_llm_auth_status") as m:
+			out = account.get_llm_connection_status()
+		m.assert_not_called()
+		self.assertEqual(out["proxy_active"], False)
+		self.assertEqual(out["auth_present"], False)
+		self.assertEqual(out["default_model"], "gpt-4o")
