@@ -9,7 +9,11 @@
   "agent",
   "installation",
   "trigger",
+  "bundle_version",
+  "preparation_mode",
+  "initiating_human",
   "status",
+  "result_state",
   "started_at",
   "finished_at",
   "conversation",
@@ -163,6 +167,41 @@
    "label": "Canvas Ref",
    "read_only": 1,
    "description": "The delegate's saved canvas/dashboard reference reported at writeback. Phase 4's save_dashboard resolves this into the Run.dashboard link."
+  },
+  {
+   "fieldname": "result_state",
+   "fieldtype": "Select",
+   "label": "Result State",
+   "options": "evaluated_clean\npartial\nnot_evaluable\nfailed",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "description": "PP-2 coverage-verdict axis, distinct from the execution-lifecycle status. Computed at writeback: failed if the run errored; not_evaluable if all required tokens are not_evaluable; partial if any partial gate fired; else evaluated_clean. 'No exceptions were found' may render ONLY when this is evaluated_clean."
+  },
+  {
+   "fieldname": "bundle_version",
+   "fieldtype": "Data",
+   "label": "Bundle Version",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "PP-5 — the agent/bundle version stamped IMMUTABLY at launch (unlike the mutable listing/installation version). Controller set-once: changing it after insert raises."
+  },
+  {
+   "fieldname": "preparation_mode",
+   "fieldtype": "Select",
+   "label": "Preparation Mode",
+   "options": "shadow\nlive",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "PP-5 — snapshot of the installation's activation_state at launch (shadow|live), immutable."
+  },
+  {
+   "fieldname": "initiating_human",
+   "fieldtype": "Link",
+   "label": "Initiating Human",
+   "options": "User",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "PP-5 — the human who triggered a manual run (distinct from the run-as user and from the reassigned owner)."
   }
  ],
  "index_web_pages_for_search": 0,

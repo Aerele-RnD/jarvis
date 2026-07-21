@@ -104,6 +104,28 @@ class TestAgentsMarketplace(unittest.TestCase):
 		if frappe.db.exists("Role", "Accounts User"):
 			for u in (cls.owner, cls.other, cls.admin):
 				_give_role(u, "Accounts User")
+		# State-independence on a shared bench site: the manual/scheduled run budget
+		# (_over_run_budget) enforces a TENANT-WIDE monthly ceiling that counts every
+		# NON-FAILED Jarvis Agent Run across the whole site — including residue other
+		# platform-test modules leave behind (their record_delegate_run commits
+		# mid-test, so FrappeTestCase cannot roll those rows back). That aggregate can
+		# refuse this module's legitimate run_agent_now dispatch ("Monthly agent-run
+		# budget reached") even though this module cleans its OWN runs every setUp.
+		# None of these tests exercise the budget-exceeded path, so lift the budget
+		# out of the way for the module and restore it in tearDownClass — the tests
+		# then assert identity/authZ, not another module's leftover row count.
+		cls._orig_run_budget = frappe.db.get_single_value("Jarvis Settings", "agent_run_budget_monthly")
+		frappe.db.set_single_value("Jarvis Settings", "agent_run_budget_monthly", 1000000)
+		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value(
+			"Jarvis Settings", "agent_run_budget_monthly", getattr(cls, "_orig_run_budget", None)
+		)
+		frappe.db.commit()
+		super().tearDownClass()
 
 	def setUp(self):
 		frappe.set_user("Administrator")
