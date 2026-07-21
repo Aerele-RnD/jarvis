@@ -65,6 +65,25 @@ def _require_https_site_url() -> None:
 		)
 
 
+def _throw_admin_error(e) -> None:
+	"""Map one already-raised admin_client exception to the clean frappe.throw
+	the onboarding page renders. Extracted from _surface so a caller can inspect
+	the raised error first (dev_onboard needs to catch the admin-blocked
+	dev-signup case) and then fall back to the identical mapping for every other
+	admin-side failure. Always raises."""
+	if isinstance(e, AdminValidationError):
+		frappe.throw(str(e))
+	if isinstance(e, AdminAuthError):
+		frappe.throw(f"admin authentication failed; check the bench's admin credentials. ({e})")
+	if isinstance(e, AdminUnreachableError):
+		frappe.throw(f"admin is unreachable right now; try again in a moment. ({e})")
+	if isinstance(e, AdminRateLimitedError):
+		retry = e.retry_after_seconds or 0
+		retry_str = f"retry in {retry}s" if retry > 0 else "retry shortly"
+		frappe.throw(f"admin rate-limited the request; {retry_str}.")
+	raise e
+
+
 def _surface(fn, *args, **kwargs):
 	"""Run an admin_client call; re-raise every admin-side error as a clean
 	frappe.ValidationError so the onboarding page renders a red toast with
@@ -86,16 +105,8 @@ def _surface(fn, *args, **kwargs):
 	"""
 	try:
 		return fn(*args, **kwargs)
-	except AdminValidationError as e:
-		frappe.throw(str(e))
-	except AdminAuthError as e:
-		frappe.throw(f"admin authentication failed; check the bench's admin credentials. ({e})")
-	except AdminUnreachableError as e:
-		frappe.throw(f"admin is unreachable right now; try again in a moment. ({e})")
-	except AdminRateLimitedError as e:
-		retry = e.retry_after_seconds or 0
-		retry_str = f"retry in {retry}s" if retry > 0 else "retry shortly"
-		frappe.throw(f"admin rate-limited the request; {retry_str}.")
+	except (AdminValidationError, AdminAuthError, AdminUnreachableError, AdminRateLimitedError) as e:
+		_throw_admin_error(e)
 
 
 def write_connection(data: dict) -> None:
@@ -704,6 +715,39 @@ def _reconcile_pending_applying(settings) -> str | None:
 	return settings.get("last_sync_status")
 
 
+# Admin v2 deliberately removed @frappe.whitelist from dev_force_signup (commit
+# 7391d1f, "close the free-container backdoor"; a test in
+# jarvis_admin_v2/tests/test_whitelist_role_gates.py pins the decorator gone). A
+# guest HTTP POST to it therefore fails with Frappe's "... is not whitelisted".
+# The block is intentional and stays on the admin side; the customer side must
+# stop mislabeling it as a credential problem and point at the documented bench
+# flow instead (jarvis_admin_v2/docs/local-setup.md: an operator runs
+# dev_force_signup via `bench execute` on the admin bench, then applies the
+# returned connection on the customer bench with apply_dev_connection below).
+_DEV_SIGNUP_BLOCKED_HINT = (
+	"Dev signup cannot run from the browser: this admin has disabled the guest "
+	"dev_force_signup endpoint on purpose (it closed a free-container backdoor). "
+	"Finish dev onboarding from the bench in two steps. "
+	"1) On the ADMIN bench, print the connection: "
+	"bench --site <admin-site> execute "
+	"jarvis_admin_v2.billing.signup.dev_force_signup "
+	'--kwargs \'{"email": "...", "company_name": "...", "plan": "..."}\'. '
+	"2) On THIS bench, apply the JSON it printed: "
+	"bench --site <this-site> execute jarvis.onboarding.apply_dev_connection "
+	"--kwargs '{\"data\": {...}}'. Then reload this page."
+)
+
+
+def _is_admin_dev_signup_blocked(e: Exception) -> bool:
+	"""True when admin refused the guest dev-signup POST because dev_force_signup
+	is no longer whitelisted. The refusal reaches us as an admin auth/validation
+	error carrying Frappe's "... is not whitelisted" text; match that signal (not
+	the exception class) so an older admin v1 that STILL whitelists the endpoint
+	keeps working on the normal path, while a modern admin gets the operator
+	flow instead of the misleading "check the bench's admin credentials" toast."""
+	return "not whitelisted" in str(e or "").lower()
+
+
 @frappe.whitelist()
 def dev_onboard(email: str, company: str, plan: str) -> dict:
 	"""Local Razorpay-free onboarding: dev_force_signup → store token+connection.
@@ -721,6 +765,14 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 	wrong value into the wrong site's Jarvis Settings. Force the operator to
 	set it deliberately.
 
+	Modern admin builds (v2) un-whitelist dev_force_signup, so the guest HTTP
+	call fails with "... is not whitelisted". When that happens this raises the
+	operator bench flow (_DEV_SIGNUP_BLOCKED_HINT) instead of the misleading
+	credential toast, and no half-written connection is persisted. An older
+	admin v1 that still whitelists the endpoint is unaffected: only the
+	not-whitelisted signal is intercepted; the successful path is preserved.
+	See ``apply_dev_connection`` for the bench half of the operator flow.
+
 	Gated on System Manager in addition to the sandbox_mode check.
 	"""
 	# STAYS SM-only (PART 4 REVISED, TASK 48): the dev-onboard shortcut GATE is
@@ -736,9 +788,77 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 			"Settings -> Enable Sandbox Mode before retrying."
 		)
 	_require_admin_url()
-	data = _surface(admin_client.dev_signup, email, company, plan)
+	try:
+		data = admin_client.dev_signup(email, company, plan)
+	except (AdminValidationError, AdminAuthError, AdminUnreachableError, AdminRateLimitedError) as e:
+		# The admin-blocked case is NOT a credential failure. Surface the real
+		# cause + the bench operator flow; let every other admin error keep its
+		# existing clean toast via the shared mapper.
+		if _is_admin_dev_signup_blocked(e):
+			frappe.throw(_DEV_SIGNUP_BLOCKED_HINT, title="Dev signup blocked by admin")
+		_throw_admin_error(e)
 	write_connection(data)
 	# PART 4 REVISED, TASK 48: sandbox parity with the paid path — grant the dev
 	# onboarder Jarvis Admin. The GATE above stays SM + sandbox.
 	grant_onboarding_admin()
 	return data
+
+
+def apply_dev_connection(data: dict | str) -> dict:
+	"""Bench-only companion to dev_onboard for the operator dev-signup flow.
+
+	Admin v2 deliberately un-whitelisted dev_force_signup (commit 7391d1f,
+	"close the free-container backdoor"), so the browser can no longer complete
+	a Razorpay-free dev signup. The documented replacement
+	(jarvis_admin_v2/docs/local-setup.md) is: an operator runs dev_force_signup
+	via ``bench execute`` on the ADMIN bench, then applies the returned
+	connection on the customer bench. This is that second step, so the whole
+	operator flow lands in one command on the customer side::
+
+	    bench --site <site> execute jarvis.onboarding.apply_dev_connection \\
+	        --kwargs '{"data": {"customer": "...", "api_key": "...", ...}}'
+
+	``data`` is admin's dev_force_signup return dict (keys: customer, api_key,
+	api_secret, customer_password, agent_url, agent_token, tenant, subscription,
+	tenant_status). It writes the native admin credentials + container
+	connection, grants the onboarding admin, commits, and returns (and prints)
+	``is_ready_for_chat()`` so the operator sees whether chat is now unblocked.
+
+	Guarded exactly like dev_onboard, minus the HTTP surface: NO
+	``@frappe.whitelist`` (a plain function, so it is never reachable over HTTP;
+	the only caller is ``bench execute``), AND it requires sandbox mode so it can
+	never be used to inject an admin connection onto a production bench. It is
+	the write half of dev_onboard, which is why it carries the same sandbox gate.
+	"""
+	from jarvis.account import is_ready_for_chat
+	from jarvis.dev import is_sandbox_mode
+
+	if not is_sandbox_mode():
+		raise frappe.ValidationError(
+			"apply_dev_connection requires sandbox mode. Enable Jarvis Settings "
+			"-> Enable Sandbox Mode on this bench, then re-run it."
+		)
+	if isinstance(data, str):
+		# `bench execute --kwargs` already JSON-parses the value, but tolerate a
+		# double-encoded string (data handed in as a JSON string) as well.
+		data = json.loads(data)
+	if not isinstance(data, dict):
+		raise frappe.ValidationError(
+			"apply_dev_connection needs a `data` object (admin's dev_force_signup "
+			"JSON). Pass it as --kwargs '{\"data\": {...}}'."
+		)
+	if not (data.get("api_key") and data.get("api_secret")):
+		raise frappe.ValidationError(
+			"The dev connection is missing api_key / api_secret. Paste the full "
+			"JSON that admin's dev_force_signup printed into the `data` object."
+		)
+
+	write_connection(data)
+	# Sandbox parity with dev_onboard's paid-path grant. Under `bench execute`
+	# the session user is Administrator, which grant_onboarding_admin no-ops on,
+	# so this only grants when invoked as a real user; kept for symmetry.
+	grant_onboarding_admin()
+	frappe.db.commit()
+	ready = is_ready_for_chat()
+	print(f"[apply_dev_connection] connection stored; is_ready_for_chat={ready}")
+	return ready
