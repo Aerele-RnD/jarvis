@@ -1491,7 +1491,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			const p = $(this).val();
 			const d = PROVIDER_DEFAULTS[p] || {};
 			const row = ui.customRows[i] || {};
-			const patch = { provider: p };
+			// A stored key (has_key) belongs to the OLD provider's key_ref - carry it
+			// forward and a switch to Ollama/vLLM with no retyped key would still send
+			// a blank api_key while has_key=true, hitting the exact "blank api_key"
+			// rejection this whole editor exists to avoid for local providers.
+			const patch = { provider: p, has_key: false, apiKey: "" };
 			if (!(row.model || "").trim() && d.model) patch.model = d.model;
 			if (!(row.baseUrl || "").trim() && d.baseUrl) patch.baseUrl = d.baseUrl;
 			ui.customRows[i] = Object.assign({}, row, patch);

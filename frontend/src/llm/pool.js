@@ -181,9 +181,9 @@ export const isCodeOnlyPaste = (upstreamOrLabel) => _CODE_ONLY_PASTE.has(upstrea
 // (standard api.z.ai/api/paas/v4 vs coding-plan api.z.ai/api/coding/paas/v4).
 const NEEDS_BASE_URL = new Set(["openai_compat", "vllm", "zai", "zai_coding"]);
 // Providers with no auth of their own - Ollama/vLLM run inside or next to the
-// tenant's container (loopback / LAN), so there is no key to bring. MUST match
-// jarvis.llm_key_probe.LOCAL_PROVIDER_IDS and LlmPoolEditor.vue's own copy
-// (kept local there for its Test-button disclaimer, which predates this one).
+// tenant's container (loopback / LAN), so there is no key to bring. Shared
+// with LlmPoolEditor.vue's Test-button disclaimer (predates this export) -
+// MUST also match jarvis.llm_key_probe.LOCAL_PROVIDER_IDS on the Python side.
 export const LOCAL_PROVIDER_IDS = new Set(["ollama", "vllm"]);
 export function providerLabel(id) {
 	return _LABEL_BY_ID[id] || id || "";

@@ -1165,7 +1165,7 @@
 								m.hasKey
 									? 'key set, re-enter to change'
 									: isLocalProviderRow(m)
-										? 'API key (optional for local providers)'
+										? 'Not required for local providers'
 										: 'API key'
 							"
 						/>
@@ -1570,6 +1570,7 @@ import {
 	apiKeyModelHealth,
 	isCodeOnlyPaste,
 	effectiveApiKey,
+	LOCAL_PROVIDER_IDS,
 } from "@/llm/pool";
 import { errMessage as _err } from "@/lib/errors";
 import { useConfirm } from "@/composables/useConfirm";
@@ -2048,11 +2049,11 @@ function openEdit(i) {
 // ---- pre-save "Test" (API-key rows only) ---------------------------------
 // Provider ids whose usual endpoint only makes sense reached from INSIDE the
 // tenant's bifrost container (localhost / a customer LAN), never from this
-// browser's bench - MUST match jarvis.llm_key_probe.LOCAL_PROVIDER_IDS. The
-// button still runs (a customer CAN point "vllm"/"ollama" at a real public
-// URL), this only softens the promise with an upfront disclaimer instead of
-// silently implying a guarantee the bench can't make.
-const LOCAL_PROVIDER_IDS = new Set(["ollama", "vllm"]);
+// browser's bench - LOCAL_PROVIDER_IDS is shared with pool.js's own key-
+// optionality check (both MUST match jarvis.llm_key_probe.LOCAL_PROVIDER_IDS).
+// The Test button still runs (a customer CAN point "vllm"/"ollama" at a real
+// public URL), this only softens the promise with an upfront disclaimer
+// instead of silently implying a guarantee the bench can't make.
 function isLocalProviderRow(row) {
 	return !!(row && LOCAL_PROVIDER_IDS.has(providerId(row.provider)));
 }
@@ -2343,6 +2344,16 @@ function onProviderChange(m, newProvider) {
 	const d = PROVIDER_DEFAULTS[m.provider] || {};
 	m.model = d.model || "";
 	m.baseUrl = d.baseUrl || "";
+	// A stored key (hasKey) belongs to the OLD provider's key_ref, not this one -
+	// carrying it forward would either merge the wrong provider's secret on save
+	// (onboarding.py's merge-by-provider fallback keys on the NEW provider, so it
+	// actually finds nothing) or, for a fresh switch to Ollama/vLLM, leave the row
+	// looking "has a key" while save sends a blank api_key - reproducing the exact
+	// "api_key is blank on an enabled model" rejection this switch already causes
+	// between any two providers. Same reasoning as onUpstreamChange dropping
+	// connected accounts on a subscription upstream switch, just below.
+	m.hasKey = false;
+	m.apiKey = "";
 }
 // Provider switch on a subscription row in the simplified onboarding editor:
 // re-default the (hidden) model AND drop any already-connected account, which is

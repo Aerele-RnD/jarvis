@@ -64,9 +64,11 @@ class TestGetLlmUsage(FrappeTestCase):
 class TestGetLlmConnectionStatus(FrappeTestCase):
 	def setUp(self):
 		self._proxy = frappe.db.get_single_value("Jarvis Settings", "proxy_active")
+		self._llm_model = frappe.db.get_single_value("Jarvis Settings", "llm_model")
 
 	def tearDown(self):
 		frappe.db.set_single_value("Jarvis Settings", "proxy_active", self._proxy or 0)
+		frappe.db.set_single_value("Jarvis Settings", "llm_model", self._llm_model or "")
 		frappe.db.commit()
 
 	def test_remaps_admin_auth_status_fields(self):
