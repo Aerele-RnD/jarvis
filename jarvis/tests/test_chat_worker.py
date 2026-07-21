@@ -1319,3 +1319,64 @@ class TestRunAgentTurnAborted(FrappeTestCase):
 		self.assertEqual(row["stopped"], 0)
 		self.assertEqual(row["content"], "all done")
 		self.assertEqual(row["streaming"], 0)
+
+
+class TestRunAgentTurnFailedFinal(FrappeTestCase):
+	"""A terminal agent failure that openclaw reports as state="final" with an
+	empty message (stopReason error) - e.g. a precheck context overflow that
+	deletes the session, so there is no auto-compact retry - must land as an
+	honest error on the assistant row, never a silent empty bubble.
+
+	openclaw_client.relay_turn_events remaps that final to a relay:error with
+	state="failed_final"; this exercises the full turn so the row's `error`
+	field and the run:error publish are both verified.
+	"""
+
+	def setUp(self):
+		openclaw_session_pool._POOL.clear()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message()
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def _run(self, relay_events):
+		fake_sess = MagicMock()
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {
+			"runId": idem,
+			"status": "started",
+		}
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(relay_events)
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user") as pub:
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		return pub
+
+	def _assistant_row(self, fields):
+		return frappe.db.get_value(
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			fields,
+			as_dict=isinstance(fields, list),
+		)
+
+	def test_failed_final_stamps_error_and_is_not_recovering(self):
+		from jarvis.chat.openclaw_client import FAILED_FINAL_ERROR
+
+		pub = self._run([{"kind": "relay:error", "state": "failed_final", "error": FAILED_FINAL_ERROR}])
+		row = self._assistant_row(["content", "error", "streaming", "recovering"])
+		# The core of the bug: error must be set, not NULL, on a terminal failure.
+		self.assertEqual(row["error"], FAILED_FINAL_ERROR)
+		self.assertFalse((row["content"] or "").strip())
+		self.assertEqual(row["streaming"], 0)
+		# It is terminal, NOT parked for snapshot recovery.
+		self.assertFalse(row["recovering"])
+		# The user is told, via a run:error (no silent empty run:end-only turn).
+		kinds = [c.args[1]["kind"] for c in pub.call_args_list]
+		self.assertIn("run:error", kinds)
+		err_pub = next(c.args[1] for c in pub.call_args_list if c.args[1]["kind"] == "run:error")
+		self.assertEqual(err_pub["error"], FAILED_FINAL_ERROR)

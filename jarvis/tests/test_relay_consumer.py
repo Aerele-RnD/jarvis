@@ -164,6 +164,98 @@ class TestRelayTurnEvents(FrappeTestCase):
 			],
 		)
 
+	def test_final_stop_reason_error_empty_content_yields_relay_error(self):
+		# A terminal agent failure (e.g. a precheck context overflow that then
+		# deletes the session) is broadcast as state="final" with an EMPTY,
+		# sentinel-stripped message that keeps stopReason="error". It must NOT
+		# read as a silent successful empty final; it must surface as an error
+		# so the turn handler stamps the assistant row's `error` field.
+		from jarvis.chat.openclaw_client import FAILED_FINAL_ERROR
+
+		sess = self._sess(
+			[
+				_chat_frame(
+					"r1",
+					"sk",
+					"final",
+					message={"role": "assistant", "content": [], "stopReason": "error"},
+				),
+			]
+		)
+		out = list(sess.relay_turn_events("sk", "r1"))
+		self.assertEqual(
+			out,
+			[{"kind": "relay:error", "state": "failed_final", "error": FAILED_FINAL_ERROR}],
+		)
+
+	def test_final_stream_error_sentinel_content_yields_relay_error(self):
+		# Some openclaw builds leave the sentinel text block in the projected
+		# final message instead of stripping it. That is still a failed turn,
+		# not a real answer, so it maps to the same failed_final error rather
+		# than rendering the raw sentinel as the assistant's reply.
+		from jarvis.chat.openclaw_client import FAILED_FINAL_ERROR
+
+		sess = self._sess(
+			[
+				_chat_frame(
+					"r1",
+					"sk",
+					"final",
+					message={
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "[assistant turn failed before producing content]",
+							}
+						],
+					},
+				),
+			]
+		)
+		out = list(sess.relay_turn_events("sk", "r1"))
+		self.assertEqual(
+			out,
+			[{"kind": "relay:error", "state": "failed_final", "error": FAILED_FINAL_ERROR}],
+		)
+
+	def test_final_empty_content_without_error_stop_reason_stays_final(self):
+		# A genuinely successful turn that produced only rich outputs (no prose)
+		# has empty text and a non-error stopReason. It must stay a normal
+		# empty-text relay:final, never be misclassified as a failure.
+		sess = self._sess(
+			[
+				_chat_frame(
+					"r1",
+					"sk",
+					"final",
+					message={"role": "assistant", "content": [], "stopReason": "end_turn"},
+				),
+			]
+		)
+		out = list(sess.relay_turn_events("sk", "r1"))
+		self.assertEqual(out, [{"kind": "relay:final", "text": None}])
+
+	def test_final_real_text_with_error_stop_reason_keeps_the_answer(self):
+		# A partial answer that also flagged an error must NOT be hidden behind
+		# an error bubble: the streamed reply wins and stays a relay:final.
+		sess = self._sess(
+			[
+				_chat_frame(
+					"r1",
+					"sk",
+					"final",
+					message={
+						"role": "assistant",
+						"content": [{"type": "text", "text": "here is the partial answer"}],
+						"stopReason": "error",
+					},
+				),
+			]
+		)
+		out = list(sess.relay_turn_events("sk", "r1"))
+		self.assertEqual(out, [{"kind": "relay:final", "text": "here is the partial answer"}])
+
 	def test_transport_drop_yields_interrupted_transport_and_does_not_raise(self):
 		sess = self._sess([OpenclawUnreachableError("ws closed mid-stream")])
 		# The generator swallows the exception, so the pool's

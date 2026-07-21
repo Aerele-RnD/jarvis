@@ -218,6 +218,56 @@ def _chat_final_text(payload: dict) -> str | None:
 	return None
 
 
+# openclaw marks an assistant turn that FAILED before producing any content
+# with ``stopReason == "error"`` and (in the raw transcript) this sentinel text
+# block. A terminal model failure - notably a precheck "Context overflow:
+# prompt too large for the model", which then deletes the session so there is
+# no auto-compact retry - is broadcast as a ``chat`` event with
+# ``state == "final"`` (NOT ``state == "error"``) whose projected display
+# message keeps ``stopReason == "error"`` but has empty (sentinel-stripped)
+# content. Without the guard below, ``relay_turn_events`` would map that to a
+# plain ``relay:final`` and the turn handler would write a silent, empty,
+# error-less assistant bubble (observed live 2026-07-21). Detecting it here, at
+# the openclaw->bench event boundary, lets the EXISTING relay:error path stamp
+# the row's ``error`` field so the user sees an honest failure.
+_STREAM_ERROR_SENTINEL = "[assistant turn failed before producing content]"
+
+# User-facing text stamped on the assistant row's ``error`` field (and shown in
+# the chat) for such a failed final. Generic on purpose: a ``state == "final"``
+# event carries no ``errorMessage`` (only ``stopReason``), so the exact cause
+# cannot be named here; a context window too small for the conversation is the
+# common one. Must NOT contain "context overflow" (that substring reroutes the
+# turn handler into the auto-compact park-for-recovery branch, which never
+# lands for a terminal precheck failure) or "aborted".
+FAILED_FINAL_ERROR = (
+	"The assistant could not complete this response and the turn ended "
+	"without any output. This can happen when the conversation is too long "
+	"for the current model, or the model hit an error. Please try again, or "
+	"start a new chat."
+)
+
+
+def _chat_final_failed(payload: dict, text: str | None) -> bool:
+	"""True when a ``state == "final"`` chat event actually represents a FAILED
+	turn that produced NO real answer: its only content is the stream-error
+	sentinel, or (with no visible text) the assistant message carries
+	``stopReason == "error"``. Such a "final" must surface as an error, not a
+	silent empty bubble.
+
+	Guards two non-failures:
+	  * a real (possibly partial) answer is kept even when the turn also flagged
+	    an error, so a streamed reply is never hidden behind an error;
+	  * a genuinely successful turn that emitted only rich outputs (canvas /
+	    image, no prose) has no text and ``stopReason`` != "error", so it stays a
+	    normal empty-text relay:final."""
+	if isinstance(text, str) and text.strip() == _STREAM_ERROR_SENTINEL:
+		return True
+	if text:
+		return False
+	msg = payload.get("message")
+	return isinstance(msg, dict) and msg.get("stopReason") == "error"
+
+
 def _persisted_device_id() -> str:
 	"""Cheap unauthenticated read of Jarvis Settings.chat_device_id.
 
@@ -669,8 +719,14 @@ class OpenclawSession:
 
 		NEVER raises after entry. Terminal yields:
 		  {"kind": "relay:final", "text": str|None}
-		  {"kind": "relay:error", "state": "error"|"aborted", "error": str}
+		  {"kind": "relay:error", "state": "error"|"aborted"|"failed_final", "error": str}
 		  {"kind": "relay:interrupted", "reason": "transport"|"deadline", ...}
+
+		A ``state == "final"`` event whose assistant turn actually failed
+		(stopReason error / stream-error sentinel, e.g. a precheck context
+		overflow that deletes the session) is remapped to a ``failed_final``
+		relay:error so it stamps an honest error instead of a silent empty
+		final. See _chat_final_failed.
 		"""
 		deadline = time.monotonic() + soft_deadline_s
 		while True:
@@ -700,7 +756,18 @@ class OpenclawSession:
 					continue
 				state = payload.get("state")
 				if state == "final":
-					yield {"kind": "relay:final", "text": _chat_final_text(payload)}
+					text = _chat_final_text(payload)
+					# A "final" whose assistant turn actually FAILED (stopReason
+					# error / stream-error sentinel) is surfaced as a terminal
+					# error, not a silent empty bubble. See _chat_final_failed.
+					if _chat_final_failed(payload, text):
+						yield {
+							"kind": "relay:error",
+							"state": "failed_final",
+							"error": FAILED_FINAL_ERROR,
+						}
+						return
+					yield {"kind": "relay:final", "text": text}
 					return
 				if state in ("error", "aborted"):
 					yield {

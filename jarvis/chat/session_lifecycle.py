@@ -281,6 +281,14 @@ def _reap_empty(sess, budget: int, summary: dict) -> int:
 		  AND c.starred = 0
 		  AND c.file_box = 0
 		  AND c.last_active_at IS NOT NULL AND c.last_active_at < %(cutoff)s
+		  -- HARD DATA-LOSS GUARD: only a conversation with ZERO messages is ever
+		  -- reapable. A conversation that holds ANY message - a user message, or
+		  -- even an assistant row from a turn that FAILED (a terminal agent error
+		  -- leaves an errored/empty assistant row; see turn_handler + the
+		  -- openclaw_client failed_final mapping) - is real chat history and is
+		  -- never auto-deleted. Do NOT loosen this to reap "conversations whose
+		  -- turns all failed / produced no visible content": that would delete the
+		  -- user's message. Empty ones may go; anything with a message stays.
 		  AND NOT EXISTS (
 			SELECT 1 FROM `tabJarvis Chat Message` m WHERE m.conversation = c.name
 		  )
