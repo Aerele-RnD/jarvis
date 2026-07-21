@@ -41,6 +41,32 @@ DASHBOARD = "Jarvis Dashboard"
 
 SLUG = "platform-writeback-test-agent"
 TOKEN = "tok_pw_1"
+WB_COMPANY = "Jarvis Writeback Test Co"
+
+
+def _ensure_company() -> str:
+	"""A bare Company row (a fresh CI site — restored from a frappe+erpnext+hrms
+	dump — never ran the erpnext setup wizard, so it has NO Company). We only need a
+	row that exists() so a Company-keyed finding ref verifies (Company is
+	existence-checked, not read-gated), and a non-empty company string so the A16
+	coverage-scoped auto-resolve is in-scope. Mirrors
+	test_agent_dashboard_wire._ensure_company."""
+	if not frappe.db.exists("Company", WB_COMPANY):
+		c = frappe.get_doc(
+			{
+				"doctype": "Company",
+				"company_name": WB_COMPANY,
+				"abbr": "JWBTC",
+				"default_currency": "INR",
+				"country": "India",
+			}
+		)
+		c.name = WB_COMPANY
+		c.flags.ignore_links = True
+		c.flags.ignore_mandatory = True
+		c.db_insert()
+		frappe.db.commit()
+	return WB_COMPANY
 
 
 def _mk_user(email: str) -> str:
@@ -156,8 +182,17 @@ class TestPP1ResultClassValidation(FrappeTestCase):
 		super().setUpClass()
 		# The ref-existence gate runs before the result_class gate (a nonexistent
 		# ref is dropped first), so use a real, existence-exempt Company ref to
-		# isolate the class-validation branch under test.
-		cls.company = frappe.db.get_value("Company", {}, "name")
+		# isolate the class-validation branch under test. Create the row ourselves —
+		# a fresh CI site has NO Company, and `get_value("Company", {})` would return
+		# None (every _ok_ref would then drop as "ref does not exist" before the
+		# result_class branch is ever reached).
+		cls.company = _ensure_company()
+
+	@classmethod
+	def tearDownClass(cls):
+		frappe.db.sql("delete from `tabCompany` where name=%s", WB_COMPANY)
+		frappe.db.commit()
+		super().tearDownClass()
 
 	def _ok_ref(self, **over):
 		return _finding(ref_doctype="Company", ref_name=self.company, **over)
@@ -377,7 +412,10 @@ class TestWritebackIntegration(FrappeTestCase):
 		frappe.set_user("Administrator")
 		cls.owner = _mk_user("pw-owner@example.com")
 		_mk_listing()
-		cls.company = frappe.db.get_value("Company", {}, "name")
+		# Real, non-empty company: the A16 auto-resolve is company-scoped and skips a
+		# scopeless/empty-company run, so a fresh CI site's None here would leave the
+		# open finding unresolved. Create the row so the scope matches.
+		cls.company = _ensure_company()
 		cls.inst = _mk_installation(cls.owner)
 		frappe.db.commit()
 
@@ -385,6 +423,8 @@ class TestWritebackIntegration(FrappeTestCase):
 	def tearDownClass(cls):
 		frappe.set_user("Administrator")
 		_wipe_residue()
+		frappe.db.sql("delete from `tabCompany` where name=%s", WB_COMPANY)
+		frappe.db.commit()
 		super().tearDownClass()
 
 	def setUp(self):
