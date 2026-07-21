@@ -39,14 +39,16 @@ def _ensure_user(email: str, extra_roles: tuple = ()) -> str:
 
 	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
-		u = frappe.get_doc({
-			"doctype": "User",
-			"email": email,
-			"first_name": email.split("@")[0],
-			"send_welcome_email": 0,
-			"enabled": 1,
-			"user_type": "System User",
-		})
+		u = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": email.split("@")[0],
+				"send_welcome_email": 0,
+				"enabled": 1,
+				"user_type": "System User",
+			}
+		)
 		u.flags.ignore_permissions = True
 		u.insert()
 	if not frappe.db.get_value("User", email, "enabled"):
@@ -67,14 +69,16 @@ def _ensure_plain_user(email: str) -> str:
 	"""An enabled System User with NO Jarvis roles (a valid run-as target that is
 	never itself an installer)."""
 	if not frappe.db.exists("User", email):
-		u = frappe.get_doc({
-			"doctype": "User",
-			"email": email,
-			"first_name": email.split("@")[0],
-			"send_welcome_email": 0,
-			"enabled": 1,
-			"user_type": "System User",
-		})
+		u = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": email.split("@")[0],
+				"send_welcome_email": 0,
+				"enabled": 1,
+				"user_type": "System User",
+			}
+		)
 		u.flags.ignore_permissions = True
 		u.insert()
 	frappe.db.set_value("User", email, "enabled", 1, update_modified=False)
@@ -97,13 +101,15 @@ def _ensure_test_company() -> str:
 	warehouses. All we need is a row that `exists()` and can key the GL watermark
 	query (which returns 0 rows on this empty ledger)."""
 	if not frappe.db.exists("Company", TEST_COMPANY):
-		c = frappe.get_doc({
-			"doctype": "Company",
-			"company_name": TEST_COMPANY,
-			"abbr": "JITC",
-			"default_currency": "INR",
-			"country": "India",
-		})
+		c = frappe.get_doc(
+			{
+				"doctype": "Company",
+				"company_name": TEST_COMPANY,
+				"abbr": "JITC",
+				"default_currency": "INR",
+				"country": "India",
+			}
+		)
 		c.name = TEST_COMPANY
 		c.flags.ignore_links = True
 		c.flags.ignore_mandatory = True
@@ -187,13 +193,9 @@ class TestAgentIdentity(unittest.TestCase):
 
 		try:
 			patch.execute()
-			self.assertEqual(
-				frappe.db.get_value(INSTALLATION, good, "run_as_user"), self.owner
-			)
+			self.assertEqual(frappe.db.get_value(INSTALLATION, good, "run_as_user"), self.owner)
 			# invalid owner -> left empty (fails closed at run time), migrate not aborted
-			self.assertFalse(
-				(frappe.db.get_value(INSTALLATION, bad, "run_as_user") or "").strip()
-			)
+			self.assertFalse((frappe.db.get_value(INSTALLATION, bad, "run_as_user") or "").strip())
 		finally:
 			frappe.db.set_value("User", disabled, "enabled", 1, update_modified=False)
 			for n in frappe.get_all(INSTALLATION, filters={"owner": disabled}, pluck="name"):
@@ -248,26 +250,24 @@ class TestAgentIdentity(unittest.TestCase):
 		# ignore_links: a real Cost Center needs a fully set-up Company; the flag
 		# only affects the User Permission's for_value link check, not the
 		# get_user_permissions read the detector uses.
-		up = frappe.get_doc({
-			"doctype": "User Permission",
-			"user": self.scoped,
-			"allow": "Cost Center",
-			"for_value": "JITC-Main-CC",
-		})
+		up = frappe.get_doc(
+			{
+				"doctype": "User Permission",
+				"user": self.scoped,
+				"allow": "Cost Center",
+				"for_value": "JITC-Main-CC",
+			}
+		)
 		up.insert(ignore_permissions=True, ignore_links=True)
 		frappe.db.commit()
 		frappe.clear_cache(user=self.scoped)
 
 		inst = _install_as(self.scoped)  # self-map; validate() detects the CC slice
-		self.assertEqual(
-			int(frappe.db.get_value(INSTALLATION, inst, "scoped_visibility") or 0), 1
-		)
+		self.assertEqual(int(frappe.db.get_value(INSTALLATION, inst, "scoped_visibility") or 0), 1)
 
 		# A control: a user with no GL-dimension User Permission stays unscoped.
 		clean = _install_as(self.owner)
-		self.assertEqual(
-			int(frappe.db.get_value(INSTALLATION, clean, "scoped_visibility") or 0), 0
-		)
+		self.assertEqual(int(frappe.db.get_value(INSTALLATION, clean, "scoped_visibility") or 0), 0)
 
 	# ------------------------------------------------------------------ #
 	# (d) _launch_audit mints the session + stamps watermark/scope
@@ -280,11 +280,13 @@ class TestAgentIdentity(unittest.TestCase):
 			inst_name,
 			{
 				"enabled": 1,
-				"config": frappe.as_json({
-					"company": company,
-					"from_date": "2026-04-01",
-					"to_date": "2027-03-31",
-				}),
+				"config": frappe.as_json(
+					{
+						"company": company,
+						"from_date": "2026-04-01",
+						"to_date": "2027-03-31",
+					}
+				),
 			},
 			update_modified=False,
 		)
@@ -309,9 +311,7 @@ class TestAgentIdentity(unittest.TestCase):
 		self.assertEqual(frappe.db.get_value(RUN, run, "session_key"), sk)
 
 		# The minted session binds the run-as user + snapshots the device id.
-		cs = frappe.db.get_value(
-			SESSION, {"session_key": sk}, ["user", "chat_device_id"], as_dict=True
-		)
+		cs = frappe.db.get_value(SESSION, {"session_key": sk}, ["user", "chat_device_id"], as_dict=True)
 		self.assertIsNotNone(cs)
 		self.assertEqual(cs.user, self.owner)  # run_as_user defaults to owner
 

@@ -24,6 +24,7 @@ The valid ``token`` set + allowed ``ref_doctype`` set are the ONLY things the
 bench holds about the rule pack — opaque tokens + declared doctypes, no rule
 bodies, thresholds or predicates (A2 moat).
 """
+
 from __future__ import annotations
 
 import json
@@ -110,8 +111,7 @@ def _validate_findings(raw_findings: list, token_set: set, allowed_refs: set):
 				if not ok:
 					reason = why
 		if reason:
-			dropped.append({"ref_doctype": rdt, "ref_name": rname, "reason": reason,
-							"token": token})
+			dropped.append({"ref_doctype": rdt, "ref_name": rname, "reason": reason, "token": token})
 		else:
 			valid.append(f)
 	return valid, dropped
@@ -163,11 +163,14 @@ def record_agent_run(
 	if not session_key:
 		raise InvalidArgumentError(
 			"record_agent_run must be called by an agent delegate over its run "
-			"session (no session_key in context)")
+			"session (no session_key in context)"
+		)
 
 	run_row = frappe.db.get_value(
-		RUN, {"session_key": session_key},
-		["name", "status", "installation", "agent"], as_dict=True,
+		RUN,
+		{"session_key": session_key},
+		["name", "status", "installation", "agent"],
+		as_dict=True,
 	)
 	if not run_row:
 		raise InvalidArgumentError("no agent run is bound to this session")
@@ -189,9 +192,15 @@ def record_agent_run(
 	# The agent's bench-held id-only token manifest + allowed ref doctypes. Tokens
 	# are opaque (A2); allowed refs = the agent's declared doctypes_required plus
 	# the aggregate dims (Company/Account) an evaluator may key a finding on.
-	listing = frappe.db.get_value(
-		LISTING, run_row.agent, ["rule_tokens", "doctypes_required"], as_dict=True,
-	) or {}
+	listing = (
+		frappe.db.get_value(
+			LISTING,
+			run_row.agent,
+			["rule_tokens", "doctypes_required"],
+			as_dict=True,
+		)
+		or {}
+	)
 	token_set = set(_as_list(listing.get("rule_tokens")))
 	allowed_refs = set(_as_list(listing.get("doctypes_required"))) | {"Company", "Account"}
 

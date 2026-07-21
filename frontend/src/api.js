@@ -300,7 +300,7 @@ export const uninstallAgent = (installation) => call(AG + "uninstall_agent", { i
 export const setAgentEnabled = (installation, enabled) =>
 	call(AG + "set_enabled", { installation, enabled: enabled ? 1 : 0 });
 export const setAgentSchedule = (installation, p) =>
-	call(AG + "set_schedule", { installation, ...(p || {}) })
+	call(AG + "set_schedule", { installation, ...(p || {}) });
 // Engagement config JSON (benchmark_value, percentage, engagement_risk_level,
 // rounding_step) read by the agent on its installation.
 export const setAgentConfig = (installation, config) =>

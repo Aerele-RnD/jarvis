@@ -19,8 +19,18 @@
 						Applying agents - ~30s, one restart
 					</Badge>
 					<template v-else>
-						<Badge v-if="syncFailed" theme="red" variant="subtle" label="Apply failed" />
-						<Badge v-else-if="sync.dirty" theme="orange" variant="subtle" label="Changes pending" />
+						<Badge
+							v-if="syncFailed"
+							theme="red"
+							variant="subtle"
+							label="Apply failed"
+						/>
+						<Badge
+							v-else-if="sync.dirty"
+							theme="orange"
+							variant="subtle"
+							label="Changes pending"
+						/>
 						<Button
 							:variant="sync.dirty || syncFailed ? 'solid' : 'subtle'"
 							:label="syncFailed ? 'Retry apply' : 'Apply catalog changes'"
@@ -85,10 +95,16 @@
 			</div>
 
 			<div class="min-h-0 flex-1 overflow-y-auto px-5 pb-8 pt-4">
-				<div v-if="loading && !rows.length" class="py-10 text-center text-sm text-ink-gray-5">
+				<div
+					v-if="loading && !rows.length"
+					class="py-10 text-center text-sm text-ink-gray-5"
+				>
 					Loading the catalog…
 				</div>
-				<div v-else-if="error && !rows.length" class="py-10 text-center text-sm text-ink-red-4">
+				<div
+					v-else-if="error && !rows.length"
+					class="py-10 text-center text-sm text-ink-red-4"
+				>
 					{{ error }}
 				</div>
 				<div
@@ -96,7 +112,9 @@
 					class="flex flex-col items-center gap-1 py-16 text-center"
 				>
 					<FeatherIcon name="cpu" class="size-7.5 text-ink-gray-5" />
-					<span class="mt-2 text-lg font-medium text-ink-gray-8">{{ emptyState.title }}</span>
+					<span class="mt-2 text-lg font-medium text-ink-gray-8">{{
+						emptyState.title
+					}}</span>
 					<span class="text-p-base text-ink-gray-6">{{ emptyState.description }}</span>
 					<Button
 						v-if="emptyState.cta"
@@ -145,7 +163,8 @@
 									/>
 								</div>
 								<div class="truncate text-sm text-ink-gray-5">
-									by {{ a.publisher || "Unknown" }}<template v-if="a.version"> · v{{ a.version }}</template>
+									by {{ a.publisher || "Unknown"
+									}}<template v-if="a.version"> · v{{ a.version }}</template>
 								</div>
 							</div>
 						</div>
@@ -155,12 +174,19 @@
 						</p>
 
 						<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-							<Badge variant="outline" theme="gray" :label="categoryTitle(a.category)" />
+							<Badge
+								variant="outline"
+								theme="gray"
+								:label="categoryTitle(a.category)"
+							/>
 							<span class="flex items-center gap-1 text-ink-gray-5">
 								<FeatherIcon name="download" class="size-3.5" />
 								{{ installsLabel(a.install_count) }}
 							</span>
-							<span v-if="a.installed" class="flex items-center gap-1 text-ink-green-3">
+							<span
+								v-if="a.installed"
+								class="flex items-center gap-1 text-ink-green-3"
+							>
 								<FeatherIcon name="check" class="size-3.5" />
 								Installed
 							</span>
@@ -173,8 +199,8 @@
 						</div>
 
 						<div v-if="!a.allowed" class="mt-2 text-sm text-ink-gray-5">
-							Available to: {{ (a.allowed_roles || []).join(", ") || "-" }} - ask your
-							administrator.
+							Available to: {{ (a.allowed_roles || []).join(", ") || "-" }} - ask
+							your administrator.
 						</div>
 					</div>
 				</div>
@@ -198,13 +224,18 @@
 		>
 			<template #body-content>
 				<p class="text-p-base text-ink-gray-6">
-					You have unapplied catalog changes. Apply them now, or leave anyway? Your changes
-					stay saved either way - they only reach the assistant after an Apply.
+					You have unapplied catalog changes. Apply them now, or leave anyway? Your
+					changes stay saved either way - they only reach the assistant after an Apply.
 				</p>
 			</template>
 			<template #actions>
 				<div class="flex items-center gap-2">
-					<Button variant="solid" label="Apply & leave" :loading="applying" @click="applyAndLeave" />
+					<Button
+						variant="solid"
+						label="Apply & leave"
+						:loading="applying"
+						@click="applyAndLeave"
+					/>
 					<Button label="Leave anyway" @click="resolveLeave(true)" />
 					<Button variant="ghost" label="Stay" @click="resolveLeave(false)" />
 				</div>
@@ -228,8 +259,8 @@
 // route-leave + beforeunload guard while dirty. Gated on the skill-reviewer
 // capability (get_agents_caps().review) since apply_agents needs the reviewer
 // set, not System Manager.
-import { reactive, ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
-import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router"
+import { reactive, ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
 import {
 	Badge,
 	Breadcrumbs,
@@ -240,19 +271,19 @@ import {
 	ListFooter,
 	LoadingIndicator,
 	toast,
-} from "frappe-ui"
-import LayoutHeader from "@/components/LayoutHeader.vue"
-import TabBar from "@/components/list/TabBar.vue"
-import AgentActivityTab from "./AgentActivityTab.vue"
-import { useListPage } from "@/composables/useListPage"
-import * as api from "@/api"
-import * as agentsApi from "@/api/agents"
+} from "frappe-ui";
+import LayoutHeader from "@/components/LayoutHeader.vue";
+import TabBar from "@/components/list/TabBar.vue";
+import AgentActivityTab from "./AgentActivityTab.vue";
+import { useListPage } from "@/composables/useListPage";
+import * as api from "@/api";
+import * as agentsApi from "@/api/agents";
 
-const route = useRoute()
-const router = useRouter()
+const route = useRoute();
+const router = useRouter();
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
 // Display metadata mirroring jarvis/agents/registry.json domains (unknown slugs
@@ -260,7 +291,7 @@ function errMsg(e) {
 const DOMAINS = [
 	{ slug: "close", title: "Close & Reporting" },
 	{ slug: "bank-recon", title: "Bank & Reconciliation" },
-]
+];
 
 // ── hash-synced tabs (AgentDetail pattern; no hash = Featured) ───────────────
 const TABS = [
@@ -268,46 +299,46 @@ const TABS = [
 	{ label: "Available", value: "available" },
 	{ label: "Installed", value: "installed" },
 	{ label: "Activity", value: "activity" },
-]
-const AGENT_TABS = ["featured", "available", "installed"]
+];
+const AGENT_TABS = ["featured", "available", "installed"];
 
-const tab = ref("featured")
+const tab = ref("featured");
 function applyHash() {
-	const h = (route.hash || "").replace(/^#/, "")
-	tab.value = TABS.some((t) => t.value === h) ? h : "featured"
+	const h = (route.hash || "").replace(/^#/, "");
+	tab.value = TABS.some((t) => t.value === h) ? h : "featured";
 }
 function setTab(v) {
-	if (tab.value === v) return
-	tab.value = v
-	router.push({ hash: v === "featured" ? "" : "#" + v })
+	if (tab.value === v) return;
+	tab.value = v;
+	router.push({ hash: v === "featured" ? "" : "#" + v });
 }
-applyHash()
+applyHash();
 // back/forward restores the tab
 watch(
 	() => route.hash,
 	() => {
-		if (route.name === "AgentsList") applyHash()
+		if (route.name === "AgentsList") applyHash();
 	}
-)
+);
 
 // ── catalog list: useListPage adapter over list_agents_page ─────────────────
 // The adapter closes over tab/category/sortChoice and maps useListPage's
 // {search, start, page_length} call onto the marketplace-shaped endpoint;
 // its filters/sort_field channel is unused (one category select + one sort
 // choice instead of the generic Filter/Sort kit).
-const category = ref("") // "" = all categories
-const sortChoice = ref("installs") // installs | updated | name
+const category = ref(""); // "" = all categories
+const sortChoice = ref("installs"); // installs | updated | name
 const SORT_OPTIONS = [
 	{ label: "Most installed", value: "installs" },
 	{ label: "Recently updated", value: "updated" },
 	{ label: "Name (A-Z)", value: "name" },
-]
+];
 
 const { rows, total, loading, error, search, pageLength, resetLoad, loadMore } = useListPage({
 	fetchFn: (p) => {
 		// Activity owns its own list - never hit the catalog endpoint for it
 		// (covers the mount-time fetch when deep-linked to #activity)
-		if (!AGENT_TABS.includes(tab.value)) return { rows: [], total: 0, has_more: false }
+		if (!AGENT_TABS.includes(tab.value)) return { rows: [], total: 0, has_more: false };
 		return agentsApi.listAgentsPage({
 			tab: tab.value,
 			category: category.value,
@@ -315,95 +346,97 @@ const { rows, total, loading, error, search, pageLength, resetLoad, loadMore } =
 			search: p.search,
 			start: p.start,
 			page_length: p.page_length,
-		})
+		});
 	},
 	storageKey: "agents",
-})
+});
 
 // tab/category/sort changes refetch page 1 (search/page-length are handled
 // inside useListPage); switching TO activity is a no-op for the grid
 watch([tab, category, sortChoice], ([t]) => {
-	if (t === "activity") return
-	resetLoad()
-})
+	if (t === "activity") return;
+	resetLoad();
+});
 
 // ── category select options (distinct catalog categories, DOMAINS titles) ────
 // One cheap list_agents() call feeds the distinct set - server pages can't
 // (a page only sees its slice); DOMAINS is the fallback until/if it loads.
-const catalogCategories = ref(null)
+const catalogCategories = ref(null);
 async function loadCategories() {
 	try {
-		const all = (await api.listAgents()) || []
-		const seen = new Set()
-		const out = []
+		const all = (await api.listAgents()) || [];
+		const seen = new Set();
+		const out = [];
 		for (const a of all) {
-			const slug = a.category || "other"
-			if (seen.has(slug)) continue
-			seen.add(slug)
-			out.push(slug)
+			const slug = a.category || "other";
+			if (seen.has(slug)) continue;
+			seen.add(slug);
+			out.push(slug);
 		}
-		if (out.length) catalogCategories.value = out
+		if (out.length) catalogCategories.value = out;
 	} catch (e) {
 		// keep the DOMAINS fallback - the select must not break the page
 	}
 }
 const categoryOptions = computed(() => {
-	const slugs = catalogCategories.value || DOMAINS.map((d) => d.slug)
+	const slugs = catalogCategories.value || DOMAINS.map((d) => d.slug);
 	return [
 		{ label: "All categories", value: "" },
 		...slugs.map((s) => ({ label: categoryTitle(s), value: s })),
-	]
-})
+	];
+});
 
 // ── empty states (per-TAB copy - "catalog is empty" only when it truly is) ───
-const filtersActive = computed(() => !!(search.value || category.value))
+const filtersActive = computed(() => !!(search.value || category.value));
 const emptyState = computed(() => {
 	if (filtersActive.value) {
 		return {
 			title: "No agents match",
 			description: "Try clearing the search or category filter.",
 			cta: false,
-		}
+		};
 	}
 	if (tab.value === "featured") {
 		return {
 			title: "No featured agents yet",
 			description: "Browse the Available tab for the full catalog.",
 			cta: true,
-		}
+		};
 	}
 	if (tab.value === "installed") {
 		return {
 			title: "You haven't installed any agents yet",
 			description: "Browse the catalog and install one to get started.",
 			cta: true,
-		}
+		};
 	}
 	return {
 		title: "No agents available",
 		description: "The catalog is empty right now.",
 		cta: false,
-	}
-})
+	};
+});
 
 // ── display helpers ──────────────────────────────────────────────────────────
 function openAgent(a) {
-	router.push("/agents/" + a.agent_slug)
+	router.push("/agents/" + a.agent_slug);
 }
 function categoryTitle(slug) {
-	const d = DOMAINS.find((x) => x.slug === slug)
-	if (d) return d.title
+	const d = DOMAINS.find((x) => x.slug === slug);
+	if (d) return d.title;
 	return String(slug || "other")
 		.split("-")
 		.map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-		.join(" ")
+		.join(" ");
 }
 function logoText(a) {
-	return String(a.title || a.agent_slug || "?").slice(0, 2).toUpperCase()
+	return String(a.title || a.agent_slug || "?")
+		.slice(0, 2)
+		.toUpperCase();
 }
 function installsLabel(n) {
-	const c = n || 0
-	return `${c} install${c === 1 ? "" : "s"}`
+	const c = n || 0;
+	return `${c} install${c === 1 ? "" : "s"}`;
 }
 
 // ── Reviewer capability probe (PART 3 remediation): apply_agents needs the
@@ -412,110 +445,111 @@ function installsLabel(n) {
 // reviewer-only System User (no SM) can see and use it; a plain Jarvis User
 // gets review=false and no button. Decoupled from the SM-only cross-owner
 // getAgentAdminOverview data. ─────────────────────────────────────────────────
-const canApply = ref(false)
+const canApply = ref(false);
 async function probeCaps() {
 	try {
-		const caps = (await agentsApi.getAgentsCaps()) || {}
-		canApply.value = !!caps.review
+		const caps = (await agentsApi.getAgentsCaps()) || {};
+		canApply.value = !!caps.review;
 		if (canApply.value) {
-			await loadSyncStatus()
-			if (sync.pending) startSyncPoll()
+			await loadSyncStatus();
+			if (sync.pending) startSyncPoll();
 		}
 	} catch (e) {
-		canApply.value = false
+		canApply.value = false;
 	}
 }
 
 // ── apply pipeline status (SyncPill pattern: 3s poll while pending) ──────────
 // dirty = the enabled set changed since the last successful Apply - drives the
 // prominent solid button, the "Changes pending" badge and the leave-guard.
-const sync = reactive({ pending: false, dirty: false, status: "" })
-const syncFailed = computed(() => (sync.status || "").startsWith("failed"))
+const sync = reactive({ pending: false, dirty: false, status: "" });
+const syncFailed = computed(() => (sync.status || "").startsWith("failed"));
 const syncFailureReason = computed(() =>
 	syncFailed.value ? (sync.status || "").replace(/^failed:?/, "").trim() : ""
-)
+);
 
-let syncTimer = null
+let syncTimer = null;
 async function loadSyncStatus() {
 	try {
-		const s = (await api.getAgentsSyncStatus()) || {}
-		sync.pending = !!s.pending
-		sync.dirty = !!s.dirty
-		sync.status = s.last_sync_status || ""
+		const s = (await api.getAgentsSyncStatus()) || {};
+		sync.pending = !!s.pending;
+		sync.dirty = !!s.dirty;
+		sync.status = s.last_sync_status || "";
 	} catch (e) {
 		// best-effort: a transient status failure must not break the page
 	}
 }
 function startSyncPoll() {
-	if (syncTimer) return
+	if (syncTimer) return;
 	syncTimer = setInterval(async () => {
-		await loadSyncStatus() // a successful apply clears dirty server-side
-		if (!sync.pending) stopSyncPoll()
-	}, 3000)
+		await loadSyncStatus(); // a successful apply clears dirty server-side
+		if (!sync.pending) stopSyncPoll();
+	}, 3000);
 }
 function stopSyncPoll() {
 	if (syncTimer) {
-		clearInterval(syncTimer)
-		syncTimer = null
+		clearInterval(syncTimer);
+		syncTimer = null;
 	}
 }
 
-const applying = ref(false)
+const applying = ref(false);
 async function applyCatalog() {
-	if (applying.value) return false
-	applying.value = true
+	if (applying.value) return false;
+	applying.value = true;
 	try {
-		await api.applyAgents()
-		toast.success("Applying catalog changes - ~30s, one restart")
-		sync.pending = true
-		startSyncPoll()
-		return true
+		await api.applyAgents();
+		toast.success("Applying catalog changes - ~30s, one restart");
+		sync.pending = true;
+		startSyncPoll();
+		return true;
 	} catch (e) {
-		toast.error(errMsg(e))
-		return false
+		toast.error(errMsg(e));
+		return false;
 	} finally {
-		applying.value = false
+		applying.value = false;
 	}
 }
 
 // ── leave-guard: can-apply + dirty (unapplied catalog changes) ───────────────
-const leaveDialog = reactive({ show: false, next: null })
+const leaveDialog = reactive({ show: false, next: null });
 
 onBeforeRouteLeave((to, from, next) => {
 	// drilling into /agents/:slug stays inside the agents area - don't nag
-	if (!canApply.value || !sync.dirty || String(to.path || "").startsWith("/agents")) return next()
-	leaveDialog.next = next
-	leaveDialog.show = true
-})
+	if (!canApply.value || !sync.dirty || String(to.path || "").startsWith("/agents"))
+		return next();
+	leaveDialog.next = next;
+	leaveDialog.show = true;
+});
 
 function resolveLeave(go) {
-	const n = leaveDialog.next
-	leaveDialog.next = null // idempotent: Dialog @close re-fires after buttons
-	leaveDialog.show = false
-	if (n) n(go)
+	const n = leaveDialog.next;
+	leaveDialog.next = null; // idempotent: Dialog @close re-fires after buttons
+	leaveDialog.show = false;
+	if (n) n(go);
 }
 
 async function applyAndLeave() {
-	const ok = await applyCatalog()
+	const ok = await applyCatalog();
 	// apply request failed → stay so the SM can retry (error already toasted)
-	resolveLeave(ok)
+	resolveLeave(ok);
 }
 
 // hard reloads / tab close while dirty → native browser prompt
 function onBeforeUnload(e) {
 	if (canApply.value && sync.dirty) {
-		e.preventDefault()
-		e.returnValue = "" // Chrome requires returnValue to show the prompt
+		e.preventDefault();
+		e.returnValue = ""; // Chrome requires returnValue to show the prompt
 	}
 }
 
 onMounted(() => {
-	probeCaps()
-	loadCategories()
-	window.addEventListener("beforeunload", onBeforeUnload)
-})
+	probeCaps();
+	loadCategories();
+	window.addEventListener("beforeunload", onBeforeUnload);
+});
 onBeforeUnmount(() => {
-	window.removeEventListener("beforeunload", onBeforeUnload)
-	stopSyncPoll()
-})
+	window.removeEventListener("beforeunload", onBeforeUnload);
+	stopSyncPoll();
+});
 </script>

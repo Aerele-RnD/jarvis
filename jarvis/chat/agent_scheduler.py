@@ -167,7 +167,8 @@ def reap_stale_agent_runs() -> int:
 	for r in stuck:
 		try:
 			frappe.db.set_value(
-				RUN, r.name,
+				RUN,
+				r.name,
 				{
 					"status": "failed",
 					"finished_at": frappe.utils.now(),
@@ -221,15 +222,17 @@ def _launch_audit(inst, trigger: str) -> dict:
 	conv.flags.ignore_permissions = True
 	conv.insert()
 
-	run = frappe.get_doc({
-		"doctype": RUN,
-		"agent": inst.agent,
-		"installation": inst.name,
-		"trigger": trigger,
-		"status": "running",
-		"conversation": conv.name,
-		"started_at": frappe.utils.now(),
-	})
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"agent": inst.agent,
+			"installation": inst.name,
+			"trigger": trigger,
+			"status": "running",
+			"conversation": conv.name,
+			"started_at": frappe.utils.now(),
+		}
+	)
 	run.flags.ignore_permissions = True
 	run.insert()
 
@@ -298,7 +301,8 @@ def _launch_audit(inst, trigger: str) -> dict:
 		# runs (scheduler: no next_run_at advance -> retry next hour;
 		# run_agent_now: surfaces the error to the UI).
 		frappe.db.set_value(
-			RUN, run.name,
+			RUN,
+			run.name,
 			{
 				"status": "failed",
 				"finished_at": frappe.utils.now(),
@@ -328,15 +332,15 @@ def _mint_run_session(session_key: str, user: str) -> None:
 	bench's current ``chat_device_id`` so a re-pair invalidates the row (the
 	device-binding check at ``api.py:106-139``). ignore_permissions — this is
 	trusted server infrastructure, and session_key is unique (run.name is a hash)."""
-	device_id = (
-		frappe.db.get_single_value("Jarvis Settings", "chat_device_id") or ""
-	).strip()
-	frappe.get_doc({
-		"doctype": "Jarvis Chat Session",
-		"session_key": session_key,
-		"user": user,
-		"chat_device_id": device_id,
-	}).insert(ignore_permissions=True)
+	device_id = (frappe.db.get_single_value("Jarvis Settings", "chat_device_id") or "").strip()
+	frappe.get_doc(
+		{
+			"doctype": "Jarvis Chat Session",
+			"session_key": session_key,
+			"user": user,
+			"chat_device_id": device_id,
+		}
+	).insert(ignore_permissions=True)
 
 
 def _stamp_scope_and_watermark(run_name: str, inst, run_as_user: str) -> dict | None:
@@ -405,12 +409,7 @@ def _permission_profile(user: str) -> str:
 		perms = {}
 	up_keys: dict = {}
 	for dt, entries in perms.items():
-		vals = sorted(
-			{
-				(e.get("doc") if isinstance(e, dict) else str(e))
-				for e in (entries or [])
-			}
-		)
+		vals = sorted({(e.get("doc") if isinstance(e, dict) else str(e)) for e in (entries or [])})
 		up_keys[dt] = [v for v in vals if v]
 	summary = {"roles": roles, "user_permissions": up_keys}
 	digest = hashlib.sha256(json.dumps(summary, sort_keys=True).encode()).hexdigest()
@@ -436,12 +435,12 @@ def _audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str
 	if scope:
 		scope_block = (
 			"\n\nEXPLICIT SCOPE (use these EXACT values; never infer the period): "
-			f"company=\"{scope.get('company')}\", "
-			f"fiscal_year=\"{scope.get('fiscal_year')}\", "
-			f"from_date=\"{scope.get('from_date')}\", "
-			f"to_date=\"{scope.get('to_date')}\", "
-			f"prior_fy_start=\"{scope.get('prior_fy_start')}\", "
-			f"prior_fy_end=\"{scope.get('prior_fy_end')}\"."
+			f'company="{scope.get("company")}", '
+			f'fiscal_year="{scope.get("fiscal_year")}", '
+			f'from_date="{scope.get("from_date")}", '
+			f'to_date="{scope.get("to_date")}", '
+			f'prior_fy_start="{scope.get("prior_fy_start")}", '
+			f'prior_fy_end="{scope.get("prior_fy_end")}".'
 		)
 	return (
 		f"[Automated {trigger} run] Run your bundled playbook for this trigger now over "
@@ -467,9 +466,7 @@ def _agent_run_budget_monthly() -> int:
 	never wedges every scheduled agent for a month. Read at run time (not a constant)
 	so a bench admin can raise it without a code change."""
 	try:
-		v = frappe.utils.cint(
-			frappe.db.get_single_value("Jarvis Settings", "agent_run_budget_monthly")
-		)
+		v = frappe.utils.cint(frappe.db.get_single_value("Jarvis Settings", "agent_run_budget_monthly"))
 	except Exception:
 		v = 0
 	return v if v >= MIN_AGENT_RUN_BUDGET_MONTHLY else DEFAULT_AGENT_RUN_BUDGET_MONTHLY
@@ -479,9 +476,7 @@ def _expected_monthly_runs(frequency: str) -> int:
 	"""Upper-bound runs/month a schedule frequency generates (daily ~31, weekly 5,
 	monthly 1). Used at install/validate to warn when a schedule can't fit its
 	budget."""
-	return {"daily": 31, "weekly": 5, "monthly": 1}.get(
-		(frequency or "").strip().lower(), 31
-	)
+	return {"daily": 31, "weekly": 5, "monthly": 1}.get((frequency or "").strip().lower(), 31)
 
 
 def _runs_this_month(*, installation: str | None = None) -> int:
@@ -534,16 +529,18 @@ def _advance(row, now) -> None:
 def _record_failed(row, reason: str) -> None:
 	"""Write a ``failed`` Jarvis Agent Run row (owned by the installation owner)
 	so the customer sees WHY a scheduled slot did not run."""
-	run = frappe.get_doc({
-		"doctype": RUN,
-		"agent": row.agent,
-		"installation": row.name,
-		"trigger": "scheduled",
-		"status": "failed",
-		"started_at": frappe.utils.now(),
-		"finished_at": frappe.utils.now(),
-		"error": (reason or "")[:140],
-	})
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"agent": row.agent,
+			"installation": row.name,
+			"trigger": "scheduled",
+			"status": "failed",
+			"started_at": frappe.utils.now(),
+			"finished_at": frappe.utils.now(),
+			"error": (reason or "")[:140],
+		}
+	)
 	run.flags.ignore_permissions = True
 	run.insert()
 	if row.owner and row.owner != frappe.session.user:
@@ -572,28 +569,29 @@ def _notify_owner(owner: str, row, reason: str | None = None) -> None:
 		return
 	is_budget = bool(reason) and "budget" in reason.lower()
 	try:
-		frappe.get_doc({
-			"doctype": "Notification Log",
-			"for_user": owner,
-			"type": "Alert",
-			"subject": (
-				f"Agent run budget reached: {row.agent}"
-				if is_budget
-				else f"Scheduled audit could not start: {row.agent}"
-			),
-			"email_content": (
-				(
-					f"A scheduled agent run was skipped — {reason}. Runs resume next "
-					"month, or ask an admin to raise the monthly agent-run budget in "
-					"Jarvis Settings."
-				)
-				if is_budget
-				else (
-					"A scheduled agent audit could not be started. It will retry on the "
-					"next hourly run."
-				)
-			),
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Notification Log",
+				"for_user": owner,
+				"type": "Alert",
+				"subject": (
+					f"Agent run budget reached: {row.agent}"
+					if is_budget
+					else f"Scheduled audit could not start: {row.agent}"
+				),
+				"email_content": (
+					(
+						f"A scheduled agent run was skipped — {reason}. Runs resume next "
+						"month, or ask an admin to raise the monthly agent-run budget in "
+						"Jarvis Settings."
+					)
+					if is_budget
+					else (
+						"A scheduled agent audit could not be started. It will retry on the next hourly run."
+					)
+				),
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 	except Exception:
 		pass

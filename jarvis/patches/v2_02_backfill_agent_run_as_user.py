@@ -33,9 +33,7 @@ def execute():
 
 	from jarvis.chat.agent_scheduler import _valid_owner
 
-	rows = frappe.get_all(
-		INSTALLATION, fields=["name", "owner", "run_as_user"]
-	)
+	rows = frappe.get_all(INSTALLATION, fields=["name", "owner", "run_as_user"])
 	skipped = []
 	for r in rows:
 		if (r.run_as_user or "").strip():
@@ -43,9 +41,7 @@ def execute():
 		if not _valid_owner(r.owner):
 			skipped.append(f"{r.name} (owner={r.owner})")
 			continue
-		frappe.db.set_value(
-			INSTALLATION, r.name, "run_as_user", r.owner, update_modified=False
-		)
+		frappe.db.set_value(INSTALLATION, r.name, "run_as_user", r.owner, update_modified=False)
 
 	if skipped:
 		frappe.log_error(
@@ -54,8 +50,7 @@ def execute():
 				"These Jarvis Agent Installation rows have an owner that fails the "
 				"fail-closed run-as guard (disabled / Administrator / Guest), so "
 				"run_as_user was NOT backfilled; they fail closed at run time until "
-				"an admin re-maps them via set_run_as_user:\n  "
-				+ "\n  ".join(skipped)
+				"an admin re-maps them via set_run_as_user:\n  " + "\n  ".join(skipped)
 			),
 		)
 	frappe.db.commit()

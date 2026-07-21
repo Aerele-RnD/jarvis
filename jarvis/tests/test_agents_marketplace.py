@@ -7,6 +7,7 @@ tools as Administrator, bypassing every DocType permission, silently). The rest
 cover mutation authZ (S3), the deterministic Run+Findings persistence with
 dedupe (O2), and catalog-sync idempotency.
 """
+
 import unittest
 
 import frappe
@@ -46,14 +47,16 @@ def _ensure_user(email: str) -> str:
 
 	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
-		u = frappe.get_doc({
-			"doctype": "User",
-			"email": email,
-			"first_name": email.split("@")[0],
-			"send_welcome_email": 0,
-			"enabled": 1,
-			"user_type": "System User",
-		})
+		u = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": email.split("@")[0],
+				"send_welcome_email": 0,
+				"enabled": 1,
+				"user_type": "System User",
+			}
+		)
 		u.flags.ignore_permissions = True
 		u.insert()
 		frappe.db.commit()
@@ -129,6 +132,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 		# run_due_agent_audits does inside set_user(owner)). Stub the delegate
 		# dispatch (admin -> fleet) so no real admin/openclaw is needed.
 		import jarvis.admin_client as admin_client
+
 		orig_run = admin_client.post_agent_run
 		admin_client.post_agent_run = lambda **kw: {"run_id": kw.get("run_id"), "status": "queued"}
 		original_user = frappe.session.user
@@ -164,6 +168,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 		frappe.db.commit()
 
 		import jarvis.admin_client as admin_client
+
 		captured = {}
 		orig_run = admin_client.post_agent_run
 
@@ -257,9 +262,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 			admin_client.post_agent_run = orig_run
 
 		# The already-created Run is marked failed (never orphaned as "running").
-		runs = frappe.get_all(
-			RUN, filters={"installation": inst_name}, fields=["name", "status", "error"]
-		)
+		runs = frappe.get_all(RUN, filters={"installation": inst_name}, fields=["name", "status", "error"])
 		self.assertTrue(runs)
 		self.assertTrue(all(r.status == "failed" for r in runs))
 		self.assertTrue(any("dispatch failed" in (r.error or "") for r in runs))
@@ -269,9 +272,12 @@ class TestAgentsMarketplace(unittest.TestCase):
 		inst_name = _install_as(self.owner, "close-auditor")
 		inst = frappe.get_doc(INSTALLATION, inst_name)
 		scope = {
-			"company": "Test Co", "fiscal_year": "2026-2027",
-			"from_date": "2026-04-01", "to_date": "2027-03-31",
-			"prior_fy_start": "2025-04-01", "prior_fy_end": "2026-03-31",
+			"company": "Test Co",
+			"fiscal_year": "2026-2027",
+			"from_date": "2026-04-01",
+			"to_date": "2027-03-31",
+			"prior_fy_start": "2025-04-01",
+			"prior_fy_end": "2026-03-31",
 		}
 		gen = agent_scheduler._audit_prompt(delegate, inst, "scheduled", scope)
 		# The bench-injected run message names NO rule/tool/threshold/engine.
@@ -279,7 +285,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 			self.assertNotIn(leak, gen)
 		self.assertIn("EXPLICIT SCOPE", gen)
 		self.assertIn("2026-04-01", gen)  # scope injected verbatim (A6)
-		self.assertIn(inst_name, gen)     # installation pointer
+		self.assertIn(inst_name, gen)  # installation pointer
 
 	# ------------------------------------------------------------------ #
 	# (b) mutation authZ (S3)
@@ -379,9 +385,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 				agents_api.install_agent("close-auditor")
 		finally:
 			frappe.set_user("Administrator")
-		self.assertFalse(
-			frappe.db.exists(INSTALLATION, {"owner": self.other, "agent": "close-auditor"})
-		)
+		self.assertFalse(frappe.db.exists(INSTALLATION, {"owner": self.other, "agent": "close-auditor"}))
 
 		# User WITH the role installs fine.
 		inst = _install_as(self.owner, "close-auditor")
@@ -403,11 +407,11 @@ class TestAgentsMarketplace(unittest.TestCase):
 
 		# Delegates dispatch via admin_client.post_agent_run (never chat send).
 		import jarvis.admin_client as admin_client
+
 		calls = []
 		orig_run = admin_client.post_agent_run
 		admin_client.post_agent_run = lambda **kw: (
-			calls.append(frappe.session.user)
-			or {"run_id": kw.get("run_id"), "status": "queued"}
+			calls.append(frappe.session.user) or {"run_id": kw.get("run_id"), "status": "queued"}
 		)
 		try:
 			# self.other lacks ROLE_X -> refused, and NO turn was dispatched.
@@ -468,18 +472,14 @@ class TestAgentsMarketplace(unittest.TestCase):
 			frappe.set_user("Administrator")
 		# Nothing leaked through: listing untouched.
 		self.assertEqual(frappe.db.get_value(LISTING, "close-auditor", "status"), "Published")
-		self.assertEqual(
-			frappe.get_all(ALLOWED_ROLE, filters={"parent": "close-auditor"}, pluck="role"), []
-		)
+		self.assertEqual(frappe.get_all(ALLOWED_ROLE, filters={"parent": "close-auditor"}, pluck="role"), [])
 
 	def test_set_listing_status_valid_and_invalid(self):
 		frappe.set_user(self.admin)  # a real SM user, not Administrator
 		try:
 			res = agents_api.set_listing_status("close-auditor", "Coming Soon")
 			self.assertEqual(res["status"], "Coming Soon")
-			self.assertEqual(
-				frappe.db.get_value(LISTING, "close-auditor", "status"), "Coming Soon"
-			)
+			self.assertEqual(frappe.db.get_value(LISTING, "close-auditor", "status"), "Coming Soon")
 			with self.assertRaises(frappe.ValidationError):
 				agents_api.set_listing_status("close-auditor", "Draft")  # registry-only
 			with self.assertRaises(frappe.ValidationError):
@@ -509,8 +509,12 @@ class TestAgentsMarketplace(unittest.TestCase):
 		install_row = next(i for i in row["installs"] if i["installation"] == inst)
 		self.assertEqual(install_row["owner"], self.owner)
 		for key in (
-			"enabled", "schedule_enabled", "schedule_frequency",
-			"next_run_at", "last_run_at", "sync_status",
+			"enabled",
+			"schedule_enabled",
+			"schedule_frequency",
+			"next_run_at",
+			"last_run_at",
+			"sync_status",
 		):
 			self.assertIn(key, install_row)
 
@@ -543,8 +547,10 @@ class TestAgentsMarketplace(unittest.TestCase):
 			for r in frappe.get_all(
 				INSTALLATION,
 				filters={
-					"enabled": 1, "schedule_enabled": 1,
-					"next_run_at": ["<=", now], "name": ["!=", inst_name],
+					"enabled": 1,
+					"schedule_enabled": 1,
+					"next_run_at": ["<=", now],
+					"name": ["!=", inst_name],
 				},
 				fields=["name", "next_run_at"],
 			)
@@ -554,6 +560,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 		frappe.db.commit()
 
 		import jarvis.chat.api as chat_api
+
 		calls = []
 		orig_send = chat_api.send_message
 		chat_api.send_message = lambda **kw: calls.append(kw) or {"ok": True}
@@ -577,9 +584,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 		self.assertEqual(runs[0]["owner"], self.owner)
 		self.assertIn("roles no longer permit", runs[0]["error"])
 		# The slot was consumed: next_run_at advanced into the future.
-		inst = frappe.db.get_value(
-			INSTALLATION, inst_name, ["next_run_at", "last_run_at"], as_dict=True
-		)
+		inst = frappe.db.get_value(INSTALLATION, inst_name, ["next_run_at", "last_run_at"], as_dict=True)
 		self.assertIsNotNone(inst.last_run_at)
 		self.assertGreater(inst.next_run_at, now)
 

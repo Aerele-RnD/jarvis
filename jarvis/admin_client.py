@@ -512,8 +512,7 @@ def post_push_learned_skills(learned_skills: list[dict]) -> dict:
 	)
 
 
-def post_agent_run(run_id: str, agent_id: str, session_key: str, message: str,
-				   timeout_s: int = 600) -> dict:
+def post_agent_run(run_id: str, agent_id: str, session_key: str, message: str, timeout_s: int = 600) -> dict:
 	"""Dispatch ONE marketplace-agent delegate turn: bench → admin → fleet → the
 	customer's container (Phase 2C run relay).
 
@@ -557,8 +556,9 @@ def get_agent_run_status(run_id: str) -> dict:
 	)
 
 
-def push_wiki_files(files: list[dict], delete: list | None = None,
-					known_paths: list | None = None) -> dict | None:
+def push_wiki_files(
+	files: list[dict], delete: list | None = None, known_paths: list | None = None
+) -> dict | None:
 	"""POST one batch of rendered org-wiki mirror files to admin → fleet →
 	container workspace ``wiki/`` (wiki v2 mirror; see jarvis.chat.wiki_mirror).
 

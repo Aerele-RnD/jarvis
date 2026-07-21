@@ -17,6 +17,7 @@ output is mocked — findings passed straight to the writeback, and the
 Run: bench --site patterntest.localhost run-tests --module
      jarvis.tests.test_agent_dashboard_wire
 """
+
 import json
 import unittest
 
@@ -43,10 +44,16 @@ def _ensure_user(email: str) -> str:
 
 	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
-		u = frappe.get_doc({
-			"doctype": "User", "email": email, "first_name": email.split("@")[0],
-			"send_welcome_email": 0, "enabled": 1, "user_type": "System User",
-		})
+		u = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": email.split("@")[0],
+				"send_welcome_email": 0,
+				"enabled": 1,
+				"user_type": "System User",
+			}
+		)
 		u.flags.ignore_permissions = True
 		u.insert()
 	if "Jarvis User" not in set(frappe.get_roles(email)):
@@ -59,10 +66,15 @@ def _ensure_company() -> str:
 	"""A bare Company row (patterntest never ran the erpnext setup wizard). We only
 	need a row that exists() so a Company-keyed finding ref verifies."""
 	if not frappe.db.exists("Company", COMPANY):
-		c = frappe.get_doc({
-			"doctype": "Company", "company_name": COMPANY, "abbr": "JDTC",
-			"default_currency": "INR", "country": "India",
-		})
+		c = frappe.get_doc(
+			{
+				"doctype": "Company",
+				"company_name": COMPANY,
+				"abbr": "JDTC",
+				"default_currency": "INR",
+				"country": "India",
+			}
+		)
 		c.name = COMPANY
 		c.flags.ignore_links = True
 		c.flags.ignore_mandatory = True
@@ -98,11 +110,17 @@ class TestAgentDashboardWire(unittest.TestCase):
 		for n in frappe.get_all(INSTALLATION, filters={"owner": cls.owner}, pluck="name"):
 			frappe.delete_doc(INSTALLATION, n, force=True, ignore_permissions=True)
 		name = frappe.generate_hash(length=12)
-		doc = frappe.get_doc({
-			"doctype": INSTALLATION, "name": name, "agent": AGENT, "enabled": 1,
-			"run_as_user": cls.owner, "schedule_enabled": 0,
-			"config": json.dumps({"company": COMPANY, "fiscal_year": FY}),
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": INSTALLATION,
+				"name": name,
+				"agent": AGENT,
+				"enabled": 1,
+				"run_as_user": cls.owner,
+				"schedule_enabled": 0,
+				"config": json.dumps({"company": COMPANY, "fiscal_year": FY}),
+			}
+		)
 		doc.flags.ignore_permissions = True
 		doc.db_insert()
 		frappe.db.set_value(INSTALLATION, name, "owner", cls.owner, update_modified=False)
@@ -129,11 +147,18 @@ class TestAgentDashboardWire(unittest.TestCase):
 	# helpers
 	# ------------------------------------------------------------------ #
 	def _mk_run(self, session_key: str) -> str:
-		run = frappe.get_doc({
-			"doctype": RUN, "agent": AGENT, "installation": self.inst_name,
-			"trigger": "manual", "status": "running", "session_key": session_key,
-			"started_at": frappe.utils.now(), "scope_json": json.dumps({"company": COMPANY, "fiscal_year": FY}),
-		})
+		run = frappe.get_doc(
+			{
+				"doctype": RUN,
+				"agent": AGENT,
+				"installation": self.inst_name,
+				"trigger": "manual",
+				"status": "running",
+				"session_key": session_key,
+				"started_at": frappe.utils.now(),
+				"scope_json": json.dumps({"company": COMPANY, "fiscal_year": FY}),
+			}
+		)
 		run.flags.ignore_permissions = True
 		run.insert()
 		frappe.db.set_value(RUN, run.name, "owner", self.owner, update_modified=False)
@@ -141,14 +166,19 @@ class TestAgentDashboardWire(unittest.TestCase):
 		return run.name
 
 	def _mint_session(self, session_key: str) -> None:
-		frappe.get_doc({
-			"doctype": SESSION, "session_key": session_key, "user": self.owner,
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": SESSION,
+				"session_key": session_key,
+				"user": self.owner,
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 
 	def _call_record(self, session_key, **kwargs):
 		from jarvis.tools import _agent_run_ctx
 		from jarvis.tools.record_agent_run import record_agent_run
+
 		frappe.set_user(self.owner)
 		_agent_run_ctx.set_session_key(session_key)
 		try:
@@ -160,6 +190,7 @@ class TestAgentDashboardWire(unittest.TestCase):
 	def _call_save_dashboard(self, session_key, **kwargs):
 		from jarvis.tools import _agent_run_ctx
 		from jarvis.tools.save_agent_dashboard import save_agent_dashboard
+
 		frappe.set_user(self.owner)
 		_agent_run_ctx.set_session_key(session_key)
 		try:
@@ -171,8 +202,11 @@ class TestAgentDashboardWire(unittest.TestCase):
 	@staticmethod
 	def _blocker_finding():
 		return {
-			"token": TB_TOKEN, "ref_doctype": "Company", "ref_name": COMPANY,
-			"amount": 1000.0, "severity": "blocker",
+			"token": TB_TOKEN,
+			"ref_doctype": "Company",
+			"ref_name": COMPANY,
+			"amount": 1000.0,
+			"severity": "blocker",
 			"note": "Trial balance does not balance: debits vs credits out by 1000.00.",
 		}
 
@@ -183,8 +217,11 @@ class TestAgentDashboardWire(unittest.TestCase):
 		sk = "agent:agent-close-auditor:dash-floor"
 		run = self._mk_run(sk)
 		out = self._call_record(
-			sk, findings=[self._blocker_finding()], coverage={TB_TOKEN: "evaluated"},
-			scope={"company": COMPANY, "fiscal_year": FY})
+			sk,
+			findings=[self._blocker_finding()],
+			coverage={TB_TOKEN: "evaluated"},
+			scope={"company": COMPANY, "fiscal_year": FY},
+		)
 
 		self.assertEqual(out["status"], "completed")
 		self.assertEqual(out["findings_count"], 1)
@@ -193,10 +230,10 @@ class TestAgentDashboardWire(unittest.TestCase):
 		self.assertEqual(frappe.db.get_value(RUN, run, "dashboard"), dash)
 
 		d = frappe.get_doc(DASHBOARD, dash)
-		self.assertEqual(d.owner, self.owner)          # row-owned by the human owner
+		self.assertEqual(d.owner, self.owner)  # row-owned by the human owner
 		self.assertEqual(d.scope, "User")
-		self.assertEqual(d.target_user, self.owner)    # visible in the owner's list
-		self.assertEqual(d.dashboard_type, "Static")   # no live sources
+		self.assertEqual(d.target_user, self.owner)  # visible in the owner's list
+		self.assertEqual(d.dashboard_type, "Static")  # no live sources
 		self.assertIn(FY, d.dashboard_title)
 		# The authored outcome text is rendered...
 		self.assertIn("Trial balance does not balance", d.html)
@@ -205,9 +242,10 @@ class TestAgentDashboardWire(unittest.TestCase):
 
 	def test_all_clear_run_still_gets_a_dashboard(self):
 		sk = "agent:agent-close-auditor:dash-clear"
-		run = self._mk_run(sk)
-		out = self._call_record(sk, findings=[], coverage={TB_TOKEN: "evaluated"},
-								scope={"company": COMPANY, "fiscal_year": FY})
+		self._mk_run(sk)
+		out = self._call_record(
+			sk, findings=[], coverage={TB_TOKEN: "evaluated"}, scope={"company": COMPANY, "fiscal_year": FY}
+		)
 		self.assertEqual(out["status"], "completed")
 		self.assertTrue(out["dashboard"])
 		self.assertIn("No exceptions", frappe.db.get_value(DASHBOARD, out["dashboard"], "html"))
@@ -218,16 +256,22 @@ class TestAgentDashboardWire(unittest.TestCase):
 	def test_delegate_authored_dashboard_is_kept_and_not_duplicated(self):
 		sk = "agent:agent-close-auditor:dash-authored"
 		run = self._mk_run(sk)
-		html = "<!doctype html><html><head><title>Close</title></head><body>Authored close summary</body></html>"
+		html = (
+			"<!doctype html><html><head><title>Close</title></head><body>Authored close summary</body></html>"
+		)
 		saved = self._call_save_dashboard(sk, html=html, title="My Close Summary")
 		d1 = saved["dashboard"]
 		self.assertTrue(d1)
 		# save_agent_dashboard links it on the run immediately (survives a crash).
 		self.assertEqual(frappe.db.get_value(RUN, run, "dashboard"), d1)
 
-		out = self._call_record(sk, findings=[self._blocker_finding()],
-								coverage={TB_TOKEN: "evaluated"},
-								scope={"company": COMPANY, "fiscal_year": FY}, dashboard=d1)
+		out = self._call_record(
+			sk,
+			findings=[self._blocker_finding()],
+			coverage={TB_TOKEN: "evaluated"},
+			scope={"company": COMPANY, "fiscal_year": FY},
+			dashboard=d1,
+		)
 		self.assertEqual(out["dashboard"], d1)
 		self.assertEqual(frappe.db.get_value(RUN, run, "dashboard"), d1)
 		# EXACTLY ONE dashboard from this run — the authored one, no server floor.
@@ -237,9 +281,11 @@ class TestAgentDashboardWire(unittest.TestCase):
 
 	def test_save_dashboard_rejects_non_run_session(self):
 		from jarvis.exceptions import InvalidArgumentError
+
 		with self.assertRaises(InvalidArgumentError):
-			self._call_save_dashboard("agent:agent-close-auditor:no-such-run",
-									  html="<html><body>x</body></html>")
+			self._call_save_dashboard(
+				"agent:agent-close-auditor:no-such-run", html="<html><body>x</body></html>"
+			)
 
 	# ------------------------------------------------------------------ #
 	# (3) A8 session teardown on finalize
@@ -253,7 +299,8 @@ class TestAgentDashboardWire(unittest.TestCase):
 		self._call_record(sk, findings=[], coverage={}, scope={"company": COMPANY})
 		self.assertFalse(
 			frappe.db.exists(SESSION, {"session_key": sk}),
-			"the per-run session bearer must be deleted at finalize (A8)")
+			"the per-run session bearer must be deleted at finalize (A8)",
+		)
 		# The session_key string stays stamped on the Run for audit (harmless now).
 		self.assertEqual(frappe.db.get_value(RUN, run, "session_key"), sk)
 
@@ -267,8 +314,7 @@ class TestAgentDashboardWire(unittest.TestCase):
 		run = self._mk_run(sk)
 		self._mint_session(sk)
 		# Backdate the run well beyond the stale threshold so the reaper catches it.
-		old = frappe.utils.add_to_date(
-			frappe.utils.now_datetime(), seconds=-(STALE_RUN_AFTER_SECONDS + 3600))
+		old = frappe.utils.add_to_date(frappe.utils.now_datetime(), seconds=-(STALE_RUN_AFTER_SECONDS + 3600))
 		frappe.db.set_value(RUN, run, "started_at", old, update_modified=False)
 		frappe.db.commit()
 
@@ -279,7 +325,8 @@ class TestAgentDashboardWire(unittest.TestCase):
 		self.assertIn("reaped", (frappe.db.get_value(RUN, run, "error") or "").lower())
 		self.assertFalse(
 			frappe.db.exists(SESSION, {"session_key": sk}),
-			"the reaper must tear down the orphaned session bearer (A8)")
+			"the reaper must tear down the orphaned session bearer (A8)",
+		)
 
 	def test_reaper_leaves_a_fresh_running_run_alone(self):
 		from jarvis.chat.agent_scheduler import reap_stale_agent_runs

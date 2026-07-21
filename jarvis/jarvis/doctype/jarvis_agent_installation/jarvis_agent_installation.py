@@ -58,7 +58,8 @@ class JarvisAgentInstallation(Document):
 		if not self.get("schedule_enabled"):
 			return
 		from jarvis.chat.agent_scheduler import (
-			_agent_run_budget_monthly, _expected_monthly_runs,
+			_agent_run_budget_monthly,
+			_expected_monthly_runs,
 		)
 
 		expected = _expected_monthly_runs(self.get("schedule_frequency"))
@@ -120,9 +121,7 @@ class JarvisAgentInstallation(Document):
 		owner = self.owner or frappe.session.user
 		count = frappe.db.count("Jarvis Agent Installation", {"owner": owner})
 		if count >= MAX_INSTALLS_PER_OWNER:
-			frappe.throw(
-				_("You can have at most {0} installed agents.").format(MAX_INSTALLS_PER_OWNER)
-			)
+			frappe.throw(_("You can have at most {0} installed agents.").format(MAX_INSTALLS_PER_OWNER))
 
 	# ------------------------------------------------------------------ #
 	# run_as_user — the moat's second half (A4 escalation + A12 perms).
@@ -155,9 +154,7 @@ class JarvisAgentInstallation(Document):
 		from jarvis.chat.agent_scheduler import _valid_owner
 
 		if not _valid_owner(target):
-			frappe.throw(
-				_("Run-as user must be an existing, enabled, non-system user.")
-			)
+			frappe.throw(_("Run-as user must be an existing, enabled, non-system user."))
 
 		self._validate_run_as_escalation(target)
 		self._validate_run_as_permissions(target)
@@ -192,9 +189,9 @@ class JarvisAgentInstallation(Document):
 		for dt in self._required_doctypes():
 			if not frappe.has_permission(dt, "read", user=target):
 				frappe.throw(
-					_(
-						"Run-as user {0} lacks read access to {1}, which this agent requires."
-					).format(target, dt)
+					_("Run-as user {0} lacks read access to {1}, which this agent requires.").format(
+						target, dt
+					)
 				)
 		self.scoped_visibility = 1 if self._detect_scoped_visibility(target) else 0
 
@@ -207,8 +204,7 @@ class JarvisAgentInstallation(Document):
 		# Guard has_permission against a bogus catalog entry; a non-existent
 		# required doctype is a bundle-authoring bug, not a user-perm failure.
 		return [
-			d for d in vals
-			if isinstance(d, str) and d.strip() and frappe.db.exists("DocType", d.strip())
+			d for d in vals if isinstance(d, str) and d.strip() and frappe.db.exists("DocType", d.strip())
 		]
 
 	def _detect_scoped_visibility(self, target: str) -> bool:
