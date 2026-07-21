@@ -161,12 +161,18 @@ const autoApplyNote = computed(() => (ctx.value && ctx.value.autoApplyNote) || "
 // never a 403 → "—".
 const isSM = !!(window.is_system_manager || window.is_jarvis_admin);
 const connStatus = ref(null);
+// get_llm_connection_status short-circuits server-side for a DIRECT (single-
+// model) tenant and reports that via proxy_active, rather than the raw proxy-
+// auth payload - the same fix as ConnectionPane.vue. Without this, a direct
+// tenant's own auth_present:false read as "Not connected" here too.
+const isProxy = computed(() => !!(connStatus.value && connStatus.value.proxy_active));
 const connected = computed(() =>
-	isSM ? !!(connStatus.value && connStatus.value.auth_present) : true
+	isSM ? !!(connStatus.value && isProxy.value && connStatus.value.auth_present) : true
 );
 const statusLabel = computed(() => {
 	if (!isSM) return "Connected";
 	if (!connStatus.value) return "—";
+	if (!isProxy.value) return "Direct";
 	return connected.value ? "Connected" : "Not connected";
 });
 

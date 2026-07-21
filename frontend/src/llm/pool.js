@@ -47,7 +47,7 @@ export function buildCustomModels(rows) {
 			const m = {
 				provider: r.provider.trim(),
 				model: r.model.trim(),
-				api_key: (r.apiKey || "").trim(),
+				api_key: effectiveApiKey(r.provider, r.apiKey, r.hasKey),
 				order: i,
 			};
 			if (r.hasKey) m.has_key = true;
@@ -115,8 +115,10 @@ export function validatePool(models, preset) {
 				error: `Model ${m.model}: ${m.provider} needs a Base URL (its custom endpoint).`,
 			};
 		}
-		// A freshly-entered key OR a previously-saved key (has_key; merged back on save).
-		if (!(m.api_key || "").trim() && !m.has_key)
+		// A freshly-entered key OR a previously-saved key (has_key; merged back on
+		// save). Local providers (Ollama, vLLM) run inside/near the container with
+		// no auth of their own - a key is optional, not a value to make up.
+		if (!(m.api_key || "").trim() && !m.has_key && !LOCAL_PROVIDER_IDS.has(pid))
 			return { ok: false, error: `Model ${m.model} needs an API key.` };
 	}
 	return { ok: true, error: "" };
@@ -178,11 +180,31 @@ export const isCodeOnlyPaste = (upstreamOrLabel) => _CODE_ONLY_PASTE.has(upstrea
 // have no native Bifrost provider, so each needs its own Z.ai base_url
 // (standard api.z.ai/api/paas/v4 vs coding-plan api.z.ai/api/coding/paas/v4).
 const NEEDS_BASE_URL = new Set(["openai_compat", "vllm", "zai", "zai_coding"]);
+// Providers with no auth of their own - Ollama/vLLM run inside or next to the
+// tenant's container (loopback / LAN), so there is no key to bring. Shared
+// with LlmPoolEditor.vue's Test-button disclaimer (predates this export) -
+// MUST also match jarvis.llm_key_probe.LOCAL_PROVIDER_IDS on the Python side.
+export const LOCAL_PROVIDER_IDS = new Set(["ollama", "vllm"]);
 export function providerLabel(id) {
 	return _LABEL_BY_ID[id] || id || "";
 }
 export function providerId(label) {
 	return _ID_BY_LABEL[label] || label || "";
+}
+// The api_key value to persist for one API-key row. A real typed key always
+// wins; an unchanged has_key row sends "" (the merge-on-save convention - see
+// buildCustomModels/buildSaveModels callers, "let backend merge keep a stored
+// key on re-save"). Only a BLANK, never-saved key on a local provider (Ollama
+// / vLLM) gets the placeholder: the backend's dangling-key_ref guard
+// (pool_serialize.validate_models) requires a non-empty api_key on every
+// enabled api_key model regardless of provider, and local providers don't
+// authenticate with it anyway, so a fixed, harmless placeholder satisfies
+// that contract without asking the customer to invent one.
+export function effectiveApiKey(providerRaw, apiKey, hasKey) {
+	const trimmed = (apiKey || "").trim();
+	if (trimmed || hasKey) return trimmed;
+	const pid = _ID_BY_LABEL[providerRaw] || (providerRaw || "").trim().toLowerCase();
+	return LOCAL_PROVIDER_IDS.has(pid) ? "local" : "";
 }
 
 // ---- config -> editor rows -------------------------------------------------
