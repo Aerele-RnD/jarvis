@@ -193,7 +193,14 @@ test("validatePool: Ollama/vLLM don't need a key (label or id, blank api_key)", 
 	);
 	assert.equal(
 		validatePool(
-			[{ provider: "vllm", model: "qwen2.5", api_key: "", base_url: "http://localhost:8000/v1" }],
+			[
+				{
+					provider: "vllm",
+					model: "qwen2.5",
+					api_key: "",
+					base_url: "http://localhost:8000/v1",
+				},
+			],
 			null
 		).ok,
 		true

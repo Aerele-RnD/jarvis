@@ -354,7 +354,10 @@
 						</div>
 						<div class="jv-pool-field">
 							<label class="jv-pool-lab"
-								>API key<span v-if="isLocalProviderRow(panelRow)" class="jv-pool-opt">
+								>API key<span
+									v-if="isLocalProviderRow(panelRow)"
+									class="jv-pool-opt"
+								>
 									(optional)</span
 								></label
 							>
@@ -366,8 +369,8 @@
 									panelRow.hasKey
 										? 'key set, re-enter to change'
 										: isLocalProviderRow(panelRow)
-											? 'Not required for local providers'
-											: 'API key'
+										? 'Not required for local providers'
+										: 'API key'
 								"
 								class="jv-cfg-inp"
 							/>
@@ -1165,8 +1168,8 @@
 								m.hasKey
 									? 'key set, re-enter to change'
 									: isLocalProviderRow(m)
-										? 'Not required for local providers'
-										: 'API key'
+									? 'Not required for local providers'
+									: 'API key'
 							"
 						/>
 						<input
