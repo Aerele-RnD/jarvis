@@ -82,7 +82,7 @@ test("cancelActionLabel: only promises auto-renewal when one exists", () => {
 test("cancellationNotice: names the end date, degrades without one", () => {
 	assert.equal(
 		cancellationNotice("2026-08-20 16:11:36.216083"),
-		"Your plan ends on 2026-08-20. You keep full access until then.",
+		"Your plan ends on 2026-08-20. You keep full access until then."
 	);
 	assert.match(cancellationNotice(""), /keep full access until then/);
 	assert.match(cancellationNotice(null), /keep full access until then/);

@@ -179,9 +179,7 @@ const cancelling = computed(() => !!account.value.cancel_at_period_end);
 // fresh payment restores service. Distinct from `cancelling` (still entitled).
 const ENDED_STATUSES = new Set(["Expired", "Cancelled"]);
 const ended = computed(() => ENDED_STATUSES.has(account.value.subscription_status));
-const tone = computed(() =>
-	pillTone(account.value.subscription_status, cancelling.value),
-);
+const tone = computed(() => pillTone(account.value.subscription_status, cancelling.value));
 const busy = ref(false);
 const reauthNotice = ref("");
 

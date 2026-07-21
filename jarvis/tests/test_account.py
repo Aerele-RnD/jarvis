@@ -167,22 +167,26 @@ class TestAdminChatGate(FrappeTestCase):
 		tells the customer to wait for a container that is never coming back
 		instead of renewing."""
 		with patch.object(
-			admin_client, "get_connection",
-			return_value={"chat_readiness": "Suspended",
-						  "chat_readiness_reason": "Your subscription has expired."},
+			admin_client,
+			"get_connection",
+			return_value={
+				"chat_readiness": "Suspended",
+				"chat_readiness_reason": "Your subscription has expired.",
+			},
 		):
 			self.assertEqual(
 				account._admin_chat_gate(),
-				{"ready": False, "reason": "subscription_suspended",
-				 "detail": "Your subscription has expired."},
+				{
+					"ready": False,
+					"reason": "subscription_suspended",
+					"detail": "Your subscription has expired.",
+				},
 			)
 
 	def test_suspended_without_reason_still_classifies(self):
 		"""Older admin sends the state with no sentence — the code must still be
 		the billing one; the SPA supplies its own fallback copy."""
-		with patch.object(
-			admin_client, "get_connection", return_value={"chat_readiness": "Suspended"}
-		):
+		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Suspended"}):
 			self.assertEqual(
 				account._admin_chat_gate(),
 				{"ready": False, "reason": "subscription_suspended", "detail": ""},

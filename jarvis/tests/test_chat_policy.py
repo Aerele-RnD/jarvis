@@ -10,8 +10,7 @@ from jarvis.chat.policy import validate_can_send
 # Entitled verdict. Patched in by default so these tests never depend on the
 # live control plane's current subscription state.
 _ENTITLED = {"ready": True, "reason": None}
-_SUSPENDED = {"ready": False, "reason": "subscription_suspended",
-			  "detail": "Your subscription has expired."}
+_SUSPENDED = {"ready": False, "reason": "subscription_suspended", "detail": "Your subscription has expired."}
 
 
 class TestValidateCanSend(FrappeTestCase):
@@ -57,7 +56,8 @@ class TestSubscriptionGate(FrappeTestCase):
 		"""A container still coming up is NOT a billing block - the send must go
 		through so the existing retry can ride out a dormant container."""
 		with patch.object(
-			account, "_admin_chat_gate",
+			account,
+			"_admin_chat_gate",
 			return_value={"ready": False, "reason": "container_provisioning", "detail": ""},
 		):
 			ok, reason = validate_can_send("someone@example.invalid")
