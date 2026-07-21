@@ -119,9 +119,16 @@ _TOPIC_BY_TEMPLATE = {
 _LINE_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 # ASCII-fold a few common unicode punctuation glyphs so bodies stay ASCII.
 _UNICODE_FOLD = {
-	"→": "->", "←": "<-", "—": "-", "–": "-",
-	"‘": "'", "’": "'", "“": '"', "”": '"',
-	"…": "...", " ": " ",
+	"→": "->",
+	"←": "<-",
+	"—": "-",
+	"–": "-",
+	"‘": "'",
+	"’": "'",
+	"“": '"',
+	"”": '"',
+	"…": "...",
+	" ": " ",
 }
 
 
@@ -143,9 +150,17 @@ def compile_domain_skills() -> dict:
 		JLP,
 		filters={"status": ["in", ["Approved", "Active"]], "effective_sensitivity": "A"},
 		fields=[
-			"name", "domain", "company", "pattern_statement", "skill_draft",
-			"strength_band", "support_n", "detector_id", "evidence",
-			"draft_edited", "last_seen_run",
+			"name",
+			"domain",
+			"company",
+			"pattern_statement",
+			"skill_draft",
+			"strength_band",
+			"support_n",
+			"detector_id",
+			"evidence",
+			"draft_edited",
+			"last_seen_run",
 		],
 	)
 	if not rows:
@@ -191,7 +206,8 @@ def preview_bullet(pattern_name: str) -> str:
 	B/C rows are insight-only and never reach the pushed body, but the board still
 	previews the bullet the SM is deciding on. Empty string when the row is gone."""
 	row = frappe.db.get_value(
-		JLP, pattern_name,
+		JLP,
+		pattern_name,
 		["name", "domain", "skill_draft", "pattern_statement"],
 		as_dict=True,
 	)
@@ -219,11 +235,7 @@ def apply_learned_skills() -> dict:
 
 	with redis_lock(_APPLY_LOCK, timeout_s=_APPLY_LOCK_TTL, blocking_timeout_s=0) as acquired:
 		if not acquired:
-			frappe.throw(
-				_(
-					"Another Apply is already in progress; wait for it to finish, then apply again."
-				)
-			)
+			frappe.throw(_("Another Apply is already in progress; wait for it to finish, then apply again."))
 		_set_apply_marker(True)
 		try:
 			return _apply_learned_skills_locked()
@@ -260,9 +272,7 @@ def _apply_learned_skills_locked() -> dict:
 
 		existing_managed = {
 			r["skill_name"]: r["name"]
-			for r in frappe.get_all(
-				SKILL, filters={"managed_by_learning": 1}, fields=["name", "skill_name"]
-			)
+			for r in frappe.get_all(SKILL, filters={"managed_by_learning": 1}, fields=["name", "skill_name"])
 		}
 		for domain, spec in compiled.items():
 			skill_by_domain[domain] = _upsert_managed_skill(spec)
@@ -270,7 +280,7 @@ def _apply_learned_skills_locked() -> dict:
 
 		# Delete managed rows whose domain no longer has any compiled patterns.
 		for sname, row_name in existing_managed.items():
-			domain = sname[len("learned-"):] if sname.startswith("learned-") else sname
+			domain = sname[len("learned-") :] if sname.startswith("learned-") else sname
 			if domain not in compiled:
 				frappe.delete_doc(SKILL, row_name, ignore_permissions=True, force=True)
 				deleted_domains.append(domain)
@@ -335,9 +345,7 @@ def _is_learned_cutover() -> bool:
 	``datetime(1,1,1)``. frappe.db.get_value (not get_single_value): the latter
 	serves a process-local cache that background status writes do not
 	invalidate, and a stale read here would re-fire (or skip) the reconcile."""
-	status = frappe.db.get_value(
-		"Jarvis Settings", "Jarvis Settings", "learned_skills_sync_status"
-	)
+	status = frappe.db.get_value("Jarvis Settings", "Jarvis Settings", "learned_skills_sync_status")
 	if (status or "").strip():
 		return False
 	# Positive Phase-1 evidence: this runs before the apply's upserts, so any
@@ -447,9 +455,7 @@ def _upsert_managed_skill(spec: dict) -> str:
 	owner=MANAGED_OWNER (Administrator) so normal users cannot reach them. Returns
 	the row name."""
 	sname = spec["skill_name"]
-	existing = frappe.db.get_value(
-		SKILL, {"managed_by_learning": 1, "skill_name": sname}, "name"
-	)
+	existing = frappe.db.get_value(SKILL, {"managed_by_learning": 1, "skill_name": sname}, "name")
 	if existing:
 		doc = frappe.get_doc(SKILL, existing)
 	else:
@@ -496,7 +502,8 @@ def _finalize_patterns(compiled: dict, skill_by_domain: dict) -> int:
 				activated += 1
 			elif status == "Active":  # refresh the materialized-skill pointer only
 				frappe.db.set_value(
-					JLP, name,
+					JLP,
+					name,
 					{"materialized_skill": skill_row, "last_validated_at": now},
 					update_modified=False,
 				)
@@ -517,9 +524,7 @@ def _mark_compile_deferred(name: str) -> None:
 	if not isinstance(data, dict):
 		data = {}
 	data["compile_deferred"] = True
-	frappe.db.set_value(
-		JLP, name, {"evidence": frappe.as_json(data)}, update_modified=False
-	)
+	frappe.db.set_value(JLP, name, {"evidence": frappe.as_json(data)}, update_modified=False)
 
 
 # --------------------------------------------------------------------------- #

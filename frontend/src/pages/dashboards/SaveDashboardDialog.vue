@@ -65,7 +65,11 @@
 
 		<template #actions>
 			<div class="flex justify-end gap-2">
-				<Button label="Cancel" :disabled="saving" @click="emit('update:modelValue', false)" />
+				<Button
+					label="Cancel"
+					:disabled="saving"
+					@click="emit('update:modelValue', false)"
+				/>
 				<Button variant="solid" :label="saveLabel" :loading="saving" @click="save" />
 			</div>
 		</template>
@@ -79,10 +83,10 @@
 // everything else hidden; the payload re-sends the loaded detail unchanged).
 // Sources come from the parsed #jarvis-sources block (DashboardCanvas emit) -
 // the same list the payload's `sources` key carries.
-import { reactive, ref, computed, watch } from "vue"
-import { Badge, Button, Dialog, ErrorMessage, FormControl } from "frappe-ui"
-import { saveDashboard } from "@/api/dashboards"
-import { themeLabel } from "@/lib/dashboardThemes"
+import { reactive, ref, computed, watch } from "vue";
+import { Badge, Button, Dialog, ErrorMessage, FormControl } from "frappe-ui";
+import { saveDashboard } from "@/api/dashboards";
+import { themeLabel } from "@/lib/dashboardThemes";
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
@@ -96,76 +100,76 @@ const props = defineProps({
 	shareOnly: { type: Boolean, default: false },
 	// active render theme key (lib/dashboardThemes); persisted with the save
 	theme: { type: String, default: "" },
-})
+});
 
-const emit = defineEmits(["update:modelValue", "saved"])
+const emit = defineEmits(["update:modelValue", "saved"]);
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
-const SCOPE_LABELS = { User: "Private", Role: "Shared with a role", Org: "Everyone" }
+const SCOPE_LABELS = { User: "Private", Role: "Shared with a role", Org: "Everyone" };
 
 const scopeOptions = computed(() =>
 	(props.caps.creatable_scopes || ["User"]).map((s) => ({
 		label: SCOPE_LABELS[s] || s,
 		value: s,
 	}))
-)
+);
 const roleOptions = computed(() => [
 	{ label: "Select a role", value: "" },
 	...(props.caps.manageable_roles || []).map((r) => ({ label: r, value: r })),
-])
+]);
 
 const dialogTitle = computed(() =>
 	props.shareOnly ? "Share dashboard" : props.editing ? "Save changes" : "Save dashboard"
-)
+);
 const saveLabel = computed(() =>
 	props.shareOnly ? "Update sharing" : props.editing ? "Save changes" : "Save dashboard"
-)
+);
 
-const form = reactive({ dashboard_title: "", description: "", scope: "User", target_role: "" })
-const saving = ref(false)
-const error = ref("")
-const fieldErrors = reactive({ title: "", role: "" })
+const form = reactive({ dashboard_title: "", description: "", scope: "User", target_role: "" });
+const saving = ref(false);
+const error = ref("");
+const fieldErrors = reactive({ title: "", role: "" });
 
 // (Re)seed on every open so a reopened dialog never shows stale edits.
 watch(
 	() => props.modelValue,
 	(open) => {
-		if (!open) return
-		error.value = ""
-		fieldErrors.title = ""
-		fieldErrors.role = ""
-		const e = props.editing
-		form.dashboard_title = (e && e.dashboard_title) || ""
-		form.description = (e && e.description) || ""
-		const scopes = props.caps.creatable_scopes || ["User"]
+		if (!open) return;
+		error.value = "";
+		fieldErrors.title = "";
+		fieldErrors.role = "";
+		const e = props.editing;
+		form.dashboard_title = (e && e.dashboard_title) || "";
+		form.description = (e && e.description) || "";
+		const scopes = props.caps.creatable_scopes || ["User"];
 		// private-first: even an admin (whose creatable_scopes lead with Org)
 		// must opt INTO sharing, never share by default
 		form.scope =
 			e && e.scope && scopes.includes(e.scope)
 				? e.scope
 				: scopes.includes("User")
-					? "User"
-					: scopes[0] || "User"
-		form.target_role = (e && e.target_role) || ""
+				? "User"
+				: scopes[0] || "User";
+		form.target_role = (e && e.target_role) || "";
 	}
-)
+);
 
 async function save() {
-	fieldErrors.title = ""
-	fieldErrors.role = ""
-	error.value = ""
-	const e = props.editing
-	const title = props.shareOnly ? (e && e.dashboard_title) || "" : form.dashboard_title.trim()
+	fieldErrors.title = "";
+	fieldErrors.role = "";
+	error.value = "";
+	const e = props.editing;
+	const title = props.shareOnly ? (e && e.dashboard_title) || "" : form.dashboard_title.trim();
 	if (!title) {
-		fieldErrors.title = "Give the dashboard a title."
-		return
+		fieldErrors.title = "Give the dashboard a title.";
+		return;
 	}
 	if (form.scope === "Role" && !form.target_role) {
-		fieldErrors.role = "Pick the role to share with."
-		return
+		fieldErrors.role = "Pick the role to share with.";
+		return;
 	}
 	// save_dashboard rejects unknown keys, so the payload carries exactly the
 	// documented set; target_role only rides along for Role scope.
@@ -178,18 +182,18 @@ async function save() {
 		source_conversation: (e && e.source_conversation) || props.conversation || "",
 		// share-only re-sends the stored theme; the builder persists the picker's
 		theme: props.shareOnly ? (e && e.theme) || "Jarvis" : themeLabel(props.theme),
-	}
-	if (e && e.name) payload.name = e.name
-	if (form.scope === "Role") payload.target_role = form.target_role
-	saving.value = true
+	};
+	if (e && e.name) payload.name = e.name;
+	if (form.scope === "Role") payload.target_role = form.target_role;
+	saving.value = true;
 	try {
-		const detail = await saveDashboard(payload)
-		emit("saved", detail)
-		emit("update:modelValue", false)
+		const detail = await saveDashboard(payload);
+		emit("saved", detail);
+		emit("update:modelValue", false);
 	} catch (err) {
-		error.value = errMsg(err)
+		error.value = errMsg(err);
 	} finally {
-		saving.value = false
+		saving.value = false;
 	}
 }
 </script>

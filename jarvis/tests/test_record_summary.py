@@ -100,6 +100,7 @@ class TestSameValue(FrappeTestCase):
 		# A typed date from the DB vs the model's string. Comparing two identical
 		# STRINGS here would pass even with Date missing from _CAST entirely.
 		import datetime
+
 		df = _df(fieldtype="Date", fieldname="due_date")
 		self.assertTrue(same_value(datetime.date(2026, 7, 17), "2026-07-17", df))
 		self.assertFalse(same_value(datetime.date(2026, 7, 17), "2026-07-18", df))
@@ -109,6 +110,7 @@ class TestSameValue(FrappeTestCase):
 		# cast would compare today to today and silently drop "due today" - a routine
 		# request - from a gated card.
 		from frappe.utils import nowdate
+
 		df = _df(fieldtype="Date", fieldname="due_date")
 		self.assertFalse(same_value(None, nowdate(), df))
 		self.assertFalse(same_value(nowdate(), None, df))
@@ -177,9 +179,13 @@ from jarvis.chat._record_summary import summary_rows
 
 class TestSummaryRows(FrappeTestCase):
 	def setUp(self):
-		self.todo = frappe.get_doc({
-			"doctype": "ToDo", "description": "card summary probe", "priority": "High",
-		}).insert(ignore_permissions=True)
+		self.todo = frappe.get_doc(
+			{
+				"doctype": "ToDo",
+				"description": "card summary probe",
+				"priority": "High",
+			}
+		).insert(ignore_permissions=True)
 
 	def test_returns_title_and_rows_for_a_readable_record(self):
 		out = summary_rows("ToDo", self.todo.name)
@@ -235,6 +241,7 @@ class TestSummaryRows(FrappeTestCase):
 		# reserved slot a submittable doctype returns _MAX_ROWS + 1 rows and the
 		# documented cap is a lie.
 		from jarvis.chat._record_summary import _MAX_ROWS
+
 		meta = frappe.get_meta("ToDo")
 		with patch.object(meta, "is_submittable", 1):
 			out = summary_rows("ToDo", self.todo.name)
@@ -330,7 +337,11 @@ class TestTableRows(FrappeTestCase):
 	def test_columns_are_capped_at_MAX_COLS_not_MAX_ROWS(self):
 		meta = frappe.get_meta("Sales Invoice")
 		child = frappe.get_meta(meta.get_field("items").options)
-		many = {d.fieldname: "v" for d in child.fields[:15] if d.fieldtype not in ("Section Break", "Column Break")}
+		many = {
+			d.fieldname: "v"
+			for d in child.fields[:15]
+			if d.fieldtype not in ("Section Break", "Column Break")
+		}
 		out = table_rows(meta, "items", [many])
 		self.assertLessEqual(len(out["fieldnames"]), 8)
 		self.assertGreater(out["extra_columns"], 0)

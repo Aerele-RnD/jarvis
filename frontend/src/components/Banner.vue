@@ -12,19 +12,32 @@
 <template>
 	<div class="jv-banner" :class="`jv-banner--${type}`">
 		<span class="jv-banner-ic" aria-hidden="true">
-			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-				 :stroke-width="type === 'success' ? 2.6 : 2" stroke-linecap="round" stroke-linejoin="round">
+			<svg
+				width="15"
+				height="15"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				:stroke-width="type === 'success' ? 2.6 : 2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			>
 				<template v-if="type === 'error'">
-					<circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" />
+					<circle cx="12" cy="12" r="9" />
+					<path d="M12 8v5M12 16h.01" />
 				</template>
 				<template v-else-if="type === 'warning'">
-					<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" />
+					<path
+						d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
+					/>
+					<path d="M12 9v4M12 17h.01" />
 				</template>
 				<template v-else-if="type === 'success'">
 					<path d="M20 6 9 17l-5-5" />
 				</template>
 				<template v-else>
-					<circle cx="12" cy="12" r="9" /><path d="M12 16v-5M12 8h.01" />
+					<circle cx="12" cy="12" r="9" />
+					<path d="M12 16v-5M12 8h.01" />
 				</template>
 			</svg>
 		</span>
@@ -53,7 +66,7 @@ defineProps({
 	type: { type: String, default: "error" }, // error | warning | info | success
 	title: { type: String, default: "" },
 	message: { type: String, default: "" },
-})
+});
 </script>
 
 <style scoped>
@@ -63,39 +76,108 @@ defineProps({
 	align-items: flex-start;
 	border-radius: 11px;
 	padding: 11px 13px;
-	animation: jv-banner-in .25s ease;
+	animation: jv-banner-in 0.25s ease;
 }
 @keyframes jv-banner-in {
-	from { opacity: 0; transform: translateY(-4px); }
-	to { opacity: 1; transform: none; }
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
 }
-.jv-banner-ic { width: 26px; height: 26px; border-radius: 8px; flex: none; display: grid; place-items: center; }
-.jv-banner-bd { flex: 1; min-width: 0; }
-.jv-banner-tt { font-size: 13px; font-weight: 600; line-height: 1.3; }
-.jv-banner-ms { font-size: 12.5px; color: var(--text-2); line-height: 1.5; margin-top: 2px; }
-.jv-banner-act { flex: none; display: flex; gap: 8px; align-items: center; margin-top: 1px; }
+.jv-banner-ic {
+	width: 26px;
+	height: 26px;
+	border-radius: 8px;
+	flex: none;
+	display: grid;
+	place-items: center;
+}
+.jv-banner-bd {
+	flex: 1;
+	min-width: 0;
+}
+.jv-banner-tt {
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.3;
+}
+.jv-banner-ms {
+	font-size: 12.5px;
+	color: var(--text-2);
+	line-height: 1.5;
+	margin-top: 2px;
+}
+.jv-banner-act {
+	flex: none;
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin-top: 1px;
+}
 
-.jv-banner--error { background: var(--red-bg); border: 1px solid var(--red-bd); }
-.jv-banner--error .jv-banner-ic { background: var(--surface); color: var(--red); border: 1px solid var(--red-bd); }
-.jv-banner--error .jv-banner-tt { color: var(--red); }
+.jv-banner--error {
+	background: var(--red-bg);
+	border: 1px solid var(--red-bd);
+}
+.jv-banner--error .jv-banner-ic {
+	background: var(--surface);
+	color: var(--red);
+	border: 1px solid var(--red-bd);
+}
+.jv-banner--error .jv-banner-tt {
+	color: var(--red);
+}
 
-.jv-banner--warning { background: var(--amber-bg); border: 1px solid var(--amber-bd); }
-.jv-banner--warning .jv-banner-ic { background: var(--surface); color: var(--amber); border: 1px solid var(--amber-bd); }
-.jv-banner--warning .jv-banner-tt { color: var(--amber); }
+.jv-banner--warning {
+	background: var(--amber-bg);
+	border: 1px solid var(--amber-bd);
+}
+.jv-banner--warning .jv-banner-ic {
+	background: var(--surface);
+	color: var(--amber);
+	border: 1px solid var(--amber-bd);
+}
+.jv-banner--warning .jv-banner-tt {
+	color: var(--amber);
+}
 
 /* Info uses the theme's accent (--cta: indigo in light, lighter blue in dark),
    matching how the success/warning variants use --green/--amber. The old
    var(--info, #6e8bff) hardcoded the dark-mode blue into BOTH themes because
    --info was never defined. */
-.jv-banner--info { background: var(--cta-bg); border: 1px solid var(--cta-bd); }
-.jv-banner--info .jv-banner-ic { background: var(--surface); color: var(--cta); border: 1px solid var(--cta-bd); }
-.jv-banner--info .jv-banner-tt { color: var(--cta); }
+.jv-banner--info {
+	background: var(--cta-bg);
+	border: 1px solid var(--cta-bd);
+}
+.jv-banner--info .jv-banner-ic {
+	background: var(--surface);
+	color: var(--cta);
+	border: 1px solid var(--cta-bd);
+}
+.jv-banner--info .jv-banner-tt {
+	color: var(--cta);
+}
 
-.jv-banner--success { background: var(--green-bg); border: 1px solid var(--green-bd); }
-.jv-banner--success .jv-banner-ic { background: var(--surface); color: var(--green); border: 1px solid var(--green-bd); }
-.jv-banner--success .jv-banner-tt { color: var(--green); }
+.jv-banner--success {
+	background: var(--green-bg);
+	border: 1px solid var(--green-bd);
+}
+.jv-banner--success .jv-banner-ic {
+	background: var(--surface);
+	color: var(--green);
+	border: 1px solid var(--green-bd);
+}
+.jv-banner--success .jv-banner-tt {
+	color: var(--green);
+}
 
 @media (prefers-reduced-motion: reduce) {
-	.jv-banner { animation: none; }
+	.jv-banner {
+		animation: none;
+	}
 }
 </style>

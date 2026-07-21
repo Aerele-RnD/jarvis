@@ -78,7 +78,10 @@ def execute():
 		target = _zai_provider_for_base_url(row.base_url)
 		if target:
 			frappe.db.set_value(
-				"Jarvis LLM Pool Model", row.name, "provider", target,
+				"Jarvis LLM Pool Model",
+				row.name,
+				"provider",
+				target,
 				update_modified=False,
 			)
 	frappe.db.commit()

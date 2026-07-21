@@ -6,6 +6,7 @@ durable transcript instead of holding the agent RPC's request stream.
 
 Each method is request/response, so we bypass __init__ and stub _request.
 """
+
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat.openclaw_client import OpenclawSession
@@ -25,9 +26,7 @@ class TestOpenclawNativeRpcs(FrappeTestCase):
 		return sess, captured
 
 	def test_chat_send_required_params_and_returns_payload(self):
-		sess, cap = self._sess(
-			{"ok": True, "payload": {"runId": "r1", "status": "in_flight"}}
-		)
+		sess, cap = self._sess({"ok": True, "payload": {"runId": "r1", "status": "in_flight"}})
 		out = sess.chat_send("sk", "hi", "idem1", thinking="low")
 		self.assertEqual(cap["method"], "chat.send")
 		self.assertEqual(cap["params"]["sessionKey"], "sk")
@@ -45,8 +44,14 @@ class TestOpenclawNativeRpcs(FrappeTestCase):
 
 	def test_get_history_params_and_payload(self):
 		sess, cap = self._sess(
-			{"ok": True, "payload": {"sessionId": "s1",
-			 "messages": [{"role": "assistant"}], "thinkingLevel": "medium"}}
+			{
+				"ok": True,
+				"payload": {
+					"sessionId": "s1",
+					"messages": [{"role": "assistant"}],
+					"thinkingLevel": "medium",
+				},
+			}
 		)
 		out = sess.get_history("sk", limit=50)
 		self.assertEqual(cap["method"], "chat.history")
@@ -55,9 +60,7 @@ class TestOpenclawNativeRpcs(FrappeTestCase):
 		self.assertEqual(out["thinkingLevel"], "medium")
 
 	def test_get_session_messages_returns_messages_list(self):
-		sess, cap = self._sess(
-			{"ok": True, "payload": {"messages": [{"role": "assistant", "content": "x"}]}}
-		)
+		sess, cap = self._sess({"ok": True, "payload": {"messages": [{"role": "assistant", "content": "x"}]}})
 		out = sess.get_session_messages("sk")
 		self.assertEqual(cap["method"], "sessions.get")
 		self.assertEqual(cap["params"]["key"], "sk")
@@ -69,17 +72,20 @@ class TestOpenclawNativeRpcs(FrappeTestCase):
 
 	def test_is_run_active_matches_session_key(self):
 		sess, cap = self._sess(
-			{"ok": True, "payload": {"sessions": [
-				{"key": "other", "hasActiveRun": True},
-				{"key": "sk", "hasActiveRun": True},
-			]}}
+			{
+				"ok": True,
+				"payload": {
+					"sessions": [
+						{"key": "other", "hasActiveRun": True},
+						{"key": "sk", "hasActiveRun": True},
+					]
+				},
+			}
 		)
 		self.assertTrue(sess.is_run_active("sk"))
 
 	def test_is_run_active_false_when_done_or_absent(self):
-		sess, cap = self._sess(
-			{"ok": True, "payload": {"sessions": [{"key": "sk", "hasActiveRun": False}]}}
-		)
+		sess, cap = self._sess({"ok": True, "payload": {"sessions": [{"key": "sk", "hasActiveRun": False}]}})
 		self.assertFalse(sess.is_run_active("sk"))
 		cap["response"] = {"ok": True, "payload": {"sessions": []}}
 		self.assertFalse(sess.is_run_active("sk"))
@@ -88,6 +94,7 @@ class TestOpenclawNativeRpcs(FrappeTestCase):
 		# A WS drop AFTER the run is acked must surface code="turn-timeout" so
 		# turn_handler parks it for recovery instead of false-erroring (#4).
 		from jarvis.chat.openclaw_client import OpenclawUnreachableError
+
 		sess = OpenclawSession.__new__(OpenclawSession)
 		frames = [{"type": "res", "id": "a1", "ok": True, "payload": {"runId": "r1"}}]
 		sess._send = lambda method, params: "a1"
@@ -106,6 +113,7 @@ class TestOpenclawNativeRpcs(FrappeTestCase):
 		# A failure BEFORE the ack (run never started) must NOT be turn-timeout,
 		# so turn_handler errors it rather than parking a non-existent run.
 		from jarvis.chat.openclaw_client import OpenclawUnreachableError
+
 		sess = OpenclawSession.__new__(OpenclawSession)
 		sess._send = lambda method, params: "a1"
 

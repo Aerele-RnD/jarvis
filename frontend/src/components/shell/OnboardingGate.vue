@@ -18,12 +18,12 @@
 			<h1 class="jv-gate-title">Finish setting up Jarvis</h1>
 
 			<p v-if="isSystemManager" class="jv-gate-sub">
-				This workspace isn't connected to an AI agent yet. Complete a short
-				setup to start chatting with Jarvis about your ERPNext data.
+				This workspace isn't connected to an AI agent yet. Complete a short setup to start
+				chatting with Jarvis about your ERPNext data.
 			</p>
 			<p v-else class="jv-gate-sub">
-				Jarvis isn't set up for this workspace yet. Please ask your
-				administrator (a System Manager) to complete onboarding.
+				Jarvis isn't set up for this workspace yet. Please ask your administrator (a System
+				Manager) to complete onboarding.
 			</p>
 
 			<button v-if="isSystemManager" class="jv-gate-btn" @click="goOnboard">
@@ -37,10 +37,10 @@
 </template>
 
 <script setup>
-import { useRouter } from "vue-router"
-import JarvisMark from "@/components/JarvisMark.vue"
+import { useRouter } from "vue-router";
+import JarvisMark from "@/components/JarvisMark.vue";
 
-const router = useRouter()
+const router = useRouter();
 
 // The /onboarding route's beforeEnter gate is a STRICT truthy check
 // (`(is_system_manager || is_jarvis_admin) ? … : Chat`). Match it exactly here —
@@ -50,14 +50,14 @@ const router = useRouter()
 // appears only when it can actually reach the wizard; a non-admin (or dev) user
 // gets the "ask your administrator" copy instead. PART 4 REVISED TASK 49(c):
 // widened to the Jarvis Admin tenant-admin tier.
-const isSystemManager = !!(window.is_system_manager || window.is_jarvis_admin)
+const isSystemManager = !!(window.is_system_manager || window.is_jarvis_admin);
 
 function goOnboard() {
-	router.push({ name: "Onboarding" })
+	router.push({ name: "Onboarding" });
 }
 
 function switchToDesk() {
-	window.location.href = "/app"
+	window.location.href = "/app";
 }
 </script>
 

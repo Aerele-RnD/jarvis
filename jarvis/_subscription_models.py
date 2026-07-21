@@ -26,6 +26,7 @@ checks oauth/api.py needs are O(N) on a 3-item list rather
 than O(1) on a set, but N=3 makes the perf difference
 meaningless.
 """
+
 from __future__ import annotations
 
 SUBSCRIPTION_MODELS: dict[str, list[str]] = {

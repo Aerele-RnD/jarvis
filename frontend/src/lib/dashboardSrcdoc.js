@@ -18,7 +18,7 @@
 // preview + save payload.
 
 export const CSP_META =
-	'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'">'
+	"<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'\">";
 
 // ── the bridge runtime (inline JS, stringified into the srcdoc) ───────────────
 // window.jarvis API for dashboard HTML:
@@ -239,11 +239,11 @@ export const RUNTIME_JS = `(function () {
 	}
 	if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
 	else boot();
-})();`
+})();`;
 
 // Any JS inlined into HTML must not terminate its own <script> wrapper.
 function escInline(js) {
-	return String(js || "").replace(/<\/script/gi, "<\\/script")
+	return String(js || "").replace(/<\/script/gi, "<\\/script");
 }
 
 // Split author HTML into (headInner, bodyInner). We NEVER re-emit the author's
@@ -252,25 +252,21 @@ function escInline(js) {
 // outside the first <head> and the <body> (e.g. a <script> placed before
 // <head>) is intentionally DROPPED, not run.
 function splitAuthorHtml(src) {
-	const headM = /<head[^>]*>([\s\S]*?)<\/head>/i.exec(src)
-	const bodyM = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(src)
+	const headM = /<head[^>]*>([\s\S]*?)<\/head>/i.exec(src);
+	const bodyM = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(src);
 	if (bodyM) {
-		return { headInner: headM ? headM[1] : "", bodyInner: bodyM[1] }
+		return { headInner: headM ? headM[1] : "", bodyInner: bodyM[1] };
 	}
 	if (headM) {
 		// <head> but no <body>: body is everything after </head>, minus a
 		// trailing </html>.
-		const after = src
-			.slice(headM.index + headM[0].length)
-			.replace(/<\/html>\s*$/i, "")
-		return { headInner: headM[1], bodyInner: after }
+		const after = src.slice(headM.index + headM[0].length).replace(/<\/html>\s*$/i, "");
+		return { headInner: headM[1], bodyInner: after };
 	}
 	// fragment (no head/body): strip a leading doctype + any stray html tags,
 	// everything is body content.
-	const body = src
-		.replace(/^\s*<!doctype[^>]*>\s*/i, "")
-		.replace(/<\/?html[^>]*>/gi, "")
-	return { headInner: "", bodyInner: body }
+	const body = src.replace(/^\s*<!doctype[^>]*>\s*/i, "").replace(/<\/?html[^>]*>/gi, "");
+	return { headInner: "", bodyInner: body };
 }
 
 // buildSrcdoc(html, {dark, echartsSource, theme}) → the full srcdoc string.
@@ -288,7 +284,7 @@ function splitAuthorHtml(src) {
 // bridged data. Wrapping guarantees nothing author-supplied precedes the CSP.)
 export function buildSrcdoc(
 	html,
-	{ dark = false, echartsSource = "", theme: themeSpec = null } = {},
+	{ dark = false, echartsSource = "", theme: themeSpec = null } = {}
 ) {
 	// A named dashboard theme (from lib/dashboardThemes) owns the canvas look
 	// when provided: its CSS variables + base rules are injected BEFORE the
@@ -296,25 +292,25 @@ export function buildSrcdoc(
 	// exposes the chart palette, and data-theme follows the theme's own
 	// light/dark - independent of the app shell's mode. Without a theme the
 	// legacy dark flag drives data-theme only.
-	const theme = themeSpec ? (themeSpec.dark ? "dark" : "light") : dark ? "dark" : "light"
+	const theme = themeSpec ? (themeSpec.dark ? "dark" : "light") : dark ? "dark" : "light";
 	const themeBlock = themeSpec
 		? `<style id="jarvis-theme">${themeSpec.css}</style>` +
-			`<script>window.JARVIS_THEME=${escInline(
+		  `<script>window.JARVIS_THEME=${escInline(
 				JSON.stringify({
 					name: themeSpec.key,
 					label: themeSpec.label,
 					dark: !!themeSpec.dark,
 					accent: themeSpec.accent,
 					palette: themeSpec.palette,
-				}),
-			)}<\/script>`
-		: ""
+				})
+		  )}<\/script>`
+		: "";
 	const scripts =
 		themeBlock +
 		(echartsSource ? `<script>${escInline(echartsSource)}<\/script>` : "") +
-		`<script>${escInline(RUNTIME_JS)}<\/script>`
+		`<script>${escInline(RUNTIME_JS)}<\/script>`;
 
-	const { headInner, bodyInner } = splitAuthorHtml(String(html || ""))
+	const { headInner, bodyInner } = splitAuthorHtml(String(html || ""));
 	return (
 		`<!DOCTYPE html><html data-theme="${theme}"><head>` +
 		CSP_META +
@@ -324,7 +320,7 @@ export function buildSrcdoc(
 		"</head><body>" +
 		stripHostClient(bodyInner) +
 		"</body></html>"
-	)
+	);
 }
 
 // Dashboards saved before the gateway host-client strip landed carry a dead
@@ -333,8 +329,8 @@ export function buildSrcdoc(
 // violation on every view — drop any <script> that references the host socket.
 function stripHostClient(html) {
 	return String(html || "").replace(/<script\b[\s\S]*?<\/script>/gi, (m) =>
-		m.includes("__openclaw__/ws") ? "" : m,
-	)
+		m.includes("__openclaw__/ws") ? "" : m
+	);
 }
 
 // Parent-side parse of the SAME #jarvis-sources block the runtime reads -
@@ -344,23 +340,22 @@ function stripHostClient(html) {
 // jarvis__ tool prefix, args/args.spec for spec) so preview, save and render
 // always agree. → [{source_name, tool, spec}]
 export function parseSourcesBlock(html) {
-	const m =
-		/<script[^>]*\bid\s*=\s*["']jarvis-sources["'][^>]*>([\s\S]*?)<\/script>/i.exec(
-			String(html || ""),
-		)
-	if (!m) return []
+	const m = /<script[^>]*\bid\s*=\s*["']jarvis-sources["'][^>]*>([\s\S]*?)<\/script>/i.exec(
+		String(html || "")
+	);
+	if (!m) return [];
 	try {
-		const parsed = JSON.parse(m[1])
-		const list = (parsed && parsed.sources) || []
+		const parsed = JSON.parse(m[1]);
+		const list = (parsed && parsed.sources) || [];
 		return list
 			.map((s) => {
-				if (!s) return null
-				const source_name = s.source_name || s.id || s.name
-				if (!source_name) return null
-				const tool = String(s.tool || "").replace(/^jarvis__/, "")
-				let spec = s.spec
+				if (!s) return null;
+				const source_name = s.source_name || s.id || s.name;
+				if (!source_name) return null;
+				const tool = String(s.tool || "").replace(/^jarvis__/, "");
+				let spec = s.spec;
 				if (spec == null && s.args && typeof s.args === "object") {
-					spec = s.args.spec && typeof s.args.spec === "object" ? s.args.spec : s.args
+					spec = s.args.spec && typeof s.args.spec === "object" ? s.args.spec : s.args;
 				}
 				// double-wrap drift ({"spec":{"spec":{...}}}): unwrap lone spec keys
 				while (
@@ -371,12 +366,12 @@ export function parseSourcesBlock(html) {
 					spec.spec &&
 					typeof spec.spec === "object"
 				) {
-					spec = spec.spec
+					spec = spec.spec;
 				}
-				return { source_name, tool, spec }
+				return { source_name, tool, spec };
 			})
-			.filter(Boolean)
+			.filter(Boolean);
 	} catch (e) {
-		return []
+		return [];
 	}
 }

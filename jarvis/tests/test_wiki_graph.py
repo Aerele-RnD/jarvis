@@ -17,9 +17,7 @@ _USER = "Administrator"
 
 
 def _delete_pages():
-	for name in frappe.get_all(
-		WIKI, filters={"slug": ["like", f"{_PREFIX}%"]}, pluck="name"
-	):
+	for name in frappe.get_all(WIKI, filters={"slug": ["like", f"{_PREFIX}%"]}, pluck="name"):
 		frappe.delete_doc(WIKI, name, force=True, ignore_permissions=True)
 
 
@@ -32,15 +30,33 @@ class TestWikiGraphCompute(FrappeTestCase):
 		_delete_pages()
 		frappe.set_user("Administrator")
 
-	def _page(self, slug, title, scope="Org", page_type="Org",
-			  target_role=None, target_user=None, sources=None,
-			  body_md="secret body that must not travel", manual_links=None,
-			  summary=None):
-		doc = frappe.get_doc({
-			"doctype": WIKI, "slug": slug, "title": title, "page_type": page_type,
-			"scope": scope, "target_role": target_role, "target_user": target_user,
-			"status": "Active", "body_md": body_md, "summary": summary,
-		}).insert(ignore_permissions=True)
+	def _page(
+		self,
+		slug,
+		title,
+		scope="Org",
+		page_type="Org",
+		target_role=None,
+		target_user=None,
+		sources=None,
+		body_md="secret body that must not travel",
+		manual_links=None,
+		summary=None,
+	):
+		doc = frappe.get_doc(
+			{
+				"doctype": WIKI,
+				"slug": slug,
+				"title": title,
+				"page_type": page_type,
+				"scope": scope,
+				"target_role": target_role,
+				"target_user": target_user,
+				"status": "Active",
+				"body_md": body_md,
+				"summary": summary,
+			}
+		).insert(ignore_permissions=True)
 		vals = {}
 		if sources is not None:
 			vals["sources"] = json.dumps(sources)  # read_only on the form
@@ -66,9 +82,7 @@ class TestWikiGraphCompute(FrappeTestCase):
 		self.assertEqual(node["scope"], "Org")
 		# body_md must never be in the payload.
 		self.assertNotIn("body_md", node)
-		self.assertIn(
-			{"source": pid, "target": "org", "kind": "scope"}, g["edges"]
-		)
+		self.assertIn({"source": pid, "target": "org", "kind": "scope"}, g["edges"])
 
 	def test_admin_push_gets_created_without_content(self):
 		"""Finding 11: the daily admin push (include_content=False) still needs
@@ -83,8 +97,7 @@ class TestWikiGraphCompute(FrappeTestCase):
 		"""Finding 14: when MAX_USERS is hit, _user_node returns a uid string
 		without creating the node — a User-scope page must fall back to the org
 		edge rather than dangling to a nonexistent node."""
-		doc = self._page(f"{_PREFIX}-usercap", "User Page", scope="User",
-						  target_user=_USER)
+		doc = self._page(f"{_PREFIX}-usercap", "User Page", scope="User", target_user=_USER)
 		with patch.object(wiki_graph, "MAX_USERS", 0):
 			g = self._graph()
 		pid = f"page:{doc.name}"
@@ -92,8 +105,7 @@ class TestWikiGraphCompute(FrappeTestCase):
 		self.assertIn({"source": pid, "target": "org", "kind": "scope"}, g["edges"])
 
 	def test_role_page_makes_role_node_and_scope_edge(self):
-		doc = self._page(f"{_PREFIX}-role", "Role Page", scope="Role",
-						 target_role=_ROLE)
+		doc = self._page(f"{_PREFIX}-role", "Role Page", scope="Role", target_role=_ROLE)
 		g = self._graph()
 		pid = f"page:{doc.name}"
 		rid = f"role:{_ROLE}"
@@ -101,8 +113,7 @@ class TestWikiGraphCompute(FrappeTestCase):
 		self.assertIn({"source": pid, "target": rid, "kind": "scope"}, g["edges"])
 
 	def test_user_page_makes_user_node_and_scope_edge(self):
-		doc = self._page(f"{_PREFIX}-user", "User Page", scope="User",
-						 target_user=_USER)
+		doc = self._page(f"{_PREFIX}-user", "User Page", scope="User", target_user=_USER)
 		g = self._graph()
 		pid = f"page:{doc.name}"
 		uid = f"user:{_USER}"
@@ -111,16 +122,19 @@ class TestWikiGraphCompute(FrappeTestCase):
 
 	def test_authored_edge_weighted_from_sources(self):
 		doc = self._page(
-			f"{_PREFIX}-auth", "Authored", sources=[
+			f"{_PREFIX}-auth",
+			"Authored",
+			sources=[
 				{"date": "2026-07-01", "kind": "tool", "ref": None, "user": _USER},
 				{"date": "2026-07-02", "kind": "manual", "ref": None, "user": _USER},
 			],
 		)
 		g = self._graph()
 		pid, uid = f"page:{doc.name}", f"user:{_USER}"
-		edge = next((e for e in g["edges"]
-					 if e["source"] == uid and e["target"] == pid
-					 and e["kind"] == "authored"), None)
+		edge = next(
+			(e for e in g["edges"] if e["source"] == uid and e["target"] == pid and e["kind"] == "authored"),
+			None,
+		)
 		self.assertIsNotNone(edge)
 		self.assertEqual(edge["weight"], 2)
 
@@ -128,8 +142,9 @@ class TestWikiGraphCompute(FrappeTestCase):
 		# A role page makes the role a node; an author who holds that role gets
 		# a member-of edge. Administrator holds System Manager.
 		self._page(f"{_PREFIX}-role2", "Role Page", scope="Role", target_role=_ROLE)
-		self._page(f"{_PREFIX}-auth2", "Authored",
-				   sources=[{"date": "2026-07-01", "kind": "tool", "user": _USER}])
+		self._page(
+			f"{_PREFIX}-auth2", "Authored", sources=[{"date": "2026-07-01", "kind": "tool", "user": _USER}]
+		)
 		g = self._graph()
 		self.assertIn(
 			{"source": f"user:{_USER}", "target": f"role:{_ROLE}", "kind": "member-of"},
@@ -138,8 +153,7 @@ class TestWikiGraphCompute(FrappeTestCase):
 
 	def test_counts_and_org_node_present(self):
 		self._page(f"{_PREFIX}-c1", "A")
-		self._page(f"{_PREFIX}-c2", "B",
-				   sources=[{"date": "2026-07-01", "kind": "tool", "user": _USER}])
+		self._page(f"{_PREFIX}-c2", "B", sources=[{"date": "2026-07-01", "kind": "tool", "user": _USER}])
 		g = self._graph()
 		self.assertIsNotNone(self._node(g, "org"))
 		self.assertGreaterEqual(g["counts"]["pages"], 2)
@@ -148,21 +162,26 @@ class TestWikiGraphCompute(FrappeTestCase):
 	def test_wikilink_edges_between_pages(self):
 		# One page links to another via [[slug]]; a dangling link is dropped.
 		a = self._page(f"{_PREFIX}-linka", "A")
-		b = frappe.get_doc({
-			"doctype": WIKI, "slug": f"{_PREFIX}-linkb", "title": "B",
-			"page_type": "Org", "scope": "Org", "status": "Active",
-			"body_md": f"see [[{a.name}]] and [[{_PREFIX}-nope]] (dangling)",
-		}).insert(ignore_permissions=True)
+		b = frappe.get_doc(
+			{
+				"doctype": WIKI,
+				"slug": f"{_PREFIX}-linkb",
+				"title": "B",
+				"page_type": "Org",
+				"scope": "Org",
+				"status": "Active",
+				"body_md": f"see [[{a.name}]] and [[{_PREFIX}-nope]] (dangling)",
+			}
+		).insert(ignore_permissions=True)
 		g = self._graph()
 		self.assertIn(
 			{"source": f"page:{b.name}", "target": f"page:{a.name}", "kind": "links-to"},
 			g["edges"],
 		)
 		# dangling target (no such page) is not emitted.
-		self.assertFalse(any(
-			e["kind"] == "links-to" and e["target"] == f"page:{_PREFIX}-nope"
-			for e in g["edges"]
-		))
+		self.assertFalse(
+			any(e["kind"] == "links-to" and e["target"] == f"page:{_PREFIX}-nope" for e in g["edges"])
+		)
 		# body_md still never leaks onto a node.
 		self.assertFalse(any("body_md" in n for n in g["nodes"]))
 		self.assertGreaterEqual(g["counts"]["links"], 1)
@@ -172,21 +191,26 @@ class TestWikiGraphCompute(FrappeTestCase):
 		# manual link with NO body link → still an edge (out-of-body, durable R1)
 		b = self._page(f"{_PREFIX}-mlb", "B", body_md="no links", manual_links=[a.name])
 		# body link + manual link to the same target → one edge (deduped)
-		c = self._page(f"{_PREFIX}-mlc", "C", body_md=f"see [[{a.name}]]",
-					   manual_links=[a.name, "nope-missing-slug"])
+		c = self._page(
+			f"{_PREFIX}-mlc", "C", body_md=f"see [[{a.name}]]", manual_links=[a.name, "nope-missing-slug"]
+		)
 		g = self._graph()
 		self.assertIn(
 			{"source": f"page:{b.name}", "target": f"page:{a.name}", "kind": "links-to"},
 			g["edges"],
 		)
-		c_to_a = [e for e in g["edges"] if e["kind"] == "links-to"
-				  and e["source"] == f"page:{c.name}" and e["target"] == f"page:{a.name}"]
+		c_to_a = [
+			e
+			for e in g["edges"]
+			if e["kind"] == "links-to" and e["source"] == f"page:{c.name}" and e["target"] == f"page:{a.name}"
+		]
 		self.assertEqual(len(c_to_a), 1)  # body ∪ manual deduped
 		# dangling manual link (no such page) dropped
 		self.assertFalse(any(e.get("target") == "page:nope-missing-slug" for e in g["edges"]))
 
 	def test_get_wiki_graph_scoped_with_content(self):
 		from jarvis.chat import wiki as wiki_mod
+
 		a = self._page(f"{_PREFIX}-gwa", "Alpha", body_md="", summary="alpha summary")
 		b = self._page(f"{_PREFIX}-gwb", "Beta", body_md="", manual_links=[a.name])
 		g = wiki_mod.get_wiki_graph()
@@ -216,11 +240,11 @@ class TestWikiGraphCompute(FrappeTestCase):
 		self.assertTrue(res["ok"])
 		# body_md untouched (R1 — out of body)
 		self.assertEqual(frappe.db.get_value(WIKI, p.name, "body_md"), "original body")
-		self.assertIn(a.name, wiki_mod._parse_manual_links(
-			frappe.db.get_value(WIKI, p.name, "manual_links")))
+		self.assertIn(a.name, wiki_mod._parse_manual_links(frappe.db.get_value(WIKI, p.name, "manual_links")))
 		g = self._graph()
-		self.assertIn({"source": f"page:{p.name}", "target": f"page:{a.name}", "kind": "links-to"},
-					  g["edges"])
+		self.assertIn(
+			{"source": f"page:{p.name}", "target": f"page:{a.name}", "kind": "links-to"}, g["edges"]
+		)
 
 	def test_add_link_idempotent_and_exact(self):
 		a = self._page(f"{_PREFIX}-foo", "Foo", body_md="")
@@ -261,13 +285,15 @@ class TestWikiGraphCompute(FrappeTestCase):
 		# simulate LLM re-ingest that full-replaces body_md (no [[a]] in it)
 		wiki_mod.apply_extracted_page_updates(
 			[{"slug": p.name, "body_md": "re-ingested body, no links at all"}],
-			"voice", _USER,
+			"voice",
+			_USER,
 		)
 		links = wiki_mod._parse_manual_links(frappe.db.get_value(WIKI, p.name, "manual_links"))
 		self.assertIn(a.name, links)  # survived the body overwrite (R1)
 		g = self._graph()
-		self.assertIn({"source": f"page:{p.name}", "target": f"page:{a.name}", "kind": "links-to"},
-					  g["edges"])
+		self.assertIn(
+			{"source": f"page:{p.name}", "target": f"page:{a.name}", "kind": "links-to"}, g["edges"]
+		)
 
 	def test_add_link_bumps_modified_defeats_stale_save(self):
 		"""R1 (finding 3): the manual_links write bumps `modified`, so a
@@ -339,8 +365,7 @@ class TestWikiGraphCompute(FrappeTestCase):
 				# add_wiki_link's locking read must see the latest committed
 				# value and merge t1 into it instead of clobbering t2.
 				wiki_mod.add_wiki_link(p.name, t1.name)
-				links = wiki_mod._parse_manual_links(
-					frappe.db.get_value(WIKI, p.name, "manual_links"))
+				links = wiki_mod._parse_manual_links(frappe.db.get_value(WIKI, p.name, "manual_links"))
 				self.assertIn(t1.name, links)  # our add
 				self.assertIn(t2.name, links)  # the concurrent add — NOT lost (R2)
 		finally:
@@ -363,14 +388,18 @@ class TestWikiGraphSync(FrappeTestCase):
 		self.assertEqual(out.get("skipped"), "self-hosted")
 
 	def test_push_unreachable_reports_not_ok(self):
-		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			 patch("jarvis.admin_client.push_wiki_graph", return_value=None):
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch("jarvis.admin_client.push_wiki_graph", return_value=None),
+		):
 			out = wiki_graph.sync()
 		self.assertFalse(out["ok"])
 
 	def test_push_ok_returns_counts(self):
-		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			 patch("jarvis.admin_client.push_wiki_graph", return_value={"ok": True}):
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch("jarvis.admin_client.push_wiki_graph", return_value={"ok": True}),
+		):
 			out = wiki_graph.sync()
 		self.assertTrue(out["ok"])
 		self.assertIn("pages", out)

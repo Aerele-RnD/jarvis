@@ -40,8 +40,17 @@ MAX_USERS = 500
 MAX_EDGES = 20000
 
 _PAGE_FIELDS = [
-	"name", "title", "page_type", "scope", "target_role", "target_user",
-	"sources", "status", "last_confirmed_at", "contradiction_flag", "modified",
+	"name",
+	"title",
+	"page_type",
+	"scope",
+	"target_role",
+	"target_user",
+	"sources",
+	"status",
+	"last_confirmed_at",
+	"contradiction_flag",
+	"modified",
 	"creation",
 	# manual_links: human-curated [[links]] kept OUT of body_md so LLM re-ingest
 	# (which full-replaces body_md) can't clobber them; unioned into links-to.
@@ -195,11 +204,13 @@ def _build_graph_from_pages(pages, include_content: bool = False) -> dict:
 			edges.append({"source": pid, "target": _role_node(p.target_role), "kind": "scope"})
 		elif scope == "User" and p.target_user:
 			uid = _user_node(p.target_user)
-			edges.append({
-				"source": pid,
-				"target": uid if uid in user_ids else _ORG_ID,
-				"kind": "scope",
-			})
+			edges.append(
+				{
+					"source": pid,
+					"target": uid if uid in user_ids else _ORG_ID,
+					"kind": "scope",
+				}
+			)
 		else:
 			edges.append({"source": pid, "target": _ORG_ID, "kind": "scope"})
 
@@ -235,9 +246,7 @@ def _build_graph_from_pages(pages, include_content: bool = False) -> dict:
 
 	if len(edges) > MAX_EDGES:
 		edges = edges[:MAX_EDGES]
-		frappe.log_error(
-			title="wiki graph: edge cap hit", message=f"pages={len(pages)}"
-		)
+		frappe.log_error(title="wiki graph: edge cap hit", message=f"pages={len(pages)}")
 
 	return {
 		"nodes": nodes,
@@ -324,8 +333,11 @@ def enqueue_sync() -> None:
 		return
 	try:
 		frappe.enqueue(
-			JOB_METHOD, queue=QUEUE, timeout=JOB_TIMEOUT_S,
-			job_id=JOB_ID, deduplicate=True,
+			JOB_METHOD,
+			queue=QUEUE,
+			timeout=JOB_TIMEOUT_S,
+			job_id=JOB_ID,
+			deduplicate=True,
 		)
 	except Exception:
 		frappe.log_error(title="wiki graph: enqueue failed", message=frappe.get_traceback())
@@ -336,5 +348,6 @@ def sync_now() -> dict:
 	"""Operator 'Sync now' from the Wiki tab (Jarvis Admin / System Manager —
 	PART 4 REVISED, TASK 45)."""
 	from jarvis.permissions import require_jarvis_admin
+
 	require_jarvis_admin()
 	return sync()

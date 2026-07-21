@@ -14,6 +14,7 @@ Two shapes:
     the only way to hand the user a real multi-tab workbook as a download —
     building one by hand via ``exec`` leaves the file stranded in the container.
 """
+
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, NoDataError
@@ -46,7 +47,8 @@ def export_excel(
 		for i, spec in enumerate(sheets):
 			if not isinstance(spec, dict):
 				raise InvalidArgumentError(
-					"each sheet must be an object with 'rows' (+ optional 'title', 'columns').")
+					"each sheet must be an object with 'rows' (+ optional 'title', 'columns')."
+				)
 			try:
 				data = _normalize(spec.get("rows"), spec.get("columns"))
 			except NoDataError:
@@ -114,10 +116,13 @@ def _workbook_bytes(sheet_data: list[tuple[str, list]]) -> bytes:
 	from frappe.utils.xlsxutils import XLSXStyleBuilder, make_xlsx
 
 	out = BytesIO()
-	wb = xlsxwriter.Workbook(out, {
-		"constant_memory": True,
-		"default_date_format": XLSXStyleBuilder.get_datetime_format(),
-	})
+	wb = xlsxwriter.Workbook(
+		out,
+		{
+			"constant_memory": True,
+			"default_date_format": XLSXStyleBuilder.get_datetime_format(),
+		},
+	)
 	for name, data in sheet_data:
 		make_xlsx(data, name, wb=wb)  # adds a worksheet to `wb`, returns None
 	wb.close()
@@ -131,7 +136,7 @@ def _unique_sheet_name(raw, used: set[str]) -> str:
 	name, n = base, 2
 	while name.lower() in used:
 		suffix = f"-{n}"
-		name = base[:31 - len(suffix)] + suffix
+		name = base[: 31 - len(suffix)] + suffix
 		n += 1
 	used.add(name.lower())
 	return name

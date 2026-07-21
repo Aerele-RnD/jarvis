@@ -18,10 +18,11 @@ Design notes (from the 2026-06-30 review):
   recovering=1), so overlapping cycles cannot double-deliver.
 - is_run_active is read ONCE per cycle (sessions.list is expensive), not per row.
 """
+
 from __future__ import annotations
 
 import contextlib
-from typing import Iterator
+from collections.abc import Iterator
 
 import frappe
 
@@ -89,6 +90,7 @@ def _latest_assistant_text(messages: list, *, min_seq: int = 0, max_seq: int | N
 	completed in the same conversation would steal the newer turn's answer
 	(observed live 2026-07-03: the parked row recovered with the next
 	question's reply). Messages with seq > max_seq belong to a later turn."""
+
 	def seq(m):
 		return ((m or {}).get("__openclaw") or {}).get("seq", 0)
 
@@ -104,9 +106,12 @@ def _latest_assistant_text(messages: list, *, min_seq: int = 0, max_seq: int | N
 			return c
 		if isinstance(c, list):
 			parts = [
-				b.get("text", "") for b in c
-				if isinstance(b, dict) and b.get("type") == "text"
-				and isinstance(b.get("text"), str) and b.get("text")
+				b.get("text", "")
+				for b in c
+				if isinstance(b, dict)
+				and b.get("type") == "text"
+				and isinstance(b.get("text"), str)
+				and b.get("text")
 			]
 			joined = "\n".join(p for p in parts if p.strip())
 			if joined.strip():
@@ -124,8 +129,7 @@ def _conditional_clear(name: str, fields: dict) -> bool:
 	set_clause = ", ".join(f"`{k}` = %({k})s" for k in fields)
 	params = dict(fields, name=name)
 	frappe.db.sql(
-		f"UPDATE `tab{MSG}` SET {set_clause} "
-		f"WHERE name = %(name)s AND streaming = 1 AND recovering = 1",
+		f"UPDATE `tab{MSG}` SET {set_clause} WHERE name = %(name)s AND streaming = 1 AND recovering = 1",
 		params,
 	)
 	# Read rowcount BEFORE commit (commit can reset the cursor).
@@ -165,20 +169,37 @@ def _advance_macro(conversation_id: str, *, errored: bool) -> None:
 def _finalize(row: dict, text: str) -> None:
 	"""Authoritative completion (conditional + idempotent): overwrite content
 	from the raw snapshot, clear the flags, then publish for any live viewer."""
-	if not _conditional_clear(row["name"], {
-		"content": text, "streaming": 0, "recovering": 0, "error": "",
-		"was_recovered": 1,
-	}):
+	if not _conditional_clear(
+		row["name"],
+		{
+			"content": text,
+			"streaming": 0,
+			"recovering": 0,
+			"error": "",
+			"was_recovered": 1,
+		},
+	):
 		return  # another cycle already finalized this row
 	conv, owner, name = row["conversation"], row["owner"], row["name"]
-	publish_to_user(owner, {
-		"kind": "assistant:delta", "conversation_id": conv,
-		"message_id": name, "text": text, "run_id": "recovered",
-	})
-	publish_to_user(owner, {
-		"kind": "run:end", "conversation_id": conv,
-		"message_id": name, "run_id": "recovered",
-	})
+	publish_to_user(
+		owner,
+		{
+			"kind": "assistant:delta",
+			"conversation_id": conv,
+			"message_id": name,
+			"text": text,
+			"run_id": "recovered",
+		},
+	)
+	publish_to_user(
+		owner,
+		{
+			"kind": "run:end",
+			"conversation_id": conv,
+			"message_id": name,
+			"run_id": "recovered",
+		},
+	)
 	_advance_macro(conv, errored=False)
 
 	# Best-effort: a recovered long turn is exactly the kind that produced
@@ -190,9 +211,11 @@ def _finalize(row: dict, text: str) -> None:
 		from jarvis.chat import turn_handler
 
 		turn_handler.persist_rich_outputs(
-			name, conv, row["owner"], "recovered",
-			int(frappe.utils.get_datetime(row["creation"]).timestamp() * 1000)
-			if row.get("creation") else 0,
+			name,
+			conv,
+			row["owner"],
+			"recovered",
+			int(frappe.utils.get_datetime(row["creation"]).timestamp() * 1000) if row.get("creation") else 0,
 		)
 	except Exception:
 		frappe.log_error(
@@ -226,14 +249,26 @@ def _finalize(row: dict, text: str) -> None:
 
 
 def _error(row: dict, message: str) -> None:
-	if not _conditional_clear(row["name"], {
-		"streaming": 0, "recovering": 0, "error": message, "was_recovered": 1,
-	}):
+	if not _conditional_clear(
+		row["name"],
+		{
+			"streaming": 0,
+			"recovering": 0,
+			"error": message,
+			"was_recovered": 1,
+		},
+	):
 		return
-	publish_to_user(row["owner"], {
-		"kind": "run:error", "conversation_id": row["conversation"],
-		"message_id": row["name"], "run_id": "recovered", "error": message,
-	})
+	publish_to_user(
+		row["owner"],
+		{
+			"kind": "run:error",
+			"conversation_id": row["conversation"],
+			"message_id": row["name"],
+			"run_id": "recovered",
+			"error": message,
+		},
+	)
 	_advance_macro(row["conversation"], errored=True)
 
 
@@ -298,8 +333,7 @@ def recover_pending_turns(limit: int = 20) -> dict:
 	eligible = list(eligible.values())
 
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").replace(
-		"http://", "ws://").replace("https://", "wss://")
+	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 	if not gateway_url:
 		return {"checked": len(rows), **counts, "skipped": "no gateway"}
 
@@ -396,8 +430,7 @@ def recover_now(conversation_id: str) -> str:
 		return "skipped"
 	row = rows[0]
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").replace(
-		"http://", "ws://").replace("https://", "wss://")
+	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 	if not gateway_url:
 		return "skipped"
 	try:
@@ -446,9 +479,7 @@ def recovery_rate_watch() -> None:
 		return
 
 	title = "chat: high recovered-turn rate"
-	since_dedupe = frappe.utils.add_to_date(
-		frappe.utils.now_datetime(), hours=-_RATE_WATCH_DEDUPE_HOURS
-	)
+	since_dedupe = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-_RATE_WATCH_DEDUPE_HOURS)
 	existing = frappe.db.sql(
 		"""
 		SELECT name FROM `tabError Log`

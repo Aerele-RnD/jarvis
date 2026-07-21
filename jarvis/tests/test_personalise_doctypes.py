@@ -90,9 +90,9 @@ def _ensure_user(email: str) -> str:
 
 def _ensure_role(role_name: str) -> str:
 	if not frappe.db.exists("Role", role_name):
-		frappe.get_doc(
-			{"doctype": "Role", "role_name": role_name, "desk_access": 1, "is_custom": 1}
-		).insert(ignore_permissions=True)
+		frappe.get_doc({"doctype": "Role", "role_name": role_name, "desk_access": 1, "is_custom": 1}).insert(
+			ignore_permissions=True
+		)
 	return role_name
 
 
@@ -161,34 +161,20 @@ class TestPersonaliseRoleSeeding(PersonaliseDoctypeTestCase):
 				(SETTINGS, field),
 			)
 			saved[field] = rows[0][0] if rows else None
-			frappe.db.sql(
-				"delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field)
-			)
+			frappe.db.sql("delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field))
 		try:
 			learning_roles.after_migrate()
-			self.assertEqual(
-				frappe.db.get_single_value(SETTINGS, "personalise_daily_question_cap"), 5
-			)
-			self.assertEqual(
-				frappe.db.get_single_value(SETTINGS, "personalise_enabled"), 1
-			)
+			self.assertEqual(frappe.db.get_single_value(SETTINGS, "personalise_daily_question_cap"), 5)
+			self.assertEqual(frappe.db.get_single_value(SETTINGS, "personalise_enabled"), 1)
 			# Idempotent: running again must not clobber an admin-set value.
-			frappe.db.set_single_value(
-				SETTINGS, "personalise_daily_question_cap", 9, update_modified=False
-			)
+			frappe.db.set_single_value(SETTINGS, "personalise_daily_question_cap", 9, update_modified=False)
 			learning_roles.after_migrate()
-			self.assertEqual(
-				frappe.db.get_single_value(SETTINGS, "personalise_daily_question_cap"), 9
-			)
+			self.assertEqual(frappe.db.get_single_value(SETTINGS, "personalise_daily_question_cap"), 9)
 		finally:
 			for field, value in saved.items():
-				frappe.db.sql(
-					"delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field)
-				)
+				frappe.db.sql("delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field))
 				if value is not None:
-					frappe.db.set_single_value(
-						SETTINGS, field, value, update_modified=False
-					)
+					frappe.db.set_single_value(SETTINGS, field, value, update_modified=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -440,9 +426,9 @@ class TestWikiPromotionRequest(PersonaliseDoctypeTestCase):
 
 	def test_page_is_required(self):
 		with self.assertRaises(frappe.ValidationError):
-			frappe.get_doc(
-				{"doctype": PROMOTION, "from_scope": "User", "to_scope": "Org"}
-			).insert(ignore_permissions=True)
+			frappe.get_doc({"doctype": PROMOTION, "from_scope": "User", "to_scope": "Org"}).insert(
+				ignore_permissions=True
+			)
 
 	def test_owner_can_read_and_create_but_not_write(self):
 		with _as(USER_A):
@@ -522,9 +508,7 @@ class TestVoiceNoteKindExtensions(PersonaliseDoctypeTestCase):
 			self._note(USER_A, kind="Attachment", transcript="", attachment="")
 
 	def test_link_kind_allows_blank_caption(self):
-		doc = self._note(
-			USER_A, kind="Link", transcript="", url="https://example.com/policy"
-		)
+		doc = self._note(USER_A, kind="Link", transcript="", url="https://example.com/policy")
 		self.assertEqual(doc.url, "https://example.com/policy")
 
 	def test_link_kind_requires_url(self):

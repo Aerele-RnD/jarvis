@@ -39,10 +39,33 @@ _SOURCE_MAX_CHARS = 600
 # wait for the actual prompt. Matched after lowercasing + stripping punctuation
 # and a trailing "jarvis"/"there"/"bot".
 _GREETINGS = {
-	"hi", "hello", "hey", "heya", "hiya", "yo", "sup", "howdy", "greetings",
-	"gm", "good morning", "good afternoon", "good evening", "good day",
-	"hi there", "hello there", "hey there", "ola", "hola", "namaste",
-	"morning", "evening", "thanks", "thank you", "ok", "okay", "test",
+	"hi",
+	"hello",
+	"hey",
+	"heya",
+	"hiya",
+	"yo",
+	"sup",
+	"howdy",
+	"greetings",
+	"gm",
+	"good morning",
+	"good afternoon",
+	"good evening",
+	"good day",
+	"hi there",
+	"hello there",
+	"hey there",
+	"ola",
+	"hola",
+	"namaste",
+	"morning",
+	"evening",
+	"thanks",
+	"thank you",
+	"ok",
+	"okay",
+	"test",
 }
 
 # Mirrors openclaw's SYSTEM_PROMPT for thread titles, adapted to a single
@@ -140,7 +163,11 @@ def _generate_via_gateway(gateway_url, source_text, *, model, provider) -> str:
 			skey = sess.create_session(label=label)
 			try:
 				for ev in sess.stream_agent_turn(
-					skey, prompt, f"title:{skey}", model=model, provider=provider,
+					skey,
+					prompt,
+					f"title:{skey}",
+					model=model,
+					provider=provider,
 				):
 					if ev.get("kind") == "assistant" and ev.get("text"):
 						text = ev["text"]
@@ -159,7 +186,8 @@ def _generate_via_gateway(gateway_url, source_text, *, model, provider) -> str:
 					sess.delete_session(skey)
 				except Exception:
 					frappe.logger("jarvis.chat.title").debug(
-						"throwaway title session delete failed", exc_info=True,
+						"throwaway title session delete failed",
+						exc_info=True,
 					)
 	except Exception:
 		frappe.log_error(
@@ -198,15 +226,17 @@ def autotitle_job(conversation_id: str, user: str) -> None:
 		from jarvis.chat.turn_handler import _resolve_model_and_provider
 
 		settings = frappe.get_single("Jarvis Settings")
-		gateway_url = (settings.agent_url or "").replace(
-			"http://", "ws://").replace("https://", "wss://")
+		gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 		if not gateway_url:
 			return
 		conv = frappe.get_doc(CONV, conversation_id)
 		model, provider = _resolve_model_and_provider(conv)
 		maybe_autotitle(
-			conversation_id, user,
-			gateway_url=gateway_url, model=model, provider=provider,
+			conversation_id,
+			user,
+			gateway_url=gateway_url,
+			model=model,
+			provider=provider,
 		)
 	except Exception:
 		frappe.log_error(
@@ -231,15 +261,21 @@ def maybe_autotitle(conversation_id: str, user: str, *, gateway_url, model, prov
 		return  # greetings only so far — title on the next real prompt
 
 	new_title = _generate_via_gateway(
-		gateway_url, source, model=model, provider=provider,
+		gateway_url,
+		source,
+		model=model,
+		provider=provider,
 	) or derive_title(source)
 	if not new_title or new_title == title:
 		return
 
 	frappe.db.set_value(CONV, conversation_id, "title", new_title)
 	frappe.db.commit()
-	publish_to_user(user, {
-		"kind": "conversation:renamed",
-		"conversation_id": conversation_id,
-		"title": new_title,
-	})
+	publish_to_user(
+		user,
+		{
+			"kind": "conversation:renamed",
+			"conversation_id": conversation_id,
+			"title": new_title,
+		},
+	)

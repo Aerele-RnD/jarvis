@@ -43,7 +43,9 @@
 
 		<template #cell-skill_name="{ row }">
 			<div class="flex items-center gap-2 overflow-hidden">
-				<div class="truncate text-base font-medium text-ink-gray-9">{{ row.skill_name }}</div>
+				<div class="truncate text-base font-medium text-ink-gray-9">
+					{{ row.skill_name }}
+				</div>
 				<Tooltip
 					v-if="row.scope === 'Personal'"
 					text="Personal skill - only you; never pushed to the shared assistant"
@@ -55,8 +57,13 @@
 
 		<template #cell-owner_display="{ row }">
 			<div class="flex items-center gap-2 overflow-hidden">
-				<Avatar size="sm" :label="row.mine ? session.user || 'You' : row.shared_by || '?'" />
-				<div class="truncate text-base">{{ row.mine ? "You" : row.shared_by || "another user" }}</div>
+				<Avatar
+					size="sm"
+					:label="row.mine ? session.user || 'You' : row.shared_by || '?'"
+				/>
+				<div class="truncate text-base">
+					{{ row.mine ? "You" : row.shared_by || "another user" }}
+				</div>
 			</div>
 		</template>
 
@@ -89,7 +96,11 @@
 		</template>
 
 		<template #select-actions="{ selections, unselectAll }">
-			<Dropdown :options="[{ label: 'Delete', onClick: () => bulkDelete(selections, unselectAll) }]">
+			<Dropdown
+				:options="[
+					{ label: 'Delete', onClick: () => bulkDelete(selections, unselectAll) },
+				]"
+			>
 				<Button icon="more-horizontal" variant="ghost" />
 			</Dropdown>
 		</template>
@@ -100,21 +111,21 @@
 // Skills list - DESIGN-V3 §5.6: scope/enabled quick filters, sync-pill banner
 // (apply pipeline status, 3s poll while pending), bulk delete with skip
 // reasons (owner-only rows), rows → /skills/:id, New Skill → /skills/new.
-import { ref } from "vue"
-import { useRouter } from "vue-router"
-import { Button, Badge, Avatar, Tooltip, Dropdown, toast, confirmDialog } from "frappe-ui"
-import ListPage from "@/components/list/ListPage.vue"
-import { useListPage } from "@/composables/useListPage"
-import SyncPill from "./SyncPill.vue"
-import { session } from "@/data/session"
-import { timeAgo, exactDate } from "@/utils/datetime"
-import * as api from "@/api"
-import * as apiSkills from "@/api/skills"
+import { ref } from "vue";
+import { useRouter } from "vue-router";
+import { Button, Badge, Avatar, Tooltip, Dropdown, toast, confirmDialog } from "frappe-ui";
+import ListPage from "@/components/list/ListPage.vue";
+import { useListPage } from "@/composables/useListPage";
+import SyncPill from "./SyncPill.vue";
+import { session } from "@/data/session";
+import { timeAgo, exactDate } from "@/utils/datetime";
+import * as api from "@/api";
+import * as apiSkills from "@/api/skills";
 
-const router = useRouter()
+const router = useRouter();
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
 // ── list config ──────────────────────────────────────────────────────────────
@@ -124,17 +135,17 @@ const OWNERSHIP_OPTIONS = [
 	{ label: "All skills", value: "" },
 	{ label: "Mine", value: "mine" },
 	{ label: "Shared with me", value: "shared" },
-]
+];
 const ENABLED_OPTIONS = [
 	{ label: "All", value: "" },
 	{ label: "Enabled", value: "1" },
 	{ label: "Disabled", value: "0" },
-]
+];
 const INVOCABLE_OPTIONS = [
 	{ label: "All", value: "" },
 	{ label: "Invocable", value: "1" },
 	{ label: "Not invocable", value: "0" },
-]
+];
 
 const columns = [
 	{ label: "Name", key: "skill_name", width: 2 },
@@ -143,7 +154,7 @@ const columns = [
 	{ label: "Shared", key: "shared_count", width: "6rem", align: "center" },
 	{ label: "Status", key: "enabled", width: "7rem" },
 	{ label: "Updated", key: "modified", width: "8rem", align: "right" },
-]
+];
 
 // search rides the quick-filter strip (ListPage has no separate search box);
 // it lives in the filters object so the input stays controlled, and fetchFn
@@ -152,19 +163,19 @@ const quickFilters = [
 	{ key: "search", label: "Search skills", type: "text" },
 	{ key: "scope", label: "Ownership", type: "select", options: OWNERSHIP_OPTIONS },
 	{ key: "enabled", label: "Status", type: "select", options: ENABLED_OPTIONS },
-]
+];
 const filterDefs = [
 	{ key: "scope", label: "Ownership", type: "select", options: OWNERSHIP_OPTIONS },
 	{ key: "enabled", label: "Status", type: "select", options: ENABLED_OPTIONS },
 	{ key: "user_invocable", label: "User invocable", type: "select", options: INVOCABLE_OPTIONS },
-]
+];
 
 const sortOptions = [
 	{ label: "Name", value: "skill_name" },
 	{ label: "Updated", value: "modified" },
 	{ label: "Enabled", value: "enabled" },
-]
-const DEFAULT_SORT = { field: "skill_name", dir: "asc" }
+];
+const DEFAULT_SORT = { field: "skill_name", dir: "asc" };
 
 const {
 	rows,
@@ -182,50 +193,52 @@ const {
 	fetchFn: (p) => {
 		// the backend whitelists filter keys and throws on "search" - strip it
 		// out of filters and send it as the envelope's search param instead
-		const { search: q, ...rest } = p.filters || {}
-		return api.listCustomSkillsPage({ ...p, search: q || p.search || "", filters: rest })
+		const { search: q, ...rest } = p.filters || {};
+		return api.listCustomSkillsPage({ ...p, search: q || p.search || "", filters: rest });
 	},
 	defaultSort: DEFAULT_SORT,
 	storageKey: "skills",
-})
+});
 
 function getRowRoute(row) {
-	return { name: "SkillDetail", params: { id: row.name } }
+	return { name: "SkillDetail", params: { id: row.name } };
 }
 
 // ── bulk delete (owner rows only; server skips the rest with reasons) ────────
-const syncPill = ref(null)
+const syncPill = ref(null);
 
 function bulkDelete(selections, unselectAll) {
-	const names = Array.from(selections || [])
-	if (!names.length) return
+	const names = Array.from(selections || []);
+	if (!names.length) return;
 	confirmDialog({
 		title: `Delete ${names.length} skill${names.length === 1 ? "" : "s"}?`,
 		message:
 			"Deletes the selected skills you own and removes them from your assistant. Rows shared with you are skipped.",
 		onConfirm: async ({ hideDialog }) => {
 			try {
-				const res = (await apiSkills.deleteCustomSkillsBulk(names)) || {}
-				const skipped = res.skipped || []
-				const deleted = res.deleted != null ? res.deleted : names.length - skipped.length
+				const res = (await apiSkills.deleteCustomSkillsBulk(names)) || {};
+				const skipped = res.skipped || [];
+				const deleted = res.deleted != null ? res.deleted : names.length - skipped.length;
 				if (skipped.length) {
-					const reasons = [...new Set(skipped.map((s) => s.reason || "skipped"))].join(", ")
+					const reasons = [...new Set(skipped.map((s) => s.reason || "skipped"))].join(
+						", "
+					);
 					toast.create({
 						message: `Deleted ${deleted} (skipped ${skipped.length}: ${reasons})`,
 						type: "info",
-					})
+					});
 				} else {
-					toast.success(`Deleted ${deleted} skill${deleted === 1 ? "" : "s"}`)
+					toast.success(`Deleted ${deleted} skill${deleted === 1 ? "" : "s"}`);
 				}
-				unselectAll()
-				hideDialog()
-				resetLoad()
+				unselectAll();
+				hideDialog();
+				resetLoad();
 				// the server enqueued one skills-apply at the end (§8.3) - show it
-				syncPill.value && syncPill.value.checkNow()
+				syncPill.value && syncPill.value.checkNow();
 			} catch (e) {
-				toast.error(errMsg(e))
+				toast.error(errMsg(e));
 			}
 		},
-	})
+	});
 }
 </script>

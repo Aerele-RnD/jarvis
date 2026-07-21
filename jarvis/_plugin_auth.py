@@ -43,7 +43,6 @@ import time
 
 import frappe
 
-
 _MAX_CLOCK_SKEW_S = 60
 _NONCE_TTL_S = 120
 _NONCE_REDIS_PREFIX = "jarvis:plugin_nonce:"
@@ -88,23 +87,29 @@ def validate_plugin_request(body_bytes: bytes) -> str:
 	presented_token = (headers.get("X-Jarvis-Token") or "").strip()
 	if not presented_token:
 		raise PluginAuthError(
-			http_status=401, code="AuthenticationError",
+			http_status=401,
+			code="AuthenticationError",
 			message="X-Jarvis-Token header missing",
 		)
 	expected_token = _agent_token()
 	if not expected_token:
-		_audit_log("plugin_auth: agent_token unset on bench",
-		           "Jarvis Settings.agent_token is empty; refusing all "
-		           "plugin requests")
+		_audit_log(
+			"plugin_auth: agent_token unset on bench",
+			"Jarvis Settings.agent_token is empty; refusing all plugin requests",
+		)
 		raise PluginAuthError(
-			http_status=503, code="ServiceUnavailable",
+			http_status=503,
+			code="ServiceUnavailable",
 			message="plugin auth not configured on this bench",
 		)
 	if not hmac.compare_digest(presented_token, expected_token):
-		_audit_log("plugin_auth: bearer mismatch",
-		           f"remote_ip={caller_ip!r} session={headers.get('X-Jarvis-Session', '')!r}")
+		_audit_log(
+			"plugin_auth: bearer mismatch",
+			f"remote_ip={caller_ip!r} session={headers.get('X-Jarvis-Session', '')!r}",
+		)
 		raise PluginAuthError(
-			http_status=401, code="AuthenticationError",
+			http_status=401,
+			code="AuthenticationError",
 			message="invalid X-Jarvis-Token",
 		)
 
@@ -115,11 +120,14 @@ def validate_plugin_request(body_bytes: bytes) -> str:
 	# the bench's UI can render a "rotate now" CTA instead of a generic
 	# 401. max_age=0 disables expiry (legacy escape hatch).
 	if _agent_token_expired():
-		_audit_log("plugin_auth: agent_token past max-age",
-		           "agent_token is older than agent_token_max_age_days; "
-		           "operator must call rotate_agent_token to refresh")
+		_audit_log(
+			"plugin_auth: agent_token past max-age",
+			"agent_token is older than agent_token_max_age_days; "
+			"operator must call rotate_agent_token to refresh",
+		)
 		raise PluginAuthError(
-			http_status=401, code="AgentTokenExpired",
+			http_status=401,
+			code="AgentTokenExpired",
 			message="agent_token past configured max age; operator must rotate",
 		)
 
@@ -127,7 +135,8 @@ def validate_plugin_request(body_bytes: bytes) -> str:
 	session_key = (headers.get("X-Jarvis-Session") or "").strip()
 	if not session_key:
 		raise PluginAuthError(
-			http_status=400, code="InvalidArgumentError",
+			http_status=400,
+			code="InvalidArgumentError",
 			message="X-Jarvis-Session header required when using X-Jarvis-Token",
 		)
 
@@ -143,14 +152,18 @@ def validate_plugin_request(body_bytes: bytes) -> str:
 		# bug at best, downgrade-attack attempt at worst.
 		if not (sig and nonce and ts_str):
 			raise PluginAuthError(
-				http_status=400, code="InvalidArgumentError",
+				http_status=400,
+				code="InvalidArgumentError",
 				message="partial signature headers; provide all of "
-				        "X-Jarvis-Signature/X-Jarvis-Nonce/X-Jarvis-Timestamp",
+				"X-Jarvis-Signature/X-Jarvis-Nonce/X-Jarvis-Timestamp",
 			)
 		_validate_signature(
-			token=expected_token, session_key=session_key,
+			token=expected_token,
+			session_key=session_key,
 			body_bytes=body_bytes,
-			signature=sig, nonce=nonce, timestamp_str=ts_str,
+			signature=sig,
+			nonce=nonce,
+			timestamp_str=ts_str,
 		)
 	else:
 		# Legacy bearer-only path. Log once so operators can see how many
@@ -158,7 +171,8 @@ def validate_plugin_request(body_bytes: bytes) -> str:
 		frappe.logger().info(
 			"plugin_auth: legacy bearer-only request from %s (session=%s); "
 			"plugin should be upgraded to send signed requests",
-			caller_ip, session_key,
+			caller_ip,
+			session_key,
 		)
 
 	# 5. Rate limit per session_key (after signature validation so the
@@ -243,6 +257,7 @@ def _agent_token_expired() -> bool:
 		return False
 	try:
 		import datetime as _dt
+
 		issued = frappe.utils.get_datetime(issued_at)
 		age = (_dt.datetime.now(issued.tzinfo) if issued.tzinfo else _dt.datetime.now()) - issued
 		return age.days >= max_age_days
@@ -250,8 +265,7 @@ def _agent_token_expired() -> bool:
 		return False
 
 
-def _canonical_request(*, session_key: str, body_bytes: bytes,
-                       nonce: str, timestamp_s: int) -> bytes:
+def _canonical_request(*, session_key: str, body_bytes: bytes, nonce: str, timestamp_s: int) -> bytes:
 	"""Canonical string the plugin signs.
 
 	Format: session_key | sha256(body) | nonce | timestamp.
@@ -265,44 +279,49 @@ def _canonical_request(*, session_key: str, body_bytes: bytes,
 	return "|".join(parts).encode("utf-8")
 
 
-def _validate_signature(*, token: str, session_key: str, body_bytes: bytes,
-                        signature: str, nonce: str, timestamp_str: str) -> None:
+def _validate_signature(
+	*, token: str, session_key: str, body_bytes: bytes, signature: str, nonce: str, timestamp_str: str
+) -> None:
 	# Timestamp sanity - reject clearly-old requests so a captured one
 	# stops being replayable past the skew window.
 	try:
 		ts = int(timestamp_str)
 	except ValueError:
 		raise PluginAuthError(
-			http_status=400, code="InvalidArgumentError",
+			http_status=400,
+			code="InvalidArgumentError",
 			message="X-Jarvis-Timestamp must be a unix-epoch integer",
 		) from None
 	now = int(time.time())
 	if abs(now - ts) > _MAX_CLOCK_SKEW_S:
-		_audit_log("plugin_auth: timestamp out of skew window",
-		           f"now={now} ts={ts} diff={abs(now-ts)}s")
+		_audit_log("plugin_auth: timestamp out of skew window", f"now={now} ts={ts} diff={abs(now - ts)}s")
 		raise PluginAuthError(
-			http_status=401, code="AuthenticationError",
+			http_status=401,
+			code="AuthenticationError",
 			message="signed request timestamp out of acceptable window",
 		)
 
 	# Reject overly-short nonces (hex-16 = 8 random bytes is the floor).
 	if len(nonce) < 16 or len(nonce) > 128:
 		raise PluginAuthError(
-			http_status=400, code="InvalidArgumentError",
+			http_status=400,
+			code="InvalidArgumentError",
 			message="X-Jarvis-Nonce length out of bounds",
 		)
 
 	# Verify HMAC.
 	canonical = _canonical_request(
-		session_key=session_key, body_bytes=body_bytes,
-		nonce=nonce, timestamp_s=ts,
+		session_key=session_key,
+		body_bytes=body_bytes,
+		nonce=nonce,
+		timestamp_s=ts,
 	)
 	expected = hmac.new(token.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
 	if not hmac.compare_digest(expected, signature):
-		_audit_log("plugin_auth: signature mismatch",
-		           f"session={session_key!r} nonce_prefix={nonce[:8]!r}")
+		_audit_log("plugin_auth: signature mismatch", f"session={session_key!r} nonce_prefix={nonce[:8]!r}")
 		raise PluginAuthError(
-			http_status=401, code="AuthenticationError",
+			http_status=401,
+			code="AuthenticationError",
 			message="signature did not validate",
 		)
 
@@ -322,10 +341,12 @@ def _validate_signature(*, token: str, session_key: str, body_bytes: bytes,
 		)
 		return
 	if not got:
-		_audit_log("plugin_auth: nonce replay rejected",
-		           f"session={session_key!r} nonce_prefix={nonce[:8]!r}")
+		_audit_log(
+			"plugin_auth: nonce replay rejected", f"session={session_key!r} nonce_prefix={nonce[:8]!r}"
+		)
 		raise PluginAuthError(
-			http_status=401, code="AuthenticationError",
+			http_status=401,
+			code="AuthenticationError",
 			message="signed request nonce already used",
 		)
 
@@ -346,10 +367,10 @@ def _enforce_rate_limit(session_key: str) -> None:
 		except Exception:
 			pass
 	if count > 60:
-		_audit_log("plugin_auth: rate limit exceeded",
-		           f"session={session_key!r} count={count}")
+		_audit_log("plugin_auth: rate limit exceeded", f"session={session_key!r} count={count}")
 		raise PluginAuthError(
-			http_status=429, code="RateLimitExceededError",
+			http_status=429,
+			code="RateLimitExceededError",
 			message="plugin-auth rate limit exceeded for this session",
 		)
 

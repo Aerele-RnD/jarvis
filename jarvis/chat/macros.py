@@ -53,30 +53,34 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 	conv = frappe.get_doc({"doctype": CONV, "title": doc.macro_name[:140], "status": "Active"})
 	conv.flags.ignore_permissions = True
 	conv.insert()
-	intro = frappe.get_doc({
-		"doctype": MSG,
-		"conversation": conv.name,
-		"seq": 1,
-		"role": "assistant",
-		"content": (
-			f"▶ Running macro **{doc.macro_name}** — summarized prompt."
-			if merged else
-			f"▶ Running macro **{doc.macro_name}** — {len(steps)} step(s)."
-		),
-	})
+	intro = frappe.get_doc(
+		{
+			"doctype": MSG,
+			"conversation": conv.name,
+			"seq": 1,
+			"role": "assistant",
+			"content": (
+				f"▶ Running macro **{doc.macro_name}** — summarized prompt."
+				if merged
+				else f"▶ Running macro **{doc.macro_name}** — {len(steps)} step(s)."
+			),
+		}
+	)
 	intro.flags.ignore_permissions = True
 	intro.insert()
 
-	run = frappe.get_doc({
-		"doctype": RUN,
-		"macro": doc.name,
-		"conversation": conv.name,
-		"status": "running",
-		"current_step": 0,
-		"total_steps": total,
-		"trigger": trigger,
-		"started_at": frappe.utils.now(),
-	})
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"macro": doc.name,
+			"conversation": conv.name,
+			"status": "running",
+			"current_step": 0,
+			"total_steps": total,
+			"trigger": trigger,
+			"started_at": frappe.utils.now(),
+		}
+	)
 	run.flags.ignore_permissions = True
 	run.insert()
 
@@ -91,12 +95,15 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 	# Scheduled runs surface via the proactive "conversation:new" toast; manual
 	# runs are navigated to directly by the SPA, so no toast there.
 	if trigger == "scheduled":
-		publish_to_user(owner, {
-			"kind": "conversation:new",
-			"conversation_id": conv.name,
-			"title": doc.macro_name[:140],
-			"preview": f"Scheduled macro: {doc.macro_name}",
-		})
+		publish_to_user(
+			owner,
+			{
+				"kind": "conversation:new",
+				"conversation_id": conv.name,
+				"title": doc.macro_name[:140],
+				"preview": f"Scheduled macro: {doc.macro_name}",
+			},
+		)
 
 	if merged:
 		_run_merged(run, doc, merged)
@@ -117,13 +124,9 @@ def advance_after_turn(conversation_id: str, *, errored: bool) -> None:
 	try:
 		_apply_merge_after_turn(conversation_id, errored=errored)
 	except Exception:
-		frappe.log_error(
-			title="jarvis macro merge-apply failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="jarvis macro merge-apply failed", message=frappe.get_traceback())
 	try:
-		run_name = frappe.db.get_value(
-			RUN, {"conversation": conversation_id, "status": "running"}, "name"
-		)
+		run_name = frappe.db.get_value(RUN, {"conversation": conversation_id, "status": "running"}, "name")
 		if not run_name:
 			return
 		from jarvis._redis_lock import redis_lock
@@ -151,9 +154,7 @@ def advance_after_turn(conversation_id: str, *, errored: bool) -> None:
 
 			_run_step(run, macro_doc, next_index)
 	except Exception:
-		frappe.log_error(
-			title="jarvis macro advance failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="jarvis macro advance failed", message=frappe.get_traceback())
 
 
 def _apply_merge_after_turn(conversation_id: str, *, errored: bool) -> None:
@@ -175,7 +176,8 @@ def _apply_merge_after_turn(conversation_id: str, *, errored: bool) -> None:
 			MSG,
 			filters={"conversation": conversation_id, "role": "assistant"},
 			fields=["content", "streaming", "error"],
-			order_by="seq desc", limit=1,
+			order_by="seq desc",
+			limit=1,
 		)
 		m = rows[0] if rows else None
 		if m and not m.streaming and not (m.error or "").strip():
@@ -186,13 +188,22 @@ def _apply_merge_after_turn(conversation_id: str, *, errored: bool) -> None:
 				merge = frappe.parse_json(mt.group(1).strip()) if mt else None
 			except Exception:
 				merge = None
-			if isinstance(merge, dict) and merge.get("mergeable") and str(merge.get("merged_prompt") or "").strip():
+			if (
+				isinstance(merge, dict)
+				and merge.get("mergeable")
+				and str(merge.get("merged_prompt") or "").strip()
+			):
 				status, merged = "ready", str(merge.get("merged_prompt")).strip()
-	frappe.db.set_value(MACRO, macro_name, {
-		"merged_prompt": merged,
-		"merge_status": status,
-		"merge_conversation": "",
-	}, update_modified=False)
+	frappe.db.set_value(
+		MACRO,
+		macro_name,
+		{
+			"merged_prompt": merged,
+			"merge_status": status,
+			"merge_conversation": "",
+		},
+		update_modified=False,
+	)
 	frappe.db.commit()
 	# The throwaway conversation served its purpose — clean it up best-effort.
 	try:
@@ -201,12 +212,15 @@ def _apply_merge_after_turn(conversation_id: str, *, errored: bool) -> None:
 		frappe.db.commit()
 	except Exception:
 		pass
-	publish_to_user(doc.owner, {
-		"kind": "macro:merged",
-		"macro": macro_name,
-		"macro_name": doc.macro_name,
-		"status": status,
-	})
+	publish_to_user(
+		doc.owner,
+		{
+			"kind": "macro:merged",
+			"macro": macro_name,
+			"macro_name": doc.macro_name,
+			"status": status,
+		},
+	)
 
 
 def stop_macro_run(run_name: str) -> dict:
@@ -216,9 +230,7 @@ def stop_macro_run(run_name: str) -> dict:
 	run = frappe.get_doc(RUN, run_name)
 	run.check_permission("write")  # owner-gate the stop action
 	if run.status == "running":
-		frappe.db.set_value(
-			RUN, run.name, {"status": "stopped", "finished_at": frappe.utils.now()}
-		)
+		frappe.db.set_value(RUN, run.name, {"status": "stopped", "finished_at": frappe.utils.now()})
 		frappe.db.commit()
 		try:
 			_publish_done(run, frappe.get_doc(MACRO, run.macro), "stopped")
@@ -277,7 +289,7 @@ def _merged_skill_invocations(macro_doc) -> str:
 	single-turn run — the summary covers every step, so it inherits every
 	step's skills. Same /slug mechanism + visibility rules as per-step."""
 	names, seen = [], set()
-	for s in (macro_doc.steps or []):
+	for s in macro_doc.steps or []:
 		try:
 			lst = frappe.parse_json(s.skills) if s.skills else []
 		except Exception:
@@ -316,16 +328,19 @@ def _run_merged(run, macro_doc, merged_prompt: str) -> None:
 	frappe.db.set_value(RUN, run.name, "current_step", 1)
 	frappe.db.commit()
 	run.current_step = 1
-	publish_to_user(macro_doc.owner, {
-		"kind": "macro:progress",
-		"macro_run": run.name,
-		"macro": macro_doc.name,
-		"conversation": run.conversation,
-		"step": 1,
-		"total": 1,
-		"label": "Summarized prompt",
-		"status": "running",
-	})
+	publish_to_user(
+		macro_doc.owner,
+		{
+			"kind": "macro:progress",
+			"macro_run": run.name,
+			"macro": macro_doc.name,
+			"conversation": run.conversation,
+			"step": 1,
+			"total": 1,
+			"label": "Summarized prompt",
+			"status": "running",
+		},
+	)
 
 
 def _finish(run, status: str, error: str | None = None) -> None:
@@ -339,23 +354,29 @@ def _finish(run, status: str, error: str | None = None) -> None:
 
 def _publish_progress(run, macro_doc, index: int) -> None:
 	step = macro_doc.steps[index]
-	publish_to_user(macro_doc.owner, {
-		"kind": "macro:progress",
-		"macro_run": run.name,
-		"macro": macro_doc.name,
-		"conversation": run.conversation,
-		"step": index + 1,
-		"total": run.total_steps,
-		"label": (step.label or "").strip() or f"Step {index + 1}",
-		"status": "running",
-	})
+	publish_to_user(
+		macro_doc.owner,
+		{
+			"kind": "macro:progress",
+			"macro_run": run.name,
+			"macro": macro_doc.name,
+			"conversation": run.conversation,
+			"step": index + 1,
+			"total": run.total_steps,
+			"label": (step.label or "").strip() or f"Step {index + 1}",
+			"status": "running",
+		},
+	)
 
 
 def _publish_done(run, macro_doc, status: str) -> None:
-	publish_to_user(macro_doc.owner, {
-		"kind": "macro:done",
-		"macro_run": run.name,
-		"macro": macro_doc.name,
-		"conversation": run.conversation,
-		"status": status,
-	})
+	publish_to_user(
+		macro_doc.owner,
+		{
+			"kind": "macro:done",
+			"macro_run": run.name,
+			"macro": macro_doc.name,
+			"conversation": run.conversation,
+			"status": status,
+		},
+	)

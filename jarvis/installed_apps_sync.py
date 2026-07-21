@@ -39,7 +39,8 @@ def after_migrate() -> None:
 		if pool is None:
 			# Neither leg is safe to guess; stale snapshot retries next migrate.
 			frappe.logger("jarvis.installed_apps").warning(
-				"proxy_active unreadable; deferring installed-apps resync")
+				"proxy_active unreadable; deferring installed-apps resync"
+			)
 			return
 		_enqueue_resync(synced, current, pool=pool)
 	except Exception:
@@ -52,9 +53,7 @@ def after_migrate() -> None:
 def record_synced_snapshot() -> None:
 	"""Stamp the live app list as synced. Never raises."""
 	try:
-		frappe.db.set_single_value(
-			SETTINGS, FIELD, json.dumps(_current_apps()), update_modified=False
-		)
+		frappe.db.set_single_value(SETTINGS, FIELD, json.dumps(_current_apps()), update_modified=False)
 	except Exception:
 		pass
 
@@ -107,7 +106,9 @@ def _enqueue_resync(synced: list[str], current: list[str], pool: bool) -> None:
 
 	frappe.logger("jarvis.installed_apps").info(
 		"installed_apps changed %s -> %s; enqueueing %s resync",
-		synced, current, "pool" if pool else "creds-restart",
+		synced,
+		current,
+		"pool" if pool else "creds-restart",
 	)
 	run_inline = bool(frappe.flags.in_test or frappe.flags.run_admin_sync_inline)
 	common = {
@@ -119,15 +120,13 @@ def _enqueue_resync(synced: list[str], current: list[str], pool: bool) -> None:
 	}
 	if pool:
 		frappe.enqueue(
-			"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
-			"._enqueued_sync_via_admin_pool",
+			"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings._enqueued_sync_via_admin_pool",
 			job_id="jarvis_settings_sync:pool",
 			**common,
 		)
 	else:
 		frappe.enqueue(
-			"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
-			"._enqueued_sync_via_admin",
+			"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings._enqueued_sync_via_admin",
 			job_id="jarvis_settings_sync:restart",
 			action="restart",
 			**common,

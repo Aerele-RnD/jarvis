@@ -12,6 +12,7 @@ The deferred note reaches the agent because turn_handler folds it into the next
 turn's ``[Context: ...]`` bracket and clears it only after a successful send; the
 read/clear helpers are unit-tested here, the full send path via manual E2E.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -24,27 +25,32 @@ from jarvis.chat.actions_api import confirm_tool, dismiss_tool
 
 
 def _make_conversation() -> str:
-	conv = frappe.get_doc({
-		"doctype": "Jarvis Conversation", "title": "receipt-chip test",
-	}).insert(ignore_permissions=True)
+	conv = frappe.get_doc(
+		{
+			"doctype": "Jarvis Conversation",
+			"title": "receipt-chip test",
+		}
+	).insert(ignore_permissions=True)
 	return conv.name
 
 
 class _Base(FrappeTestCase):
 	def _conv(self) -> str:
 		conv = _make_conversation()
-		self.addCleanup(lambda: frappe.delete_doc(
-			"Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True)
+		)
 		return conv
 
 	def _cleanup_doc(self, doctype, name):
-		self.addCleanup(lambda: frappe.delete_doc(
-			doctype, name, force=True, ignore_permissions=True))
+		self.addCleanup(lambda: frappe.delete_doc(doctype, name, force=True, ignore_permissions=True))
 
 	def _tool_rows(self, conv):
 		return frappe.get_all(
-			"Jarvis Chat Message", filters={"conversation": conv, "role": "tool"},
-			fields=["tool_name", "tool_status", "action_outcome"], order_by="seq asc",
+			"Jarvis Chat Message",
+			filters={"conversation": conv, "role": "tool"},
+			fields=["tool_name", "tool_status", "action_outcome"],
+			order_by="seq asc",
 		)
 
 	def _notes(self, conv):
@@ -59,8 +65,11 @@ class TestConfirmChip(_Base):
 		conv = self._conv()
 		desc = "receipt-chip-confirm-single-001"
 		token = pending_confirm.mint(
-			conversation=conv, owner="Administrator", tool="create_doc",
-			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="t",
+			conversation=conv,
+			owner="Administrator",
+			tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}},
+			run_id="t",
 		)
 		with patch("jarvis.chat.api._dispatch_turn"):
 			res = confirm_tool(token, conversation=conv)
@@ -76,11 +85,16 @@ class TestConfirmChip(_Base):
 		conv = self._conv()
 		d1, d2 = "rc-bulk-a-001", "rc-bulk-b-001"
 		token = pending_confirm.mint(
-			conversation=conv, owner="Administrator", tool="create_doc",
-			args={"docs": [
-				{"doctype": "ToDo", "values": {"description": d1}},
-				{"doctype": "ToDo", "values": {"description": d2}},
-			]}, run_id="t",
+			conversation=conv,
+			owner="Administrator",
+			tool="create_doc",
+			args={
+				"docs": [
+					{"doctype": "ToDo", "values": {"description": d1}},
+					{"doctype": "ToDo", "values": {"description": d2}},
+				]
+			},
+			run_id="t",
 		)
 		with patch("jarvis.chat.api._dispatch_turn"):
 			res = confirm_tool(token, conversation=conv)
@@ -96,8 +110,11 @@ class TestConfirmChip(_Base):
 	def test_failed_write_writes_failed_chip(self):
 		conv = self._conv()
 		token = pending_confirm.mint(
-			conversation=conv, owner="Administrator", tool="delete_doc",
-			args={"doctype": "ToDo", "name": "no-such-todo-rc-xyz"}, run_id="t",
+			conversation=conv,
+			owner="Administrator",
+			tool="delete_doc",
+			args={"doctype": "ToDo", "name": "no-such-todo-rc-xyz"},
+			run_id="t",
 		)
 		with patch("jarvis.chat.api._dispatch_turn"):
 			res = confirm_tool(token, conversation=conv)
@@ -109,15 +126,20 @@ class TestConfirmChip(_Base):
 	def test_failed_write_uses_no_auto_retry_scaffold(self):
 		conv = self._conv()
 		token = pending_confirm.mint(
-			conversation=conv, owner="Administrator", tool="delete_doc",
-			args={"doctype": "ToDo", "name": "no-such-todo-rc-abc"}, run_id="t",
+			conversation=conv,
+			owner="Administrator",
+			tool="delete_doc",
+			args={"doctype": "ToDo", "name": "no-such-todo-rc-abc"},
+			run_id="t",
 		)
 		with patch("jarvis.chat.api._dispatch_turn") as disp:
 			confirm_tool(token, conversation=conv)
 		self.assertEqual(disp.call_count, 1)
 		hidden = frappe.get_all(
-			"Jarvis Chat Message", filters={"conversation": conv, "role": "user"},
-			fields=["content"], order_by="seq asc",
+			"Jarvis Chat Message",
+			filters={"conversation": conv, "role": "user"},
+			fields=["content"],
+			order_by="seq asc",
 		)
 		self.assertEqual(len(hidden), 1)
 		# The failed scaffold must NOT claim the change was applied, and must tell
@@ -132,8 +154,11 @@ class TestDismissChip(_Base):
 		conv = self._conv()
 		desc = "receipt-chip-dismiss-001"
 		token = pending_confirm.mint(
-			conversation=conv, owner="Administrator", tool="create_doc",
-			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="t",
+			conversation=conv,
+			owner="Administrator",
+			tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}},
+			run_id="t",
 		)
 		with patch("jarvis.chat.api._dispatch_turn") as disp:
 			res = dismiss_tool(token, conversation=conv)
@@ -155,8 +180,11 @@ class TestDismissChip(_Base):
 	def test_dismiss_consumes_token_single_use(self):
 		conv = self._conv()
 		token = pending_confirm.mint(
-			conversation=conv, owner="Administrator", tool="submit_doc",
-			args={"doctype": "ToDo", "names": ["a", "b"]}, run_id="t",
+			conversation=conv,
+			owner="Administrator",
+			tool="submit_doc",
+			args={"doctype": "ToDo", "names": ["a", "b"]},
+			run_id="t",
 		)
 		with patch("jarvis.chat.api._dispatch_turn"):
 			first = dismiss_tool(token, conversation=conv)
@@ -172,8 +200,11 @@ class TestDismissChip(_Base):
 		conv = self._conv()
 		desc = "receipt-chip-race-001"
 		token = pending_confirm.mint(
-			conversation=conv, owner="Administrator", tool="create_doc",
-			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="t",
+			conversation=conv,
+			owner="Administrator",
+			tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}},
+			run_id="t",
 		)
 		with patch("jarvis.chat.api._dispatch_turn"):
 			dismiss_tool(token, conversation=conv)
@@ -225,8 +256,8 @@ class TestAgentNotes(_Base):
 
 		conv = self._conv()
 		agent_notes.append(conv, "shared note")
-		drained_a = self._entries(conv)   # turn A drains
-		drained_b = self._entries(conv)   # turn B drains the same entry
+		drained_a = self._entries(conv)  # turn A drains
+		drained_b = self._entries(conv)  # turn B drains the same entry
 		agent_notes.append(conv, "veto note")  # a discard lands mid-window (fresh id)
 		agent_notes.clear(conv, [e["id"] for e in drained_a])
 		agent_notes.clear(conv, [e["id"] for e in drained_b])
@@ -245,8 +276,8 @@ class TestAgentNotes(_Base):
 
 		conv = self._conv()
 		frappe.db.set_value(
-			"Jarvis Conversation", conv, "pending_agent_notes", "not json{",
-			update_modified=False)
+			"Jarvis Conversation", conv, "pending_agent_notes", "not json{", update_modified=False
+		)
 		self.assertEqual(agent_notes.read(frappe.get_doc("Jarvis Conversation", conv)), [])
 
 	def test_note_neutralization_disarms_context_breakout(self):

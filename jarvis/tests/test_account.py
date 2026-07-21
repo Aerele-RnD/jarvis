@@ -10,10 +10,12 @@ from frappe.tests.utils import FrappeTestCase
 from jarvis import account, admin_client
 from jarvis.exceptions import AdminValidationError
 
-
 _SNAPSHOTTED_FIELDS = (
-	"jarvis_admin_url", "jarvis_admin_api_key", "jarvis_admin_api_secret",
-	"agent_url", "agent_token",
+	"jarvis_admin_url",
+	"jarvis_admin_api_key",
+	"jarvis_admin_api_secret",
+	"agent_url",
+	"agent_token",
 )
 
 
@@ -21,8 +23,11 @@ def _snapshot_settings() -> dict:
 	s = frappe.get_single("Jarvis Settings")
 	snap = {}
 	for f in _SNAPSHOTTED_FIELDS:
-		v = (s.get_password(f, raise_exception=False)
-			 if f.endswith(("_key", "_secret", "_token")) else s.get(f))
+		v = (
+			s.get_password(f, raise_exception=False)
+			if f.endswith(("_key", "_secret", "_token"))
+			else s.get(f)
+		)
 		snap[f] = v or ""
 	return snap
 
@@ -58,24 +63,31 @@ class TestIsOnboarded(FrappeTestCase):
 
 class TestAccountWrappers(FrappeTestCase):
 	def test_get_account_returns_admin_payload(self):
-		fake = {"subscription_status": "Active", "plan": {"name": "p1"},
-				"days_remaining": 12, "upgrade_plans": []}
+		fake = {
+			"subscription_status": "Active",
+			"plan": {"name": "p1"},
+			"days_remaining": 12,
+			"upgrade_plans": [],
+		}
 		with patch.object(admin_client, "get_account_summary", return_value=fake) as m:
 			out = account.get_account()
 		m.assert_called_once_with()
 		self.assertEqual(out, fake)
 
 	def test_preview_upgrade_passes_target_plan_through(self):
-		fake = {"prorated_inr": 500, "diff_per_day": 50.0,
-				"days_remaining": 10, "total_period_days": 30}
+		fake = {"prorated_inr": 500, "diff_per_day": 50.0, "days_remaining": 10, "total_period_days": 30}
 		with patch.object(admin_client, "preview_upgrade", return_value=fake) as m:
 			out = account.preview_upgrade("plan-pro")
 		m.assert_called_once_with("plan-pro")
 		self.assertEqual(out, fake)
 
 	def test_start_upgrade_passes_target_plan_through(self):
-		fake = {"razorpay_order_id": "order_X", "razorpay_key_id": "k",
-				"amount_inr": 500, "target_plan": "plan-pro"}
+		fake = {
+			"razorpay_order_id": "order_X",
+			"razorpay_key_id": "k",
+			"amount_inr": 500,
+			"target_plan": "plan-pro",
+		}
 		with patch.object(admin_client, "start_upgrade", return_value=fake) as m:
 			out = account.start_upgrade("plan-pro")
 		m.assert_called_once_with("plan-pro")
@@ -84,15 +96,17 @@ class TestAccountWrappers(FrappeTestCase):
 	def test_get_account_surfaces_admin_validation_error_as_frappe_throw(self):
 		"""_surface() converts AdminValidationError to frappe.throw so the
 		page sees Frappe's standard red toast text instead of a traceback."""
-		with patch.object(admin_client, "get_account_summary",
-						  side_effect=AdminValidationError("plan disabled")):
+		with patch.object(
+			admin_client, "get_account_summary", side_effect=AdminValidationError("plan disabled")
+		):
 			with self.assertRaises(frappe.ValidationError) as cm:
 				account.get_account()
 		self.assertIn("plan disabled", str(cm.exception))
 
 	def test_preview_upgrade_surfaces_validation_error(self):
-		with patch.object(admin_client, "preview_upgrade",
-						  side_effect=AdminValidationError("downgrade not supported")):
+		with patch.object(
+			admin_client, "preview_upgrade", side_effect=AdminValidationError("downgrade not supported")
+		):
 			with self.assertRaises(frappe.ValidationError) as cm:
 				account.preview_upgrade("plan-cheap")
 		self.assertIn("downgrade not supported", str(cm.exception))
@@ -114,8 +128,10 @@ class TestAccountGatesFailClosed(FrappeTestCase):
 
 	def test_rejection_happens_before_any_admin_round_trip(self):
 		frappe.set_user("Guest")
-		with patch.object(admin_client, "get_account_summary") as get_summary, \
-				patch.object(admin_client, "preview_upgrade") as prev:
+		with (
+			patch.object(admin_client, "get_account_summary") as get_summary,
+			patch.object(admin_client, "preview_upgrade") as prev,
+		):
 			with self.assertRaises(frappe.PermissionError):
 				account.get_account()
 			with self.assertRaises(frappe.PermissionError):
@@ -136,8 +152,9 @@ class TestAdminChatGate(FrappeTestCase):
 		frappe.cache().delete_value(account._CHAT_GATE_CACHE_KEY)
 
 	def test_blocks_when_admin_not_ready(self):
-		with patch.object(admin_client, "get_connection",
-						  return_value={"chat_readiness": "Provisioning"}) as gc:
+		with patch.object(
+			admin_client, "get_connection", return_value={"chat_readiness": "Provisioning"}
+		) as gc:
 			self.assertEqual(
 				account._admin_chat_gate(),
 				{"ready": False, "reason": "container_provisioning"},
@@ -146,28 +163,29 @@ class TestAdminChatGate(FrappeTestCase):
 		gc.assert_called_once_with(timeout_s=8)
 
 	def test_allows_when_admin_ready(self):
-		with patch.object(admin_client, "get_connection",
-						  return_value={"chat_readiness": "Ready"}):
+		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}):
 			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
 
 	def test_v1_tolerant_when_key_absent(self):
 		# v1 admin (or a v2 not surfacing chat_readiness) → no opinion → allow.
-		with patch.object(admin_client, "get_connection",
-						  return_value={"agent_url": "ws://x", "tenant_status": "running"}):
+		with patch.object(
+			admin_client, "get_connection", return_value={"agent_url": "ws://x", "tenant_status": "running"}
+		):
 			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
 
 	def test_fails_open_on_admin_error(self):
 		from jarvis.exceptions import AdminUnreachableError
-		with patch.object(admin_client, "get_connection",
-						  side_effect=AdminUnreachableError("admin is unreachable")):
+
+		with patch.object(
+			admin_client, "get_connection", side_effect=AdminUnreachableError("admin is unreachable")
+		):
 			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
 		# Fail-open verdict must NOT be negative-cached: a recovered admin is
 		# re-probed on the next call rather than being blocked for the TTL.
 		self.assertIsNone(frappe.cache().get_value(account._CHAT_GATE_CACHE_KEY))
 
 	def test_positive_verdict_is_cached(self):
-		with patch.object(admin_client, "get_connection",
-						  return_value={"chat_readiness": "Ready"}) as gc:
+		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}) as gc:
 			account._admin_chat_gate()
 			account._admin_chat_gate()
 		# Second call served from the ~30s positive cache → one admin round-trip.
@@ -175,7 +193,6 @@ class TestAdminChatGate(FrappeTestCase):
 
 	def test_not_ready_verdict_is_not_cached(self):
 		# A transient block must clear on the next call, not stick for the TTL.
-		with patch.object(admin_client, "get_connection",
-						  return_value={"chat_readiness": "Provisioning"}):
+		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Provisioning"}):
 			account._admin_chat_gate()
 		self.assertIsNone(frappe.cache().get_value(account._CHAT_GATE_CACHE_KEY))

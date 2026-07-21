@@ -1,4 +1,4 @@
-import { reactive } from "vue"
+import { reactive } from "vue";
 
 // The notification feed, assembled client-side from realtime events — the bench
 // has no persistent notification store (the desktop uses live toasts, the native
@@ -10,28 +10,28 @@ import { reactive } from "vue"
 // installed PWA starts a fresh JS heap. An in-memory feed would therefore be
 // empty exactly when the user goes looking for it ("Jarvis buzzed while I was in
 // another app — what did it want?"), which is the only moment the bell matters.
-const KEY = "jarvis.notifications"
-const CAP = 100
+const KEY = "jarvis.notifications";
+const CAP = 100;
 
 function read() {
 	try {
-		const raw = JSON.parse(localStorage.getItem(KEY) || "[]")
-		return Array.isArray(raw) ? raw.slice(0, CAP) : []
+		const raw = JSON.parse(localStorage.getItem(KEY) || "[]");
+		return Array.isArray(raw) ? raw.slice(0, CAP) : [];
 	} catch {
-		return []
+		return [];
 	}
 }
 
 export const feed = reactive({
 	items: read(),
 	get unread() {
-		return this.items.filter((i) => !i.read).length
+		return this.items.filter((i) => !i.read).length;
 	},
-})
+});
 
 function persist() {
 	try {
-		localStorage.setItem(KEY, JSON.stringify(feed.items))
+		localStorage.setItem(KEY, JSON.stringify(feed.items));
 	} catch {
 		/* private mode / quota: the feed just won't survive the reload */
 	}
@@ -39,31 +39,31 @@ function persist() {
 
 /** Ids are derived from the run/token, so a replayed event can't double-post. */
 function push(item) {
-	if (feed.items.some((i) => i.id === item.id)) return
-	feed.items.unshift(item)
-	if (feed.items.length > CAP) feed.items.length = CAP
-	persist()
+	if (feed.items.some((i) => i.id === item.id)) return;
+	feed.items.unshift(item);
+	if (feed.items.length > CAP) feed.items.length = CAP;
+	persist();
 }
 
 export function markRead(id) {
-	const row = feed.items.find((i) => i.id === id)
+	const row = feed.items.find((i) => i.id === id);
 	if (row && !row.read) {
-		row.read = true
-		persist()
+		row.read = true;
+		persist();
 	}
 }
 
 export function markAllRead() {
-	feed.items.forEach((i) => (i.read = true))
-	persist()
+	feed.items.forEach((i) => (i.read = true));
+	persist();
 }
 
 // The feed is one person's task history. Signing out must drop it, or the next
 // user of this browser inherits it — and its unread badge.
 export function resetFeed() {
-	feed.items.length = 0
+	feed.items.length = 0;
 	try {
-		localStorage.removeItem(KEY)
+		localStorage.removeItem(KEY);
 	} catch {
 		/* ignore */
 	}
@@ -71,8 +71,8 @@ export function resetFeed() {
 
 /** Fold one realtime event into the feed. Same four kinds the native app tracks. */
 export function recordEvent(e) {
-	const conv = e.conversation_id || e.conversation
-	const at = Date.now()
+	const conv = e.conversation_id || e.conversation;
+	const at = Date.now();
 
 	// A stopped run is not a finished task. This feed is durable (localStorage +
 	// unread badge), so without the guard the user finds an unread "Task
@@ -86,7 +86,7 @@ export function recordEvent(e) {
 			conversation: conv,
 			at,
 			read: false,
-		})
+		});
 	} else if (e.kind === "run:error" && conv) {
 		push({
 			id: `err:${e.run_id || e.message_id}`,
@@ -96,7 +96,7 @@ export function recordEvent(e) {
 			conversation: conv,
 			at,
 			read: false,
-		})
+		});
 	} else if (e.kind === "action:pending") {
 		push({
 			id: `dec:${e.token || e.run_id}`,
@@ -106,7 +106,7 @@ export function recordEvent(e) {
 			conversation: conv,
 			at,
 			read: false,
-		})
+		});
 	} else if (e.kind === "conversation:new" && conv) {
 		push({
 			id: `new:${conv}`,
@@ -116,6 +116,6 @@ export function recordEvent(e) {
 			conversation: conv,
 			at,
 			read: false,
-		})
+		});
 	}
 }

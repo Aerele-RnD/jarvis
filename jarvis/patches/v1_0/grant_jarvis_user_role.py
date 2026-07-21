@@ -38,12 +38,14 @@ def execute():
 			continue
 		# Insert the child Has Role row directly rather than loading + saving the
 		# full User doc per user — a one-time grant over the whole user table.
-		frappe.get_doc({
-			"doctype": "Has Role",
-			"parenttype": "User",
-			"parentfield": "roles",
-			"parent": user,
-			"role": JARVIS_USER_ROLE,
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Has Role",
+				"parenttype": "User",
+				"parentfield": "roles",
+				"parent": user,
+				"role": JARVIS_USER_ROLE,
+			}
+		).insert(ignore_permissions=True)
 
 	frappe.db.commit()

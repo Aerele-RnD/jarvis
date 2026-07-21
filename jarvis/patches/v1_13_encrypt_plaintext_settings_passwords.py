@@ -57,6 +57,7 @@ _PASSWORD_FIELDS = (
 	"chat_device_token",
 )
 
+
 # Matches BaseDocument.is_dummy_password: non-empty and every char is '*'.
 def _is_dummy_password(value: str) -> bool:
 	return bool(value) and set(value) == {"*"}

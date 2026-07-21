@@ -37,14 +37,16 @@ class TestScanAndMarkErrored(FrappeTestCase):
 
 	def _insert_stale_streaming_message(self, age_seconds: int) -> str:
 		"""Insert an assistant message with streaming=1 and the given age."""
-		doc = frappe.get_doc({
-			"doctype": MSG,
-			"conversation": self.conv,
-			"seq": 1,
-			"role": "assistant",
-			"content": "partial",
-			"streaming": 1,
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": self.conv,
+				"seq": 1,
+				"role": "assistant",
+				"content": "partial",
+				"streaming": 1,
+			}
+		)
 		doc.insert(ignore_permissions=True)
 		# Forcibly age the creation timestamp (use Frappe's local-time helper
 		# to match how scan_and_mark_errored computes the cutoff)
@@ -74,14 +76,16 @@ class TestScanAndMarkErrored(FrappeTestCase):
 		self.assertIsNone(doc.error)
 
 	def test_leaves_completed_messages_alone(self):
-		doc = frappe.get_doc({
-			"doctype": MSG,
-			"conversation": self.conv,
-			"seq": 1,
-			"role": "assistant",
-			"content": "done",
-			"streaming": 0,
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": self.conv,
+				"seq": 1,
+				"role": "assistant",
+				"content": "done",
+				"streaming": 0,
+			}
+		)
 		doc.insert(ignore_permissions=True)
 		frappe.db.commit()
 		scan_and_mark_errored()
@@ -97,11 +101,13 @@ class TestScanAndMarkErrored(FrappeTestCase):
 		frappe.db.set_value(CONV, self.conv, "session_key", "sk_managed")
 		frappe.db.commit()
 		name = self._insert_stale_streaming_message(age_seconds=800)
-		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			 patch("jarvis.chat.stale_scan.publish_to_user") as pub:
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch("jarvis.chat.stale_scan.publish_to_user") as pub,
+		):
 			scan_and_mark_errored()
 		doc = frappe.get_doc(MSG, name)
-		self.assertEqual(doc.streaming, 1)   # spinner stays up
+		self.assertEqual(doc.streaming, 1)  # spinner stays up
 		self.assertEqual(doc.recovering, 1)  # handed to turn_recovery
 		self.assertIsNone(doc.error)
-		pub.assert_not_called()              # no false run:error
+		pub.assert_not_called()  # no false run:error

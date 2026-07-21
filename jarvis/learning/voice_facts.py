@@ -109,9 +109,7 @@ def after_migrate() -> None:
 			frappe.db.set_single_value(SETTINGS, updates, update_modified=False)
 			frappe.db.commit()
 	except Exception:
-		frappe.log_error(
-			title="jarvis voice bootstrap failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="jarvis voice bootstrap failed", message=frappe.get_traceback())
 
 
 # --------------------------------------------------------------------------- #
@@ -490,10 +488,7 @@ def _candidate_from_fact(f: dict) -> dict:
 def _skill_draft(statement: str, n: int, m: int, last_date: str) -> str:
 	statement = (statement or "").strip()
 	sep = "" if statement.endswith((".", "!", "?")) else "."
-	return (
-		f"- {statement}{sep} Evidence: stated in {n} voice note(s) "
-		f"by {m} user(s), last {last_date}."
-	)
+	return f"- {statement}{sep} Evidence: stated in {n} voice note(s) by {m} user(s), last {last_date}."
 
 
 def _persist_rule_facts(rule_facts: list[dict]) -> dict:
@@ -578,13 +573,9 @@ def _persist_rule_facts(rule_facts: list[dict]) -> dict:
 def _flag_personalise_origin(pattern_key: str) -> None:
 	"""Stamp ``personalise_origin=1`` on the JLP for ``pattern_key`` (idempotent,
 	sticky). Security review PART 2 TASK 16 provenance."""
-	row = frappe.db.get_value(
-		JLP, {"pattern_key": pattern_key}, ["name", "personalise_origin"], as_dict=True
-	)
+	row = frappe.db.get_value(JLP, {"pattern_key": pattern_key}, ["name", "personalise_origin"], as_dict=True)
 	if row and not row.personalise_origin:
-		frappe.db.set_value(
-			JLP, row.name, {"personalise_origin": 1}, update_modified=False
-		)
+		frappe.db.set_value(JLP, row.name, {"personalise_origin": 1}, update_modified=False)
 
 
 def _surface(pattern_key: str) -> None:
@@ -665,9 +656,7 @@ def _apply_context_facts(context_facts: list[dict]) -> int:
 			}
 		]
 		try:
-			wiki.apply_extracted_page_updates(
-				updates, "voice", user, default_scope="User", target_user=user
-			)
+			wiki.apply_extracted_page_updates(updates, "voice", user, default_scope="User", target_user=user)
 			applied += len(fs)
 		except Exception:
 			frappe.log_error(

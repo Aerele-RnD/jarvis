@@ -26,3 +26,8 @@ class TestValidateCanSend(FrappeTestCase):
 		ok, reason = validate_can_send("Guest")
 		self.assertFalse(ok)
 		self.assertIsNotNone(reason)
+
+	def test_model_kwarg_defaults_to_no_gate(self):
+		ok, reason = validate_can_send("nobody@example.invalid", model=None)
+		self.assertTrue(ok)
+		self.assertIsNone(reason)

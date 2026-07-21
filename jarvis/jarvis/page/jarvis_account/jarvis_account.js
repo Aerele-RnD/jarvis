@@ -1,5 +1,10 @@
+/* global Razorpay */ // loaded at runtime by Razorpay's checkout.js, not a module import
 frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
-	const page = frappe.ui.make_app_page({ parent: wrapper, title: "My Jarvis Account", single_column: true });
+	const page = frappe.ui.make_app_page({
+		parent: wrapper,
+		title: "My Jarvis Account",
+		single_column: true,
+	});
 	if (!window.Razorpay) {
 		frappe.require("https://checkout.razorpay.com/v1/checkout.js");
 	}
@@ -13,21 +18,33 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// LLM provider defaults - mirror the onboarding wizard's PROVIDER_DEFAULTS
 	// so the section behaves identically there and here.
 	const PROVIDER_DEFAULTS = {
-		"Anthropic":          { model: "claude-sonnet-4-6",                 baseUrl: "https://api.anthropic.com" },
-		"OpenAI":             { model: "gpt-4o",                            baseUrl: "https://api.openai.com/v1" },
-		"Google Gemini":      { model: "gemini-2.5-pro",                    baseUrl: "https://generativelanguage.googleapis.com" },
-		"Mistral":            { model: "mistral-large-latest",              baseUrl: "https://api.mistral.ai/v1" },
-		"Groq":               { model: "llama-3.3-70b-versatile",           baseUrl: "https://api.groq.com/openai/v1" },
-		"Together AI":        { model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", baseUrl: "https://api.together.xyz/v1" },
-		"DeepSeek":           { model: "deepseek-chat",                     baseUrl: "https://api.deepseek.com" },
-		"Moonshot (Kimi)":    { model: "kimi-k2.6",                         baseUrl: "https://api.moonshot.ai/v1" },
-		"xAI Grok":           { model: "grok-4.5",                          baseUrl: "https://api.x.ai/v1" },
-		"GLM / Z.ai":         { model: "glm-4.6",                           baseUrl: "https://api.z.ai/api/paas/v4" },
-		"GLM / Z.ai (Coding Plan)": { model: "glm-4.6",                     baseUrl: "https://api.z.ai/api/coding/paas/v4" },
-		"OpenRouter":         { model: "anthropic/claude-sonnet-4-6",       baseUrl: "https://openrouter.ai/api/v1" },
-		"Ollama (local)":     { model: "llama3",                            baseUrl: "http://host.docker.internal:11434/v1" },
-		"vLLM (local)":       { model: "",                                  baseUrl: "" },
-		"OpenAI-Compatible":  { model: "",                                  baseUrl: "" },
+		Anthropic: { model: "claude-sonnet-4-6", baseUrl: "https://api.anthropic.com" },
+		OpenAI: { model: "gpt-4o", baseUrl: "https://api.openai.com/v1" },
+		"Google Gemini": {
+			model: "gemini-2.5-pro",
+			baseUrl: "https://generativelanguage.googleapis.com",
+		},
+		Mistral: { model: "mistral-large-latest", baseUrl: "https://api.mistral.ai/v1" },
+		Groq: { model: "llama-3.3-70b-versatile", baseUrl: "https://api.groq.com/openai/v1" },
+		"Together AI": {
+			model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+			baseUrl: "https://api.together.xyz/v1",
+		},
+		DeepSeek: { model: "deepseek-chat", baseUrl: "https://api.deepseek.com" },
+		"Moonshot (Kimi)": { model: "kimi-k2.6", baseUrl: "https://api.moonshot.ai/v1" },
+		"xAI Grok": { model: "grok-4.5", baseUrl: "https://api.x.ai/v1" },
+		"GLM / Z.ai": { model: "glm-4.6", baseUrl: "https://api.z.ai/api/paas/v4" },
+		"GLM / Z.ai (Coding Plan)": {
+			model: "glm-4.6",
+			baseUrl: "https://api.z.ai/api/coding/paas/v4",
+		},
+		OpenRouter: {
+			model: "anthropic/claude-sonnet-4-6",
+			baseUrl: "https://openrouter.ai/api/v1",
+		},
+		"Ollama (local)": { model: "llama3", baseUrl: "http://host.docker.internal:11434/v1" },
+		"vLLM (local)": { model: "", baseUrl: "" },
+		"OpenAI-Compatible": { model: "", baseUrl: "" },
 	};
 	const PROVIDERS = Object.keys(PROVIDER_DEFAULTS);
 	// Stored pools may carry the provider *id* (e.g. "openai_compat" from presets /
@@ -35,15 +52,26 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// Map id -> label so the <select> selects the right option on load; a value that
 	// is already a label passes through unchanged.
 	const PROVIDER_LABEL_BY_ID = {
-		anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", mistral: "Mistral",
-		groq: "Groq", together: "Together AI", deepseek: "DeepSeek", moonshot: "Moonshot (Kimi)",
-		xai: "xAI Grok", zai: "GLM / Z.ai", zai_coding: "GLM / Z.ai (Coding Plan)",
-		openrouter: "OpenRouter", ollama: "Ollama (local)", vllm: "vLLM (local)", openai_compat: "OpenAI-Compatible",
+		anthropic: "Anthropic",
+		openai: "OpenAI",
+		google: "Google Gemini",
+		mistral: "Mistral",
+		groq: "Groq",
+		together: "Together AI",
+		deepseek: "DeepSeek",
+		moonshot: "Moonshot (Kimi)",
+		xai: "xAI Grok",
+		zai: "GLM / Z.ai",
+		zai_coding: "GLM / Z.ai (Coding Plan)",
+		openrouter: "OpenRouter",
+		ollama: "Ollama (local)",
+		vllm: "vLLM (local)",
+		openai_compat: "OpenAI-Compatible",
 	};
 	function providerLabel(v) {
 		if (!v) return v;
-		if (PROVIDER_DEFAULTS[v]) return v;   // already a label
-		return PROVIDER_LABEL_BY_ID[v] || v;  // map id -> label (or keep unknown as-is)
+		if (PROVIDER_DEFAULTS[v]) return v; // already a label
+		return PROVIDER_LABEL_BY_ID[v] || v; // map id -> label (or keep unknown as-is)
 	}
 
 	// ---- model suggestions (Custom-mode <datalist>) -----------------------
@@ -55,19 +83,24 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	//   3) the provider's default model. Deduped, catalog-first.
 	// Static fallback keyed by the provider dropdown LABEL.
 	const STATIC_MODEL_SUGGESTIONS = {
-		"Anthropic":         ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
-		"OpenAI":            ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4o"],
-		"Google Gemini":     ["gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
-		"Mistral":           ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
-		"Groq":              ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"],
-		"Together AI":       ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
-		"DeepSeek":          ["deepseek-chat"],
-		"Moonshot (Kimi)":   ["kimi-k2.6"],
-		"xAI Grok":          ["grok-4.5", "grok-4.3", "grok-build-0.1"],
-		"GLM / Z.ai":        ["glm-4.6", "glm-4.7"],
+		Anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+		OpenAI: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4o"],
+		"Google Gemini": ["gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+		Mistral: ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
+		Groq: [
+			"llama-3.3-70b-versatile",
+			"openai/gpt-oss-120b",
+			"openai/gpt-oss-20b",
+			"llama-3.1-8b-instant",
+		],
+		"Together AI": ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+		DeepSeek: ["deepseek-chat"],
+		"Moonshot (Kimi)": ["kimi-k2.6"],
+		"xAI Grok": ["grok-4.5", "grok-4.3", "grok-build-0.1"],
+		"GLM / Z.ai": ["glm-4.6", "glm-4.7"],
 		"GLM / Z.ai (Coding Plan)": ["glm-4.6", "glm-4.7"],
-		"OpenRouter":        ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
-		"Ollama (local)":    ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
+		OpenRouter: ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+		"Ollama (local)": ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
 		"OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],
 		// vLLM (local): no useful default → plain free-text input.
 	};
@@ -87,10 +120,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	function modelSuggestionsForProvider(provider) {
 		const label = providerLabel(provider || "");
 		const out = [];
-		const push = (id) => { if (id && out.indexOf(id) === -1) out.push(id); };
-		(presetCatalog || []).forEach((e) => (e.models || []).forEach((m) => {
-			if (catalogVendorLabel(m.provider) === label) push(m.model);
-		}));
+		const push = (id) => {
+			if (id && out.indexOf(id) === -1) out.push(id);
+		};
+		(presetCatalog || []).forEach((e) =>
+			(e.models || []).forEach((m) => {
+				if (catalogVendorLabel(m.provider) === label) push(m.model);
+			})
+		);
 		(STATIC_MODEL_SUGGESTIONS[label] || []).forEach(push);
 		push((PROVIDER_DEFAULTS[label] || {}).model);
 		return out;
@@ -102,7 +139,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// A <datalist> of model-id suggestions. Empty list → the bound input just
 	// behaves as a plain free-text field.
 	function renderModelDatalist(id, suggestions) {
-		const opts = (suggestions || []).map((m) => `<option value="${esc(m)}"></option>`).join("");
+		const opts = (suggestions || [])
+			.map((m) => `<option value="${esc(m)}"></option>`)
+			.join("");
 		return `<datalist id="${id}">${opts}</datalist>`;
 	}
 
@@ -127,7 +166,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const $body = $root.find(".ja-body");
 
 	// ---- state -------------------------------------------------------------
-	let account = null;       // payload from get_account
+	let account = null; // payload from get_account
 	let settingsLocal = null; // local Jarvis Settings LLM fields snapshot
 
 	// Subscription providers + models (chat-subscription OAuth path).
@@ -168,16 +207,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		// before the canonical Python set has been confirmed.
 		subModel: "",
 		subNonce: null,
-		subAuthorizeUrl: null,   // shown to the customer in Screen 2
+		subAuthorizeUrl: null, // shown to the customer in Screen 2
 		subExpiresAt: null,
 		// LLM SETUP mode (mirrors the onboarding wizard): "quick" | "preset" |
 		// "custom". Seeded from the saved config in loadInitial so the editor
 		// opens on the tab that matches what's stored.
 		llmMode: "quick",
-		selectedPreset: null,   // Preset tab: chosen catalog key
-		savedPreset: "",        // preset key currently persisted (for the hint)
-		presetKeys: {},         // Preset tab: vendor -> api_key (progressive)
-		customRows: [],         // Custom tab: ordered failover rows (see blankCustomRow)
+		selectedPreset: null, // Preset tab: chosen catalog key
+		savedPreset: "", // preset key currently persisted (for the hint)
+		presetKeys: {}, // Preset tab: vendor -> api_key (progressive)
+		customRows: [], // Custom tab: ordered failover rows (see blankCustomRow)
 	};
 
 	// ---- helpers -----------------------------------------------------------
@@ -215,7 +254,8 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function loadInitial() {
 		$body.html(`<div class="ja-loading">Loading your account…</div>`);
-		frappe.call({ method: "jarvis.selfhost.get_status" })
+		frappe
+			.call({ method: "jarvis.selfhost.get_status" })
 			.then((st) => {
 				// Self-hosted benches have no admin signup, so is_onboarded
 				// is false for them - render the self-host connection view
@@ -236,7 +276,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				return frappe.call({ method: "jarvis.account.is_onboarded" });
 			})
 			.then((r) => {
-				if (r === null) return;  // self-hosted view already rendered
+				if (r === null) return; // self-hosted view already rendered
 				if (!r.message || !r.message.onboarded) {
 					// Not onboarded - wizard owns this customer.
 					window.location.assign("/app/jarvis-onboarding");
@@ -249,8 +289,12 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					// Preset catalog + effective pool config for the full 3-mode
 					// LLM editor (mirrors the onboarding wizard). Both fall back
 					// gracefully so a failure never blanks the account page.
-					frappe.call({ method: "jarvis.onboarding.get_preset_catalog" }).catch(() => ({ message: [] })),
-					frappe.call({ method: "jarvis.onboarding.get_llm_config" }).catch(() => ({ message: {} })),
+					frappe
+						.call({ method: "jarvis.onboarding.get_preset_catalog" })
+						.catch(() => ({ message: [] })),
+					frappe
+						.call({ method: "jarvis.onboarding.get_llm_config" })
+						.catch(() => ({ message: {} })),
 				]).then(([acc, settings, chatUi, catalog, llmCfg]) => {
 					account = (acc && acc.message) || {};
 					settingsLocal = settings || {};
@@ -261,10 +305,12 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					// First-paint seed: pick the canonical default for the
 					// initial subProvider so render() doesn't show an empty
 					// model dropdown before the user has touched anything.
-					ui.subModel = defaultModels[ui.subProvider]
-						|| (subscriptionModels[ui.subProvider] || [])[0]
-						|| "";
-					ui.aiTab = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
+					ui.subModel =
+						defaultModels[ui.subProvider] ||
+						(subscriptionModels[ui.subProvider] || [])[0] ||
+						"";
+					ui.aiTab =
+						settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
 					// In oauth mode, seed sub-state from the saved provider/model so
 					// a Re-authorize click uses THIS customer's provider (e.g.
 					// "Google Gemini") instead of the hardcoded default that the
@@ -278,7 +324,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					// catches this too; this is just so the dropdown + the
 					// "Sign in with ..." button label stay consistent.
 					if (settingsLocal.llm_auth_mode === "oauth") {
-						if (settingsLocal.llm_provider && subscriptionModels[settingsLocal.llm_provider]) {
+						if (
+							settingsLocal.llm_provider &&
+							subscriptionModels[settingsLocal.llm_provider]
+						) {
 							ui.subProvider = settingsLocal.llm_provider;
 						}
 						const valid = subscriptionModels[ui.subProvider] || [];
@@ -303,8 +352,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// ---- self-hosted connection view --------------------------------------
 	function renderShChecks($container, result) {
 		const checks = result.checks || [];
-		const rows = checks.map((c) =>
-			`<div>${c.ok ? "✅" : "❌"} <b>${esc(c.check)}</b> — ${esc(c.detail || "")}</div>`).join("");
+		const rows = checks
+			.map(
+				(c) =>
+					`<div>${c.ok ? "✅" : "❌"} <b>${esc(c.check)}</b> — ${esc(
+						c.detail || ""
+					)}</div>`
+			)
+			.join("");
 		const overall = result.ok
 			? `<div style="color:var(--green-700,#15803d);font-weight:600">All required checks passed.</div>`
 			: `<div style="color:var(--red-600,#b91c1c);font-weight:600">Some checks failed.</div>`;
@@ -312,7 +367,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function renderSelfHostAccount(st) {
-		const row = (k, v) => `<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border-color);font-size:13px"><span style="color:var(--text-muted)">${k}</span><b>${esc(v || "-")}</b></div>`;
+		const row = (k, v) =>
+			`<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border-color);font-size:13px"><span style="color:var(--text-muted)">${k}</span><b>${esc(
+				v || "-"
+			)}</b></div>`;
 		$body.html(`
 			<div class="ja-card">
 			  <div class="ja-eyebrow">Connection</div>
@@ -334,19 +392,31 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const $err = $body.find("#ja-sh-err");
 		const $res = $body.find("#ja-sh-results");
 		$body.find("#ja-sh-test").on("click", () => {
-			$err.text(""); $res.html(`<div style="color:var(--text-muted)">Testing…</div>`);
-			frappe.call({ method: "jarvis.selfhost.test_connection", args: { base_url: st.agent_url, token: "", deep: 0 } })
+			$err.text("");
+			$res.html(`<div style="color:var(--text-muted)">Testing…</div>`);
+			frappe
+				.call({
+					method: "jarvis.selfhost.test_connection",
+					args: { base_url: st.agent_url, token: "", deep: 0 },
+				})
 				.then((r) => renderShChecks($res, r.message || {}))
 				.catch((e) => $err.text(e.message || "Test failed."));
 		});
 		$body.find("#ja-sh-recfg").on("click", () => openSelfHostReconfigure(st));
 		$body.find("#ja-sh-managed").on("click", () => {
 			frappe.confirm(
-				__("Switch back to Aerele-managed openclaw? This re-syncs the managed connection."),
-				() => frappe.call({ method: "jarvis.selfhost.switch_to_managed" }).then(() => {
-					frappe.show_alert({ message: __("Switched to managed."), indicator: "green" });
-					loadInitial();
-				}));
+				__(
+					"Switch back to Aerele-managed openclaw? This re-syncs the managed connection."
+				),
+				() =>
+					frappe.call({ method: "jarvis.selfhost.switch_to_managed" }).then(() => {
+						frappe.show_alert({
+							message: __("Switched to managed."),
+							indicator: "green",
+						});
+						loadInitial();
+					})
+			);
 		});
 	}
 
@@ -354,28 +424,69 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const d = new frappe.ui.Dialog({
 			title: __("Reconfigure self-hosted openclaw"),
 			fields: [
-				{ fieldtype: "Data", fieldname: "base_url", label: __("openclaw URL"), reqd: 1, default: st.agent_url || "" },
+				{
+					fieldtype: "Data",
+					fieldname: "base_url",
+					label: __("openclaw URL"),
+					reqd: 1,
+					default: st.agent_url || "",
+				},
 				{ fieldtype: "Password", fieldname: "token", label: __("Gateway token"), reqd: 1 },
-				{ fieldtype: "Check", fieldname: "stream", label: __("Stream responses token-by-token"), default: st.stream === false ? 0 : 1, description: __("Off = full reply at once; use if a proxy buffers SSE.") },
+				{
+					fieldtype: "Check",
+					fieldname: "stream",
+					label: __("Stream responses token-by-token"),
+					default: st.stream === false ? 0 : 1,
+					description: __("Off = full reply at once; use if a proxy buffers SSE."),
+				},
 				{ fieldtype: "Button", fieldname: "test_btn", label: __("Test connection") },
 				{ fieldtype: "HTML", fieldname: "results" },
 			],
 			primary_action_label: __("Save"),
 			primary_action(v) {
 				d.disable_primary_action();
-				frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: v.base_url, token: v.token, deep: 0, stream: v.stream ? 1 : 0 } })
+				frappe
+					.call({
+						method: "jarvis.selfhost.save_self_hosted",
+						args: {
+							base_url: v.base_url,
+							token: v.token,
+							deep: 0,
+							stream: v.stream ? 1 : 0,
+						},
+					})
 					.then((r) => {
 						const m = r.message || {};
-						if (m.ok) { d.hide(); frappe.show_alert({ message: m.warning ? __(m.warning) : __("Saved."), indicator: m.warning ? "orange" : "green" }, m.warning ? 15 : undefined); loadInitial(); }
-						else { renderShChecks(d.fields_dict.results.$wrapper, m.result || {}); d.enable_primary_action(); }
-					}).catch(() => d.enable_primary_action());
+						if (m.ok) {
+							d.hide();
+							frappe.show_alert(
+								{
+									message: m.warning ? __(m.warning) : __("Saved."),
+									indicator: m.warning ? "orange" : "green",
+								},
+								m.warning ? 15 : undefined
+							);
+							loadInitial();
+						} else {
+							renderShChecks(d.fields_dict.results.$wrapper, m.result || {});
+							d.enable_primary_action();
+						}
+					})
+					.catch(() => d.enable_primary_action());
 			},
 		});
 		d.fields_dict.test_btn.$input.on("click", () => {
 			const v = d.get_values(true);
-			if (!v.base_url) { frappe.msgprint(__("Enter the openclaw URL.")); return; }
+			if (!v.base_url) {
+				frappe.msgprint(__("Enter the openclaw URL."));
+				return;
+			}
 			d.fields_dict.results.$wrapper.html(`<div class="text-muted">${__("Testing…")}</div>`);
-			frappe.call({ method: "jarvis.selfhost.test_connection", args: { base_url: v.base_url, token: v.token || "", deep: 0 } })
+			frappe
+				.call({
+					method: "jarvis.selfhost.test_connection",
+					args: { base_url: v.base_url, token: v.token || "", deep: 0 },
+				})
 				.then((r) => renderShChecks(d.fields_dict.results.$wrapper, r.message || {}));
 		});
 		d.show();
@@ -414,9 +525,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			<label class="ja-tabs-label">Setup</label>
 			<div class="ja-tabs ja-tabs-3 ja-setup-tabs" role="tablist" data-active="${ui.llmMode}">
 				<span class="ja-tabs-thumb" aria-hidden="true"></span>
-				${["quick", "preset", "custom"].map((m) =>
-					`<button type="button" class="ja-tab ${ui.llmMode === m ? "ja-tab-active" : ""}" data-llmmode="${m}" role="tab" aria-selected="${ui.llmMode === m}"><span>${m[0].toUpperCase() + m.slice(1)}</span></button>`
-				).join("")}
+				${["quick", "preset", "custom"]
+					.map(
+						(m) =>
+							`<button type="button" class="ja-tab ${
+								ui.llmMode === m ? "ja-tab-active" : ""
+							}" data-llmmode="${m}" role="tab" aria-selected="${
+								ui.llmMode === m
+							}"><span>${m[0].toUpperCase() + m.slice(1)}</span></button>`
+					)
+					.join("")}
 			</div>`;
 		return `<div class="ja-card" id="ja-ai-card">
 			<div class="ja-eyebrow">AI provider</div>
@@ -438,12 +556,18 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		if (ui.llmMode === "preset") {
 			mode = ui.selectedPreset ? "proxy" : "direct";
 		} else if (ui.llmMode === "custom") {
-			const valid = (ui.customRows || []).filter((r) => r && (
-				r.credType === "subscription"
-					? (r.model || "").trim()
-					: ((r.provider || "").trim() && (r.model || "").trim())
-			));
-			mode = P.deriveMode ? P.deriveMode(valid, null) : (valid.length > 1 ? "proxy" : "direct");
+			const valid = (ui.customRows || []).filter(
+				(r) =>
+					r &&
+					(r.credType === "subscription"
+						? (r.model || "").trim()
+						: (r.provider || "").trim() && (r.model || "").trim())
+			);
+			mode = P.deriveMode
+				? P.deriveMode(valid, null)
+				: valid.length > 1
+				? "proxy"
+				: "direct";
 		}
 		return mode === "proxy"
 			? `<span class="ja-pill ja-pill-ok">🔀 Proxy (failover)</span>`
@@ -474,9 +598,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					${ICON_CHAT}<span>Chat subscription</span>
 				</button>
 			</div>`;
-		const body = ui.aiTab === "api_key"
-			? renderApiKeyPanel(editable, inApiKeyMode)
-			: renderSubscriptionPanel(editable, !inApiKeyMode);
+		const body =
+			ui.aiTab === "api_key"
+				? renderApiKeyPanel(editable, inApiKeyMode)
+				: renderSubscriptionPanel(editable, !inApiKeyMode);
 		return `
 			<p class="ja-sub" style="margin-bottom:14px">A single model, sent directly to the provider. Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</p>
 			${tabs}
@@ -486,10 +611,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	function renderApiKeyPanel(editable, isActiveMode) {
 		const provider = settingsLocal.llm_provider || "Anthropic";
 		const model = settingsLocal.llm_model || (PROVIDER_DEFAULTS[provider] || {}).model || "";
-		const base = settingsLocal.llm_base_url || (PROVIDER_DEFAULTS[provider] || {}).baseUrl || "";
+		const base =
+			settingsLocal.llm_base_url || (PROVIDER_DEFAULTS[provider] || {}).baseUrl || "";
 		const sync = settingsLocal.last_sync_status || "";
 		const dis = editable ? "" : "disabled";
-		const sel = PROVIDERS.map((p) => `<option value="${esc(p)}" ${p === provider ? "selected" : ""}>${esc(p)}</option>`).join("");
+		const sel = PROVIDERS.map(
+			(p) =>
+				`<option value="${esc(p)}" ${p === provider ? "selected" : ""}>${esc(p)}</option>`
+		).join("");
 		// Sprint-4 punch-list "frappe.confirm consent for destructive
 		// subscription→api-key switch bypassable via Save": when the
 		// customer is on the api_key tab while still in oauth mode, show
@@ -508,7 +637,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		// destructively. Keeps the primary variant for the normal case
 		// (already in api_key mode and just updating the key / model).
 		const saveBtnClass = !isActiveMode ? "ja-btn-danger" : "ja-btn-primary";
-		const saveBtnLabel = !isActiveMode ? "Disconnect &amp; switch to API key" : "Save credentials";
+		const saveBtnLabel = !isActiveMode
+			? "Disconnect &amp; switch to API key"
+			: "Save credentials";
 		return `
 			<p class="ja-sub">Your API key is sent directly to the provider - Jarvis only relays prompts.</p>
 			${notice}
@@ -526,7 +657,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				<div class="ja-field">
 					<label>API Key</label>
 					<div class="ja-pwd">
-						<input class="ja-input" id="ja-key" type="password" placeholder="${settingsLocal.llm_api_key ? "•••••••• (unchanged)" : "Enter your API key"}" ${dis}>
+						<input class="ja-input" id="ja-key" type="password" placeholder="${
+							settingsLocal.llm_api_key
+								? "•••••••• (unchanged)"
+								: "Enter your API key"
+						}" ${dis}>
 						<button type="button" class="ja-pwd-toggle" id="ja-key-eye" aria-label="Show key" ${dis}>
 							<svg class="ja-eye-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
 							<svg class="ja-eye-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-10-7-10-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
@@ -553,25 +688,39 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		if (ui.subAuthorizeUrl) {
 			const minsLeft = Math.max(0, Math.floor((ui.subExpiresAt - Date.now()) / 60000));
 			return `
-				<p class="ja-sub"><strong>Step 1</strong> - Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
+				<p class="ja-sub"><strong>Step 1</strong> - Sign in with your ${esc(
+					ui.subProvider
+				)} account in a new tab.</p>
 				<div class="ja-actions" style="margin-bottom:10px">
 					<button class="ja-btn ja-btn-primary" id="ja-sub-open-url">Open Sign-in URL →</button>
 				</div>
 				<div class="ja-url-row" style="margin-bottom:18px">
-					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
+					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(
+				ui.subAuthorizeUrl
+			)}</code>
 					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small" id="ja-sub-copy-url" title="Copy URL">Copy</button>
 				</div>
-				${isCodeOnlyPaste(ui.subProvider)
-					? `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, ${esc(ui.subProvider)} shows you an <strong>authorization code</strong>. Copy that code and paste it here:</p>`
-					: `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>`}
+				${
+					isCodeOnlyPaste(ui.subProvider)
+						? `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, ${esc(
+								ui.subProvider
+						  )} shows you an <strong>authorization code</strong>. Copy that code and paste it here:</p>`
+						: `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>`
+				}
 				<div class="ja-field">
-					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="${isCodeOnlyPaste(ui.subProvider) ? 'Paste the code shown after you approve' : 'Paste the URL from the error page here'}"></textarea>
+					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="${
+						isCodeOnlyPaste(ui.subProvider)
+							? "Paste the code shown after you approve"
+							: "Paste the URL from the error page here"
+					}"></textarea>
 				</div>
 				<div class="ja-actions">
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
 					<button class="ja-btn ja-btn-primary" id="ja-sub-submit">Submit →</button>
 				</div>
-				<div class="ja-hint" style="margin-top:14px;font-size:12px;color:var(--text-muted)">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
+				<div class="ja-hint" style="margin-top:14px;font-size:12px;color:var(--text-muted)">Link valid for ~${minsLeft} minute${
+				minsLeft === 1 ? "" : "s"
+			}.</div>
 				<div class="ja-err" id="ja-sub-err"></div>`;
 		}
 		// Screen 3 - already connected (oauth mode, no in-flight Re-authorize).
@@ -599,12 +748,22 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				</div>`;
 		}
 		// Screen 1 - provider + model picker (not yet started)
-		const provOptions = Object.keys(subscriptionModels).map(
-			(p) => `<option value="${esc(p)}" ${p === ui.subProvider ? "selected" : ""}>${esc(p)}</option>`
-		).join("");
-		const modelOptions = (subscriptionModels[ui.subProvider] || []).map(
-			(m) => `<option value="${esc(m)}" ${m === ui.subModel ? "selected" : ""}>${esc(m)}</option>`
-		).join("");
+		const provOptions = Object.keys(subscriptionModels)
+			.map(
+				(p) =>
+					`<option value="${esc(p)}" ${p === ui.subProvider ? "selected" : ""}>${esc(
+						p
+					)}</option>`
+			)
+			.join("");
+		const modelOptions = (subscriptionModels[ui.subProvider] || [])
+			.map(
+				(m) =>
+					`<option value="${esc(m)}" ${m === ui.subModel ? "selected" : ""}>${esc(
+						m
+					)}</option>`
+			)
+			.join("");
 		const dis = editable ? "" : "disabled";
 		return `
 			<p class="ja-sub">Sign in with your existing ChatGPT Plus / Pro or Gemini Advanced account - no developer key needed.</p>
@@ -619,7 +778,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				</div>
 			</div>
 			<div class="ja-actions">
-				<button class="ja-btn ja-btn-primary" id="ja-sub-signin" ${dis}>Sign in with ${esc(ui.subProvider)} →</button>
+				<button class="ja-btn ja-btn-primary" id="ja-sub-signin" ${dis}>Sign in with ${esc(
+			ui.subProvider
+		)} →</button>
 			</div>
 			<div class="ja-err" id="ja-sub-err"></div>`;
 	}
@@ -698,9 +859,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			$(this).toggleClass("ja-tab-active", isActive).attr("aria-selected", isActive);
 		});
 		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
-		const newBody = targetTab === "api_key"
-			? renderApiKeyPanel(editable, inApiKeyMode)
-			: renderSubscriptionPanel(editable, !inApiKeyMode);
+		const newBody =
+			targetTab === "api_key"
+				? renderApiKeyPanel(editable, inApiKeyMode)
+				: renderSubscriptionPanel(editable, !inApiKeyMode);
 		const $panel = $body.find(".ja-tab-body");
 		$panel.addClass("ja-tab-body-swap");
 		setTimeout(() => {
@@ -725,21 +887,27 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		if (isActiveMode) {
 			$body.find("#ja-sub-disconnect").on("click", () => {
 				frappe.confirm(
-					__("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect."),
+					__(
+						"Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect."
+					),
 					() => {
 						frappe.call({ method: "jarvis.oauth.api.disconnect" }).then((r) => {
 							const m = r.message || {};
 							if (m.ok) {
-								frappe.show_alert({ message: __("Disconnected."), indicator: "orange" });
+								frappe.show_alert({
+									message: __("Disconnected."),
+									indicator: "orange",
+								});
 								loadInitial();
 							} else {
 								frappe.show_alert({
-									message: (m.error && m.error.message) || __("Disconnect failed."),
+									message:
+										(m.error && m.error.message) || __("Disconnect failed."),
 									indicator: "red",
 								});
 							}
 						});
-					},
+					}
 				);
 			});
 			$body.find("#ja-sub-reauth").on("click", () => {
@@ -772,14 +940,19 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$body.find("#ja-sub-copy-url").on("click", function () {
 			if (!ui.subAuthorizeUrl) return;
 			const $btn = $(this);
-			copyTextWithFallback(ui.subAuthorizeUrl).then(() => {
-				const orig = $btn.text();
-				$btn.text("Copied ✓");
-				setTimeout(() => $btn.text(orig), 1400);
-				frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
-			}).catch(() => {
-				frappe.show_alert({ indicator: "red", message: __("Could not copy - select the URL above and copy manually") });
-			});
+			copyTextWithFallback(ui.subAuthorizeUrl)
+				.then(() => {
+					const orig = $btn.text();
+					$btn.text("Copied ✓");
+					setTimeout(() => $btn.text(orig), 1400);
+					frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
+				})
+				.catch(() => {
+					frappe.show_alert({
+						indicator: "red",
+						message: __("Could not copy - select the URL above and copy manually"),
+					});
+				});
 		});
 		$body.find("#ja-sub-cancel").on("click", () => {
 			cancelSubscriptionFlow();
@@ -797,24 +970,27 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const $err = $body.find("#ja-sub-err");
 		$err.text("");
 		setBusy("#ja-sub-signin", true);
-		frappe.call({
-			method: "jarvis.oauth.api.begin_paste_signin",
-			args: { provider: ui.subProvider, model: ui.subModel },
-		}).then((r) => {
-			setBusy("#ja-sub-signin", false);
-			const m = r.message || {};
-			if (!m.ok) {
-				surfaceErr($err, (m.error && m.error.message) || "Couldn't start sign-in.");
-				return;
-			}
-			ui.subNonce = m.data.nonce;
-			ui.subAuthorizeUrl = m.data.authorize_url;
-			ui.subExpiresAt = Date.now() + m.data.expires_in * 1000;
-			render();
-		}).catch((e) => {
-			setBusy("#ja-sub-signin", false);
-			surfaceErr($err, e.message || "Couldn't reach Jarvis.");
-		});
+		frappe
+			.call({
+				method: "jarvis.oauth.api.begin_paste_signin",
+				args: { provider: ui.subProvider, model: ui.subModel },
+			})
+			.then((r) => {
+				setBusy("#ja-sub-signin", false);
+				const m = r.message || {};
+				if (!m.ok) {
+					surfaceErr($err, (m.error && m.error.message) || "Couldn't start sign-in.");
+					return;
+				}
+				ui.subNonce = m.data.nonce;
+				ui.subAuthorizeUrl = m.data.authorize_url;
+				ui.subExpiresAt = Date.now() + m.data.expires_in * 1000;
+				render();
+			})
+			.catch((e) => {
+				setBusy("#ja-sub-signin", false);
+				surfaceErr($err, e.message || "Couldn't reach Jarvis.");
+			});
 	}
 
 	function surfaceErr($err, message) {
@@ -830,34 +1006,45 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$err.text("");
 		const pasted = ($body.find("#ja-sub-pasted-url").val() || "").trim();
 		if (!pasted) {
-			$err.text(isCodeOnlyPaste(ui.subProvider)
-				? "Paste the code you were shown first."
-				: "Paste the URL from your browser's address bar first.");
+			$err.text(
+				isCodeOnlyPaste(ui.subProvider)
+					? "Paste the code you were shown first."
+					: "Paste the URL from your browser's address bar first."
+			);
 			return;
 		}
 		setBusy("#ja-sub-submit", true);
-		frappe.call({
-			method: "jarvis.oauth.api.complete_paste_signin",
-			args: { nonce: ui.subNonce, redirected_url: pasted },
-		}).then((r) => {
-			setBusy("#ja-sub-submit", false);
-			const m = r.message || {};
-			if (!m.ok) {
-				const errCode = (m.error && m.error.code) || "";
-				const errMsg = (m.error && m.error.message) || "Sign-in failed.";
-				$err.text(`${errCode}: ${errMsg}`);
-				if (errCode === "expired" || errCode === "unknown_nonce") {
-					setTimeout(() => { cancelSubscriptionFlow(); render(); }, 2500);
+		frappe
+			.call({
+				method: "jarvis.oauth.api.complete_paste_signin",
+				args: { nonce: ui.subNonce, redirected_url: pasted },
+			})
+			.then((r) => {
+				setBusy("#ja-sub-submit", false);
+				const m = r.message || {};
+				if (!m.ok) {
+					const errCode = (m.error && m.error.code) || "";
+					const errMsg = (m.error && m.error.message) || "Sign-in failed.";
+					$err.text(`${errCode}: ${errMsg}`);
+					if (errCode === "expired" || errCode === "unknown_nonce") {
+						setTimeout(() => {
+							cancelSubscriptionFlow();
+							render();
+						}, 2500);
+					}
+					return;
 				}
-				return;
-			}
-			frappe.show_alert({ message: "Connected to chat subscription.", indicator: "green" });
-			cancelSubscriptionFlow();
-			loadInitial();
-		}).catch((e) => {
-			setBusy("#ja-sub-submit", false);
-			$err.text(e.message || "Couldn't reach Jarvis.");
-		});
+				frappe.show_alert({
+					message: "Connected to chat subscription.",
+					indicator: "green",
+				});
+				cancelSubscriptionFlow();
+				loadInitial();
+			})
+			.catch((e) => {
+				setBusy("#ja-sub-submit", false);
+				$err.text(e.message || "Couldn't reach Jarvis.");
+			});
 	}
 
 	function cancelSubscriptionFlow() {
@@ -877,14 +1064,28 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// Transient per-row state for the inline paste-back connect flow. Never
 	// emitted on save.
 	function blankConnect() {
-		return { open: false, loading: false, error: "", nonce: "", authorizeUrl: "", pastedUrl: "" };
+		return {
+			open: false,
+			loading: false,
+			error: "",
+			nonce: "",
+			authorizeUrl: "",
+			pastedUrl: "",
+		};
 	}
 
 	function blankCustomRow() {
 		return {
-			credType: "api_key", provider: PROVIDERS[0] || "Anthropic", model: "",
-			apiKey: "", baseUrl: "", has_key: false,
-			rotation: "sticky", upstream: "openai", accounts: [], connect: blankConnect(),
+			credType: "api_key",
+			provider: PROVIDERS[0] || "Anthropic",
+			model: "",
+			apiKey: "",
+			baseUrl: "",
+			has_key: false,
+			rotation: "sticky",
+			upstream: "openai",
+			accounts: [],
+			connect: blankConnect(),
 		};
 	}
 
@@ -903,31 +1104,47 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		ui.presetKeys = {};
 		ui.customRows = models.map((m) => {
 			if ((m.credential_type || "api_key") === "subscription") {
-				const accounts = ((m.accounts) || []).map((a) => ({
+				const accounts = (m.accounts || []).map((a) => ({
 					upstream: a.upstream || "openai",
 					account_ref: a.account_ref,
 					label: a.label || a.account_ref,
-					oauth_blob: "",   // never returned by the server; reconnect to change
+					oauth_blob: "", // never returned by the server; reconnect to change
 				}));
 				return {
-					credType: "subscription", provider: "", model: m.model || "",
-					apiKey: "", baseUrl: "", has_key: !!m.has_key,
+					credType: "subscription",
+					provider: "",
+					model: m.model || "",
+					apiKey: "",
+					baseUrl: "",
+					has_key: !!m.has_key,
 					rotation: m.rotation || "sticky",
 					upstream: (accounts[0] && accounts[0].upstream) || "openai",
-					accounts, connect: blankConnect(),
+					accounts,
+					connect: blankConnect(),
 				};
 			}
 			return {
-				credType: "api_key", provider: providerLabel(m.provider), model: m.model || "",
-				apiKey: "", baseUrl: m.base_url || "", has_key: !!m.has_key,
-				rotation: "sticky", upstream: "openai", accounts: [], connect: blankConnect(),
+				credType: "api_key",
+				provider: providerLabel(m.provider),
+				model: m.model || "",
+				apiKey: "",
+				baseUrl: m.base_url || "",
+				has_key: !!m.has_key,
+				rotation: "sticky",
+				upstream: "openai",
+				accounts: [],
+				connect: blankConnect(),
 			};
 		});
 		// Open on the tab that matches what's stored: a preset → Preset; a
 		// multi-model or subscription pool → Custom; otherwise the single-model
 		// Quick editor (legacy llm_* mirror).
 		if (preset) ui.llmMode = "preset";
-		else if (models.length >= 2 || models.some((m) => (m.credential_type || "api_key") === "subscription")) ui.llmMode = "custom";
+		else if (
+			models.length >= 2 ||
+			models.some((m) => (m.credential_type || "api_key") === "subscription")
+		)
+			ui.llmMode = "custom";
 		else ui.llmMode = "quick";
 	}
 
@@ -939,22 +1156,32 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		}
 		const dis = editable ? "" : "disabled";
 		const entry = presetCatalog.find((e) => e.key === ui.selectedPreset) || null;
-		const missing = entry && P.missingVendorKeys ? P.missingVendorKeys(entry, ui.presetKeys) : [];
-		const saveDisabled = (!editable || !entry || missing.length > 0) ? "disabled" : "";
+		const missing =
+			entry && P.missingVendorKeys ? P.missingVendorKeys(entry, ui.presetKeys) : [];
+		const saveDisabled = !editable || !entry || missing.length > 0 ? "disabled" : "";
 
-		const cardGroup = (kind) => presetCatalog
-			.filter((e) => e.kind === kind)
-			.map((e) => {
-				const sel = ui.selectedPreset === e.key ? "ja-preset-selected" : "";
-				const ladder = (e.models || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-					.map((m, i) => `<div class="ja-preset-model"><span class="ja-hint-inline">${i === 0 ? "Runs every turn" : "Backup " + i}</span> <b>${esc(m.model)}</b></div>`)
-					.join("");
-				return `<div class="ja-preset-card ${sel}" data-pkey="${esc(e.key)}">
+		const cardGroup = (kind) =>
+			presetCatalog
+				.filter((e) => e.kind === kind)
+				.map((e) => {
+					const sel = ui.selectedPreset === e.key ? "ja-preset-selected" : "";
+					const ladder = (e.models || [])
+						.slice()
+						.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+						.map(
+							(m, i) =>
+								`<div class="ja-preset-model"><span class="ja-hint-inline">${
+									i === 0 ? "Runs every turn" : "Backup " + i
+								}</span> <b>${esc(m.model)}</b></div>`
+						)
+						.join("");
+					return `<div class="ja-preset-card ${sel}" data-pkey="${esc(e.key)}">
 					<div class="ja-preset-label">${esc(e.label)}</div>
 					<div class="ja-hint-inline" style="display:block;margin-bottom:8px">${esc(e.blurb || "")}</div>
 					${ladder}
 				</div>`;
-			}).join("");
+				})
+				.join("");
 
 		const singleVendorCards = cardGroup("single_vendor");
 		const crossVendorCards = cardGroup("cross_vendor");
@@ -962,22 +1189,39 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		let keyFieldsHtml = "";
 		if (entry) {
 			const vendors = P.uniqueVendors ? P.uniqueVendors(entry) : [];
-			const storedNote = (entry.key === ui.savedPreset)
-				? `<div class="ja-hint-inline" style="display:block;margin-bottom:10px">This preset is active. Keys are stored — re-enter every vendor's key to re-save the ladder.</div>`
-				: "";
-			keyFieldsHtml = storedNote + vendors.map((v) => `
+			const storedNote =
+				entry.key === ui.savedPreset
+					? `<div class="ja-hint-inline" style="display:block;margin-bottom:10px">This preset is active. Keys are stored — re-enter every vendor's key to re-save the ladder.</div>`
+					: "";
+			keyFieldsHtml =
+				storedNote +
+				vendors
+					.map(
+						(v) => `
 				<div class="ja-field">
 					<label>${esc(v)} API key</label>
-					<input type="password" class="ja-input ja-preset-key" data-vendor="${esc(v)}" value="${esc(ui.presetKeys[v] || "")}" placeholder="sk-..." autocomplete="off" ${dis}>
-				</div>`).join("");
+					<input type="password" class="ja-input ja-preset-key" data-vendor="${esc(v)}" value="${esc(
+							ui.presetKeys[v] || ""
+						)}" placeholder="sk-..." autocomplete="off" ${dis}>
+				</div>`
+					)
+					.join("");
 		}
 
 		const sync = settingsLocal.last_sync_status || "";
 		return `
 			<p class="ja-sub" style="margin-bottom:14px">Pick a preset failover ladder. Keys are stored encrypted; only your agent container sees the plaintext.</p>
 			<div class="ja-preset-scroll">
-				${singleVendorCards ? `<p class="ja-tabs-label" style="margin-top:8px">Single-vendor ladders</p><div class="ja-preset-cards">${singleVendorCards}</div>` : ""}
-				${crossVendorCards ? `<p class="ja-tabs-label" style="margin-top:14px">Cross-vendor presets</p><div class="ja-preset-cards">${crossVendorCards}</div>` : ""}
+				${
+					singleVendorCards
+						? `<p class="ja-tabs-label" style="margin-top:8px">Single-vendor ladders</p><div class="ja-preset-cards">${singleVendorCards}</div>`
+						: ""
+				}
+				${
+					crossVendorCards
+						? `<p class="ja-tabs-label" style="margin-top:14px">Cross-vendor presets</p><div class="ja-preset-cards">${crossVendorCards}</div>`
+						: ""
+				}
 			</div>
 			${entry ? `<div style="margin-top:18px">${keyFieldsHtml}</div>` : ""}
 			<div class="ja-actions">
@@ -992,14 +1236,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const P = window.jarvis_onboarding_llm || {};
 		$body.find(".ja-preset-card").on("click", function () {
 			ui.selectedPreset = $(this).data("pkey");
-			ui.presetKeys = {};   // reset keys when switching presets
+			ui.presetKeys = {}; // reset keys when switching presets
 			rerenderAiCard(editable);
 		});
 		$body.find(".ja-preset-key").on("input", function () {
 			const vendor = $(this).data("vendor");
 			ui.presetKeys[vendor] = $(this).val();
 			const e2 = presetCatalog.find((e) => e.key === ui.selectedPreset);
-			const m2 = (e2 && P.missingVendorKeys) ? P.missingVendorKeys(e2, ui.presetKeys) : ["?"];
+			const m2 = e2 && P.missingVendorKeys ? P.missingVendorKeys(e2, ui.presetKeys) : ["?"];
 			$body.find("#ja-preset-save").prop("disabled", m2.length > 0);
 		});
 		$body.find("#ja-preset-save").on("click", () => savePreset(editable));
@@ -1011,18 +1255,32 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$err.text("");
 		const entry = presetCatalog.find((e) => e.key === ui.selectedPreset);
 		if (!entry || (P.missingVendorKeys && P.missingVendorKeys(entry, ui.presetKeys).length)) {
-			$err.text("Presets need every vendor's key. Enter all keys, or use Quick / Custom to finish with fewer keys.");
+			$err.text(
+				"Presets need every vendor's key. Enter all keys, or use Quick / Custom to finish with fewer keys."
+			);
 			return;
 		}
 		const models = P.presetToModels(entry, ui.presetKeys);
 		const check = P.validatePool(models, entry.key);
-		if (!check.ok) { $err.text(check.error); return; }
+		if (!check.ok) {
+			$err.text(check.error);
+			return;
+		}
 		setBusy("#ja-preset-save", true);
-		frappe.call({
-			method: "jarvis.onboarding.save_llm_pool",
-			args: { models: JSON.stringify(models), preset: entry.key, routing_mode: "failover" },
-		}).then((r) => afterPoolSave(r, "#ja-preset-save"))
-			.catch((e) => { setBusy("#ja-preset-save", false); $err.text(e.message || "Couldn't save preset."); });
+		frappe
+			.call({
+				method: "jarvis.onboarding.save_llm_pool",
+				args: {
+					models: JSON.stringify(models),
+					preset: entry.key,
+					routing_mode: "failover",
+				},
+			})
+			.then((r) => afterPoolSave(r, "#ja-preset-save"))
+			.catch((e) => {
+				setBusy("#ja-preset-save", false);
+				$err.text(e.message || "Couldn't save preset.");
+			});
 	}
 
 	// ---- CUSTOM mode ------------------------------------------------------
@@ -1033,7 +1291,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const sync = settingsLocal.last_sync_status || "";
 		return `
 			<p class="ja-sub" style="margin-bottom:14px">Build your own failover pool. The first model runs every turn; the rest are backups. Each row is an <b>API key</b> or a <b>Chat subscription</b> (multiple pooled accounts).</p>
-			<div id="ja-custom-rows">${rowsHtml || `<div class="ja-empty" style="padding:8px 0">No models yet — add one below.</div>`}</div>
+			<div id="ja-custom-rows">${
+				rowsHtml ||
+				`<div class="ja-empty" style="padding:8px 0">No models yet — add one below.</div>`
+			}</div>
 			<div class="ja-actions" style="justify-content:flex-start;margin-top:4px">
 				<button class="ja-btn ja-btn-ghost ja-btn-small" id="ja-custom-add" ${dis}>+ Add model</button>
 			</div>
@@ -1049,13 +1310,24 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const head = `
 			<div class="ja-crow-head">
 				<div class="ja-cred-toggle">
-					${["api_key", "subscription"].map((t) =>
-						`<button type="button" class="ja-cred-btn ${credType === t ? "ja-cred-active" : ""}" data-i="${i}" data-cred="${t}" ${dis}>${t === "api_key" ? "API key" : "Chat subscription"}</button>`
-					).join("")}
+					${["api_key", "subscription"]
+						.map(
+							(t) =>
+								`<button type="button" class="ja-cred-btn ${
+									credType === t ? "ja-cred-active" : ""
+								}" data-i="${i}" data-cred="${t}" ${dis}>${
+									t === "api_key" ? "API key" : "Chat subscription"
+								}</button>`
+						)
+						.join("")}
 				</div>
 				<div class="ja-crow-move">
-					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""} ${dis}>↑</button>
-					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-down" data-i="${i}" title="Move down" ${i === n - 1 ? "disabled" : ""} ${dis}>↓</button>
+					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-up" data-i="${i}" title="Move up" ${
+			i === 0 ? "disabled" : ""
+		} ${dis}>↑</button>
+					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-down" data-i="${i}" title="Move down" ${
+			i === n - 1 ? "disabled" : ""
+		} ${dis}>↓</button>
 					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-rm" data-i="${i}" title="Remove" ${dis}>✕</button>
 				</div>
 			</div>`;
@@ -1063,14 +1335,27 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		if (credType === "subscription") {
 			bodyHtml = renderCustomSubBody(r, i, dis);
 		} else {
-			const provOpts = PROVIDERS.map((p) => `<option value="${esc(p)}" ${p === (r.provider || "") ? "selected" : ""}>${esc(p)}</option>`).join("");
+			const provOpts = PROVIDERS.map(
+				(p) =>
+					`<option value="${esc(p)}" ${p === (r.provider || "") ? "selected" : ""}>${esc(
+						p
+					)}</option>`
+			).join("");
 			const dlId = `ja-dl-model-${i}`;
 			bodyHtml = `
 				<div class="ja-crow-grid">
 					<select class="ja-input ja-custom-prov" data-i="${i}" ${dis}>${provOpts}</select>
-					<input type="text" list="${dlId}" class="ja-input ja-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id" ${dis}>
-					<input type="password" class="ja-input ja-custom-key" data-i="${i}" value="${esc(r.apiKey || "")}" placeholder="${r.has_key ? "key set — re-enter to change" : "API key"}" autocomplete="off" ${dis}>
-					<input type="text" class="ja-input ja-custom-base" data-i="${i}" value="${esc(r.baseUrl || "")}" placeholder="base URL (optional)" ${dis}>
+					<input type="text" list="${dlId}" class="ja-input ja-custom-model" data-i="${i}" value="${esc(
+				r.model || ""
+			)}" placeholder="model id" ${dis}>
+					<input type="password" class="ja-input ja-custom-key" data-i="${i}" value="${esc(
+				r.apiKey || ""
+			)}" placeholder="${
+				r.has_key ? "key set — re-enter to change" : "API key"
+			}" autocomplete="off" ${dis}>
+					<input type="text" class="ja-input ja-custom-base" data-i="${i}" value="${esc(
+				r.baseUrl || ""
+			)}" placeholder="base URL (optional)" ${dis}>
 				</div>
 				${renderModelDatalist(dlId, modelSuggestionsForProvider(r.provider || ""))}`;
 		}
@@ -1081,18 +1366,37 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	function renderCustomSubBody(r, i, dis) {
 		const rotation = r.rotation || "sticky";
 		const upstream = r.upstream || "openai";
-		const rotOpts = [["sticky", "Sticky"], ["round_robin", "Round robin"], ["least_used", "Least used"]]
-			.map(([v, l]) => `<option value="${v}" ${rotation === v ? "selected" : ""}>${l}</option>`).join("");
-		const upOpts = [["openai", "OpenAI"], ["google", "Google"]]
-			.map(([v, l]) => `<option value="${v}" ${upstream === v ? "selected" : ""}>${l}</option>`).join("");
+		const rotOpts = [
+			["sticky", "Sticky"],
+			["round_robin", "Round robin"],
+			["least_used", "Least used"],
+		]
+			.map(
+				([v, l]) =>
+					`<option value="${v}" ${rotation === v ? "selected" : ""}>${l}</option>`
+			)
+			.join("");
+		const upOpts = [
+			["openai", "OpenAI"],
+			["google", "Google"],
+		]
+			.map(
+				([v, l]) =>
+					`<option value="${v}" ${upstream === v ? "selected" : ""}>${l}</option>`
+			)
+			.join("");
 		const accounts = r.accounts || [];
 		const accountsHtml = accounts.length
-			? accounts.map((a, ai) => `<div class="ja-acct">
+			? accounts
+					.map(
+						(a, ai) => `<div class="ja-acct">
 					<span class="ja-acct-dot">connected</span>
 					<span class="ja-acct-label">${esc(a.label || a.account_ref)}</span>
 					<span class="ja-hint-inline">${esc(a.upstream || "")}</span>
 					<button type="button" class="ja-acct-rm ja-row-acct-rm" data-i="${i}" data-ai="${ai}" title="Remove account" ${dis}>✕</button>
-				</div>`).join("")
+				</div>`
+					)
+					.join("")
 			: `<div class="ja-hint-inline" style="display:block;margin:4px 0 8px">No accounts connected yet.</div>`;
 
 		const c = r.connect || {};
@@ -1107,21 +1411,29 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 							<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-conn-copy" data-i="${i}" title="Copy URL">Copy</button>
 							<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-conn-open" data-i="${i}">Open ↗</button>
 						</div>
-						<textarea class="ja-input ja-conn-url" data-i="${i}" rows="2" placeholder="Paste the URL after you sign in">${esc(c.pastedUrl || "")}</textarea>
+						<textarea class="ja-input ja-conn-url" data-i="${i}" rows="2" placeholder="Paste the URL after you sign in">${esc(
+					c.pastedUrl || ""
+				)}</textarea>
 						<div class="ja-actions" style="margin-top:8px">
 							<button type="button" class="ja-btn ja-btn-ghost ja-conn-cancel" data-i="${i}">Cancel</button>
-							<button type="button" class="ja-btn ja-btn-primary ja-conn-finish" data-i="${i}" ${c.loading ? "disabled" : ""}>${c.loading ? "Connecting…" : "Connect"}</button>
+							<button type="button" class="ja-btn ja-btn-primary ja-conn-finish" data-i="${i}" ${
+					c.loading ? "disabled" : ""
+				}>${c.loading ? "Connecting…" : "Connect"}</button>
 						</div>
 						${c.error ? `<div class="ja-err">${esc(c.error)}</div>` : ""}
 					</div>`;
 			} else {
-				connectHtml = `<div class="ja-connect"><div class="ja-hint-inline">${c.error ? "" : "Starting sign-in…"}</div>${c.error ? `<div class="ja-err">${esc(c.error)}</div>` : ""}</div>`;
+				connectHtml = `<div class="ja-connect"><div class="ja-hint-inline">${
+					c.error ? "" : "Starting sign-in…"
+				}</div>${c.error ? `<div class="ja-err">${esc(c.error)}</div>` : ""}</div>`;
 			}
 		}
 		const dlId = `ja-dl-submodel-${i}`;
 		return `
 			<div class="ja-crow-grid ja-crow-grid-sub">
-				<input type="text" list="${dlId}" class="ja-input ja-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id (e.g. gpt-5.5)" ${dis}>
+				<input type="text" list="${dlId}" class="ja-input ja-custom-model" data-i="${i}" value="${esc(
+			r.model || ""
+		)}" placeholder="model id (e.g. gpt-5.5)" ${dis}>
 				<select class="ja-input ja-custom-upstream" data-i="${i}" title="Upstream" ${dis}>${upOpts}</select>
 				<select class="ja-input ja-custom-rotation" data-i="${i}" title="Account rotation" ${dis}>${rotOpts}</select>
 			</div>
@@ -1152,11 +1464,17 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		// Reorder / remove rows.
 		$body.find(".ja-row-up").on("click", function () {
 			const i = +$(this).data("i");
-			if (i > 0) { ui.customRows = P.reorder(ui.customRows, i, i - 1); rerenderAiCard(editable); }
+			if (i > 0) {
+				ui.customRows = P.reorder(ui.customRows, i, i - 1);
+				rerenderAiCard(editable);
+			}
 		});
 		$body.find(".ja-row-down").on("click", function () {
 			const i = +$(this).data("i");
-			if (i < ui.customRows.length - 1) { ui.customRows = P.reorder(ui.customRows, i, i + 1); rerenderAiCard(editable); }
+			if (i < ui.customRows.length - 1) {
+				ui.customRows = P.reorder(ui.customRows, i, i + 1);
+				rerenderAiCard(editable);
+			}
 		});
 		$body.find(".ja-row-rm").on("click", function () {
 			const i = +$(this).data("i");
@@ -1203,10 +1521,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			const i = +$(this).data("i");
 			const ai = +$(this).data("ai");
 			const row = ui.customRows[i];
-			if (row) { row.accounts = (row.accounts || []).filter((_, j) => j !== ai); rerenderAiCard(editable); }
+			if (row) {
+				row.accounts = (row.accounts || []).filter((_, j) => j !== ai);
+				rerenderAiCard(editable);
+			}
 		});
 		// Per-account connect flow (begin/complete_pool_account_signin).
-		$body.find(".ja-conn-start").on("click", function () { startPoolConnect(+$(this).data("i"), editable); });
+		$body.find(".ja-conn-start").on("click", function () {
+			startPoolConnect(+$(this).data("i"), editable);
+		});
 		$body.find(".ja-conn-open").on("click", function () {
 			const i = +$(this).data("i");
 			const url = (ui.customRows[i].connect || {}).authorizeUrl;
@@ -1219,14 +1542,19 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			const url = (ui.customRows[i].connect || {}).authorizeUrl;
 			if (!url) return;
 			const $btn = $(this);
-			copyTextWithFallback(url).then(() => {
-				const orig = $btn.text();
-				$btn.text("Copied ✓");
-				setTimeout(() => $btn.text(orig), 1400);
-				frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
-			}).catch(() => {
-				frappe.show_alert({ indicator: "red", message: __("Could not copy - select the URL above and copy manually") });
-			});
+			copyTextWithFallback(url)
+				.then(() => {
+					const orig = $btn.text();
+					$btn.text("Copied ✓");
+					setTimeout(() => $btn.text(orig), 1400);
+					frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
+				})
+				.catch(() => {
+					frappe.show_alert({
+						indicator: "red",
+						message: __("Could not copy - select the URL above and copy manually"),
+					});
+				});
 		});
 		$body.find(".ja-conn-url").on("input", function () {
 			const i = +$(this).data("i");
@@ -1237,7 +1565,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			if (ui.customRows[i]) ui.customRows[i].connect = blankConnect();
 			rerenderAiCard(editable);
 		});
-		$body.find(".ja-conn-finish").on("click", function () { finishPoolConnect(+$(this).data("i"), editable); });
+		$body.find(".ja-conn-finish").on("click", function () {
+			finishPoolConnect(+$(this).data("i"), editable);
+		});
 		// Add row / save.
 		$body.find("#ja-custom-add").on("click", function () {
 			ui.customRows = ui.customRows.concat(blankCustomRow());
@@ -1250,32 +1580,49 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const row = ui.customRows[i];
 		if (!row) return;
 		if (!(row.model || "").trim()) {
-			row.connect = Object.assign(blankConnect(), { open: true, error: "Enter a model id before connecting an account." });
+			row.connect = Object.assign(blankConnect(), {
+				open: true,
+				error: "Enter a model id before connecting an account.",
+			});
 			rerenderAiCard(editable);
 			return;
 		}
 		row.connect = Object.assign(blankConnect(), { open: true, loading: true });
 		rerenderAiCard(editable);
 		const provider = row.upstream === "google" ? "Google" : "OpenAI";
-		frappe.call({
-			method: "jarvis.oauth.api.begin_pool_account_signin",
-			args: { provider, model: row.model.trim() },
-		}).then((r) => {
-			const m = r.message || {};
-			const cur = ui.customRows[i];
-			if (!cur) return;
-			if (!m.ok) {
-				cur.connect = Object.assign(blankConnect(), { open: true, error: (m.error && m.error.message) || "Couldn't start sign-in." });
-			} else {
-				cur.connect = Object.assign(blankConnect(), { open: true, loading: false, nonce: m.data.nonce, authorizeUrl: m.data.authorize_url });
-			}
-			rerenderAiCard(editable);
-		}).catch((e) => {
-			const cur = ui.customRows[i];
-			if (!cur) return;
-			cur.connect = Object.assign(blankConnect(), { open: true, error: e.message || "Couldn't reach Jarvis." });
-			rerenderAiCard(editable);
-		});
+		frappe
+			.call({
+				method: "jarvis.oauth.api.begin_pool_account_signin",
+				args: { provider, model: row.model.trim() },
+			})
+			.then((r) => {
+				const m = r.message || {};
+				const cur = ui.customRows[i];
+				if (!cur) return;
+				if (!m.ok) {
+					cur.connect = Object.assign(blankConnect(), {
+						open: true,
+						error: (m.error && m.error.message) || "Couldn't start sign-in.",
+					});
+				} else {
+					cur.connect = Object.assign(blankConnect(), {
+						open: true,
+						loading: false,
+						nonce: m.data.nonce,
+						authorizeUrl: m.data.authorize_url,
+					});
+				}
+				rerenderAiCard(editable);
+			})
+			.catch((e) => {
+				const cur = ui.customRows[i];
+				if (!cur) return;
+				cur.connect = Object.assign(blankConnect(), {
+					open: true,
+					error: e.message || "Couldn't reach Jarvis.",
+				});
+				rerenderAiCard(editable);
+			});
 	}
 
 	function finishPoolConnect(i, editable) {
@@ -1290,38 +1637,41 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		row.connect.loading = true;
 		row.connect.error = "";
 		rerenderAiCard(editable);
-		frappe.call({
-			method: "jarvis.oauth.api.complete_pool_account_signin",
-			args: { nonce: row.connect.nonce, redirected_url: pasted },
-		}).then((r) => {
-			const m = r.message || {};
-			const cur = ui.customRows[i];
-			if (!cur) return;
-			if (!m.ok) {
-				cur.connect.loading = false;
-				const code = (m.error && m.error.code) ? m.error.code + ": " : "";
-				cur.connect.error = code + ((m.error && m.error.message) || "Sign-in failed.");
+		frappe
+			.call({
+				method: "jarvis.oauth.api.complete_pool_account_signin",
+				args: { nonce: row.connect.nonce, redirected_url: pasted },
+			})
+			.then((r) => {
+				const m = r.message || {};
+				const cur = ui.customRows[i];
+				if (!cur) return;
+				if (!m.ok) {
+					cur.connect.loading = false;
+					const code = m.error && m.error.code ? m.error.code + ": " : "";
+					cur.connect.error = code + ((m.error && m.error.message) || "Sign-in failed.");
+					rerenderAiCard(editable);
+					return;
+				}
+				const d = m.data || {};
+				if (!Array.isArray(cur.accounts)) cur.accounts = [];
+				cur.accounts.push({
+					upstream: cur.upstream || "openai",
+					account_ref: d.account_ref,
+					label: d.label || d.account_email || d.account_ref,
+					oauth_blob: d.oauth_blob || "",
+				});
+				cur.connect = blankConnect();
+				frappe.show_alert({ message: __("Account connected."), indicator: "green" });
 				rerenderAiCard(editable);
-				return;
-			}
-			const d = m.data || {};
-			if (!Array.isArray(cur.accounts)) cur.accounts = [];
-			cur.accounts.push({
-				upstream: cur.upstream || "openai",
-				account_ref: d.account_ref,
-				label: d.label || d.account_email || d.account_ref,
-				oauth_blob: d.oauth_blob || "",
+			})
+			.catch((e) => {
+				const cur = ui.customRows[i];
+				if (!cur) return;
+				cur.connect.loading = false;
+				cur.connect.error = e.message || "Couldn't reach Jarvis.";
+				rerenderAiCard(editable);
 			});
-			cur.connect = blankConnect();
-			frappe.show_alert({ message: __("Account connected."), indicator: "green" });
-			rerenderAiCard(editable);
-		}).catch((e) => {
-			const cur = ui.customRows[i];
-			if (!cur) return;
-			cur.connect.loading = false;
-			cur.connect.error = e.message || "Couldn't reach Jarvis.";
-			rerenderAiCard(editable);
-		});
 	}
 
 	// Emit the per-row backend shape save_llm_pool expects: API-key rows carry
@@ -1345,7 +1695,12 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					},
 				};
 			}
-			const m = { provider: (r.provider || "").trim(), model: (r.model || "").trim(), api_key: (r.apiKey || "").trim(), order: i };
+			const m = {
+				provider: (r.provider || "").trim(),
+				model: (r.model || "").trim(),
+				api_key: (r.apiKey || "").trim(),
+				order: i,
+			};
 			const b = (r.baseUrl || "").trim();
 			if (b) m.base_url = b;
 			return m;
@@ -1358,13 +1713,21 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$err.text("");
 		const models = buildCustomSaveModels();
 		const check = P.validatePool(models, null);
-		if (!check.ok) { $err.text(check.error); return; }
+		if (!check.ok) {
+			$err.text(check.error);
+			return;
+		}
 		setBusy("#ja-custom-save", true);
-		frappe.call({
-			method: "jarvis.onboarding.save_llm_pool",
-			args: { models: JSON.stringify(models), preset: null, routing_mode: "failover" },
-		}).then((r) => afterPoolSave(r, "#ja-custom-save"))
-			.catch((e) => { setBusy("#ja-custom-save", false); $err.text(e.message || "Couldn't save models."); });
+		frappe
+			.call({
+				method: "jarvis.onboarding.save_llm_pool",
+				args: { models: JSON.stringify(models), preset: null, routing_mode: "failover" },
+			})
+			.then((r) => afterPoolSave(r, "#ja-custom-save"))
+			.catch((e) => {
+				setBusy("#ja-custom-save", false);
+				$err.text(e.message || "Couldn't save models.");
+			});
 	}
 
 	// Shared post-save handler for the pool paths (Preset + Custom). Polls the
@@ -1375,7 +1738,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const status = (m.last_sync_status || "").trim();
 		settingsLocal.last_sync_status = status;
 		if (status.startsWith("pending:")) {
-			$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+			$body
+				.find(".ja-llm-status")
+				.text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
 			pollPoolSyncStatus(btnSel);
 		} else {
 			setBusy(btnSel, false);
@@ -1388,29 +1753,39 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const startedAt = Date.now();
 		const TIMEOUT_MS = 150 * 1000;
 		const tick = () => {
-			frappe.call({ method: "jarvis.onboarding.get_llm_sync_status" })
+			frappe
+				.call({ method: "jarvis.onboarding.get_llm_sync_status" })
 				.then((r) => {
 					const m = r.message || {};
 					const status = (m.last_sync_status || "").trim();
 					settingsLocal.last_sync_status = status;
 					if (!m.pending) {
 						setBusy(btnSel, false);
-						frappe.show_alert({ message: __("LLM configuration saved."), indicator: "green" });
+						frappe.show_alert({
+							message: __("LLM configuration saved."),
+							indicator: "green",
+						});
 						loadInitial();
 						return;
 					}
 					if (Date.now() - startedAt > TIMEOUT_MS) {
 						setBusy(btnSel, false);
-						$body.find(".ja-llm-status").text("Still provisioning — check back in a moment.");
+						$body
+							.find(".ja-llm-status")
+							.text("Still provisioning — check back in a moment.");
 						return;
 					}
-					$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+					$body
+						.find(".ja-llm-status")
+						.text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
 					setTimeout(tick, 2500);
 				})
 				.catch(() => {
 					if (Date.now() - startedAt > TIMEOUT_MS) {
 						setBusy(btnSel, false);
-						$body.find(".ja-llm-status").text("Lost contact while provisioning — refresh later.");
+						$body
+							.find(".ja-llm-status")
+							.text("Lost contact while provisioning — refresh later.");
 						return;
 					}
 					setTimeout(tick, 2500);
@@ -1435,7 +1810,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				<div>
 					<div class="ja-eyebrow">Plan</div>
 					<h2 class="ja-h">${esc(plan.plan_name || plan.name)}</h2>
-					<div class="ja-plan-meta">${inr(plan.price_inr)} <span class="jo-plan-cycle">${cycleLabel(plan.billing_cycle)}</span></div>
+					<div class="ja-plan-meta">${inr(plan.price_inr)} <span class="jo-plan-cycle">${cycleLabel(
+			plan.billing_cycle
+		)}</span></div>
 				</div>
 				${renderStatusPill(sub)}
 			</div>
@@ -1444,25 +1821,39 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function renderStatusPill(sub) {
-		const tone = {
-			"Active": "ok", "Cancelled": "warn", "Past Due": "warn",
-			"Expired": "bad", "Pending Payment": "warn",
-		}[sub] || "muted";
+		const tone =
+			{
+				Active: "ok",
+				Cancelled: "warn",
+				"Past Due": "warn",
+				Expired: "bad",
+				"Pending Payment": "warn",
+			}[sub] || "muted";
 		return `<span class="ja-pill ja-pill-${tone}">${esc(sub)}</span>`;
 	}
 
 	function renderPlanBanner(sub) {
-		const end = account.current_period_end ? frappe.datetime.str_to_user(account.current_period_end) : "";
+		const end = account.current_period_end
+			? frappe.datetime.str_to_user(account.current_period_end)
+			: "";
 		const days = account.days_remaining || 0;
 		switch (sub) {
 			case "Active":
-				return `<div class="ja-banner ja-banner-ok">Renews on <b>${esc(end)}</b> · ${days} day${days === 1 ? "" : "s"} left.</div>`;
+				return `<div class="ja-banner ja-banner-ok">Renews on <b>${esc(
+					end
+				)}</b> · ${days} day${days === 1 ? "" : "s"} left.</div>`;
 			case "Cancelled":
-				return `<div class="ja-banner ja-banner-warn">Cancelled · runs until <b>${esc(end)}</b>.</div>`;
+				return `<div class="ja-banner ja-banner-warn">Cancelled · runs until <b>${esc(
+					end
+				)}</b>.</div>`;
 			case "Past Due":
-				return `<div class="ja-banner ja-banner-warn">Plan past due - expired on <b>${esc(end)}</b>. Reactivate to resume service.</div>`;
+				return `<div class="ja-banner ja-banner-warn">Plan past due - expired on <b>${esc(
+					end
+				)}</b>. Reactivate to resume service.</div>`;
 			case "Expired":
-				return `<div class="ja-banner ja-banner-bad">Plan expired on <b>${esc(end)}</b>. Reactivate to resume service.</div>`;
+				return `<div class="ja-banner ja-banner-bad">Plan expired on <b>${esc(
+					end
+				)}</b>. Reactivate to resume service.</div>`;
 			case "Pending Payment":
 				return `<div class="ja-banner ja-banner-warn">Payment incomplete · finish to activate.</div>`;
 			default:
@@ -1518,15 +1909,17 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			if (wasOauth) {
 				const connectedEmail = settingsLocal.llm_oauth_account_email || "";
 				const emailLine = connectedEmail
-					? `<p>This will disconnect your chat subscription connected as <b>${frappe.utils.escape_html(connectedEmail)}</b>.</p>`
+					? `<p>This will disconnect your chat subscription connected as <b>${frappe.utils.escape_html(
+							connectedEmail
+					  )}</b>.</p>`
 					: "<p>This will disconnect your chat subscription.</p>";
 				frappe.warn(
 					__("Disconnect chat subscription?"),
-					emailLine
-						+ "<p>Your saved API key will be used for chat instead. "
-						+ "Reconnecting later means signing in again from the Subscription tab.</p>",
+					emailLine +
+						"<p>Your saved API key will be used for chat instead. " +
+						"Reconnecting later means signing in again from the Subscription tab.</p>",
 					proceedSave,
-					__("Disconnect and switch"),
+					__("Disconnect and switch")
 				);
 				return;
 			}
@@ -1536,10 +1929,18 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function doSaveApiKeyCreds({ provider, model, key, base, wasOauth }) {
 		setBusy("#ja-llm-save", true);
-		frappe.call({
-			method: "jarvis.onboarding.save_llm_creds",
-			args: { provider, model, api_key: key || "", base_url: base, auth_mode: "api_key" },
-		}).then((r) => {
+		frappe
+			.call({
+				method: "jarvis.onboarding.save_llm_creds",
+				args: {
+					provider,
+					model,
+					api_key: key || "",
+					base_url: base,
+					auth_mode: "api_key",
+				},
+			})
+			.then((r) => {
 				const status = (r.message && r.message.last_sync_status) || "";
 				// wasOauth was captured in the click handler before frappe.call
 				// fired and threaded in via doSaveApiKeyCreds's destructured
@@ -1556,7 +1957,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				// "pending: ..." while the admin restart runs in the
 				// background. Poll until the status flips to ok/failed.
 				if (status.startsWith("pending:")) {
-					$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+					$body
+						.find(".ja-llm-status")
+						.text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
 					pollLlmSyncStatus({ wasOauth });
 				} else {
 					setBusy("#ja-llm-save", false);
@@ -1565,7 +1968,8 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					// "current mode" pill and notice banner update correctly.
 					if (wasOauth) render();
 				}
-			}).catch((e) => {
+			})
+			.catch((e) => {
 				setBusy("#ja-llm-save", false);
 				$body.find("#ja-llm-err").text(e.message || "Save failed.");
 			});
@@ -1578,29 +1982,38 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const startedAt = Date.now();
 		const TIMEOUT_MS = 150 * 1000;
 		const tick = () => {
-			frappe.call({ method: "jarvis.onboarding.get_llm_sync_status" })
+			frappe
+				.call({ method: "jarvis.onboarding.get_llm_sync_status" })
 				.then((r) => {
 					const m = r.message || {};
 					const status = (m.last_sync_status || "").trim();
 					settingsLocal.last_sync_status = status;
 					if (!m.pending) {
 						setBusy("#ja-llm-save", false);
-						$body.find(".ja-llm-status").text(status ? "Last sync: " + status : "Saved.");
+						$body
+							.find(".ja-llm-status")
+							.text(status ? "Last sync: " + status : "Saved.");
 						if (wasOauth) render();
 						return;
 					}
 					if (Date.now() - startedAt > TIMEOUT_MS) {
 						setBusy("#ja-llm-save", false);
-						$body.find(".ja-llm-status").text("Still provisioning - check back in a moment.");
+						$body
+							.find(".ja-llm-status")
+							.text("Still provisioning - check back in a moment.");
 						return;
 					}
-					$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+					$body
+						.find(".ja-llm-status")
+						.text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
 					setTimeout(tick, 2500);
 				})
 				.catch(() => {
 					if (Date.now() - startedAt > TIMEOUT_MS) {
 						setBusy("#ja-llm-save", false);
-						$body.find(".ja-llm-status").text("Lost contact while provisioning - refresh later.");
+						$body
+							.find(".ja-llm-status")
+							.text("Lost contact while provisioning - refresh later.");
 						return;
 					}
 					setTimeout(tick, 2500);
@@ -1620,8 +2033,20 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			<h2 class="ja-h">${esc(ctaPrimary.heading)}</h2>
 			<p class="ja-sub">${esc(ctaPrimary.subtitle)}</p>
 			<div class="ja-actions">
-				${ctaPrimary ? `<button class="ja-btn ja-btn-primary" id="ja-cta-primary" data-action="${ctaPrimary.action}">${esc(ctaPrimary.label)}</button>` : ""}
-				${ctaSecondary ? `<button class="ja-btn ja-btn-ghost" id="ja-cta-secondary" data-action="${ctaSecondary.action}">${esc(ctaSecondary.label)}</button>` : ""}
+				${
+					ctaPrimary
+						? `<button class="ja-btn ja-btn-primary" id="ja-cta-primary" data-action="${
+								ctaPrimary.action
+						  }">${esc(ctaPrimary.label)}</button>`
+						: ""
+				}
+				${
+					ctaSecondary
+						? `<button class="ja-btn ja-btn-ghost" id="ja-cta-secondary" data-action="${
+								ctaSecondary.action
+						  }">${esc(ctaSecondary.label)}</button>`
+						: ""
+				}
 			</div>
 			<div class="ja-err" id="ja-billing-err"></div>
 		</div>`;
@@ -1632,20 +2057,41 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		switch (sub) {
 			case "Active":
 				return upgrade
-					? { action: "upgrade", label: "Upgrade plan",
-						heading: "Want more capacity?", subtitle: "Move to a higher plan - you only pay the prorated difference for the remaining period." }
-					: { action: "renew", label: "Renew now",
-						heading: "Renew early", subtitle: "Add another billing cycle to your current plan." };
+					? {
+							action: "upgrade",
+							label: "Upgrade plan",
+							heading: "Want more capacity?",
+							subtitle:
+								"Move to a higher plan - you only pay the prorated difference for the remaining period.",
+					  }
+					: {
+							action: "renew",
+							label: "Renew now",
+							heading: "Renew early",
+							subtitle: "Add another billing cycle to your current plan.",
+					  };
 			case "Cancelled":
-				return { action: "renew", label: "Resume / Renew",
-						 heading: "Resume your plan", subtitle: "Pay now to keep service running past the current period end." };
+				return {
+					action: "renew",
+					label: "Resume / Renew",
+					heading: "Resume your plan",
+					subtitle: "Pay now to keep service running past the current period end.",
+				};
 			case "Past Due":
 			case "Expired":
-				return { action: "renew", label: "Reactivate",
-						 heading: "Reactivate your plan", subtitle: "Pay now to restore service and bring your container back online." };
+				return {
+					action: "renew",
+					label: "Reactivate",
+					heading: "Reactivate your plan",
+					subtitle: "Pay now to restore service and bring your container back online.",
+				};
 			case "Pending Payment":
-				return { action: "renew", label: "Complete payment",
-						 heading: "Finish signing up", subtitle: "Complete payment to activate your plan." };
+				return {
+					action: "renew",
+					label: "Complete payment",
+					heading: "Finish signing up",
+					subtitle: "Complete payment to activate your plan.",
+				};
 			default:
 				return { action: "renew", label: "Subscribe", heading: "Subscribe", subtitle: "" };
 		}
@@ -1669,13 +2115,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	function startRenew() {
 		setBusy("#ja-cta-primary", true);
 		setBusy("#ja-cta-secondary", true);
-		frappe.call({ method: "jarvis.onboarding.renew" })
+		frappe
+			.call({ method: "jarvis.onboarding.renew" })
 			.then((r) => {
 				setBusy("#ja-cta-primary", false);
 				setBusy("#ja-cta-secondary", false);
 				const data = (r.message && r.message.data) || r.message || {};
-				openCheckout(data, /*upgrade=*/false);
-			}).catch((e) => {
+				openCheckout(data, /*upgrade=*/ false);
+			})
+			.catch((e) => {
 				setBusy("#ja-cta-primary", false);
 				setBusy("#ja-cta-secondary", false);
 				$body.find("#ja-billing-err").text(e.message || "Couldn't start payment.");
@@ -1685,15 +2133,25 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// ---- upgrade flow + modal --------------------------------------------
 	function openUpgradeModal() {
 		const plans = account.upgrade_plans || [];
-		const cards = plans.map((p) => `
+		const cards = plans
+			.map(
+				(p) => `
 			<div class="ja-up-card" data-plan="${esc(p.name)}">
 				<div class="ja-up-card-head">
 					<div class="ja-up-card-name">${esc(p.plan_name || p.name)}</div>
-					<div class="ja-up-card-price">${inr(p.price_inr)} <span class="jo-plan-cycle">${cycleLabel(p.billing_cycle)}</span></div>
+					<div class="ja-up-card-price">${inr(p.price_inr)} <span class="jo-plan-cycle">${cycleLabel(
+					p.billing_cycle
+				)}</span></div>
 				</div>
-				<div class="ja-up-card-prorate" data-plan-prorate="${esc(p.name)}">Calculating prorated amount…</div>
-				<button class="ja-btn ja-btn-primary ja-up-pick" data-plan="${esc(p.name)}" disabled>Loading…</button>
-			</div>`).join("");
+				<div class="ja-up-card-prorate" data-plan-prorate="${esc(
+					p.name
+				)}">Calculating prorated amount…</div>
+				<button class="ja-btn ja-btn-primary ja-up-pick" data-plan="${esc(
+					p.name
+				)}" disabled>Loading…</button>
+			</div>`
+			)
+			.join("");
 		const html = `<div class="ja-modal-bg">
 			<div class="ja-modal">
 				<div class="ja-modal-head">
@@ -1711,15 +2169,22 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		});
 		// Fetch prorated amount per plan in parallel.
 		plans.forEach((p) => {
-			frappe.call({ method: "jarvis.account.preview_upgrade", args: { target_plan: p.name } })
+			frappe
+				.call({ method: "jarvis.account.preview_upgrade", args: { target_plan: p.name } })
 				.then((r) => {
 					const d = (r.message && r.message.data) || r.message || {};
-					$m.find(`[data-plan-prorate="${p.name}"]`).text(`Pay ${inr(d.prorated_inr)} now`);
+					$m.find(`[data-plan-prorate="${p.name}"]`).text(
+						`Pay ${inr(d.prorated_inr)} now`
+					);
 					$m.find(`.ja-up-pick[data-plan="${p.name}"]`)
-						.text(`Pay ${inr(d.prorated_inr)}`).prop("disabled", false)
+						.text(`Pay ${inr(d.prorated_inr)}`)
+						.prop("disabled", false)
 						.on("click", () => startUpgrade(p.name, $m));
-				}).catch((e) => {
-					$m.find(`[data-plan-prorate="${p.name}"]`).text(e.message || "Couldn't compute amount.");
+				})
+				.catch((e) => {
+					$m.find(`[data-plan-prorate="${p.name}"]`).text(
+						e.message || "Couldn't compute amount."
+					);
 				});
 		});
 	}
@@ -1727,13 +2192,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	function startUpgrade(target_plan, $modal) {
 		const $btn = $modal.find(`.ja-up-pick[data-plan="${target_plan}"]`);
 		setBusy($btn, true);
-		frappe.call({ method: "jarvis.account.start_upgrade", args: { target_plan } })
+		frappe
+			.call({ method: "jarvis.account.start_upgrade", args: { target_plan } })
 			.then((r) => {
 				setBusy($btn, false);
 				const data = (r.message && r.message.data) || r.message || {};
 				$modal.remove();
-				openCheckout(data, /*upgrade=*/true);
-			}).catch((e) => {
+				openCheckout(data, /*upgrade=*/ true);
+			})
+			.catch((e) => {
 				setBusy($btn, false);
 				$modal.find("#ja-up-err").text(e.message || "Couldn't start upgrade.");
 			});
@@ -1762,8 +2229,12 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// finish_payment + self-healing fallback (idempotent confirm + polling)
 	function confirmAndRefresh(payload) {
 		showOverlay("Finalizing your payment…");
-		frappe.call({ method: "jarvis.onboarding.finish_payment", args: { payload } })
-			.then(() => { hideOverlay(); loadInitial(); })
+		frappe
+			.call({ method: "jarvis.onboarding.finish_payment", args: { payload } })
+			.then(() => {
+				hideOverlay();
+				loadInitial();
+			})
 			.catch(() => pollForApplied());
 	}
 
@@ -1777,43 +2248,62 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		let elapsed = 0;
 		const tick = setInterval(() => {
 			elapsed += 3;
-			frappe.call({ method: "jarvis.account.get_account" }).then((r) => {
-				const a = (r && r.message) || {};
-				const now = JSON.stringify({
-					plan: (a.plan || {}).name || "",
-					end: a.current_period_end || "",
-					status: a.subscription_status || "",
-				});
-				if (now !== before) {
-					clearInterval(tick); hideOverlay(); loadInitial();
-				} else if (elapsed >= 30) {
-					clearInterval(tick); hideOverlay();
-					frappe.msgprint({
-						title: "Plan update pending",
-						message: "Your payment was received. The page should update within a minute - refresh to view, or contact support if it doesn't.",
-						indicator: "blue",
+			frappe
+				.call({ method: "jarvis.account.get_account" })
+				.then((r) => {
+					const a = (r && r.message) || {};
+					const now = JSON.stringify({
+						plan: (a.plan || {}).name || "",
+						end: a.current_period_end || "",
+						status: a.subscription_status || "",
 					});
-				}
-			}).catch(() => {
-				if (elapsed >= 30) {
-					clearInterval(tick); hideOverlay();
-				}
-			});
+					if (now !== before) {
+						clearInterval(tick);
+						hideOverlay();
+						loadInitial();
+					} else if (elapsed >= 30) {
+						clearInterval(tick);
+						hideOverlay();
+						frappe.msgprint({
+							title: "Plan update pending",
+							message:
+								"Your payment was received. The page should update within a minute - refresh to view, or contact support if it doesn't.",
+							indicator: "blue",
+						});
+					}
+				})
+				.catch(() => {
+					if (elapsed >= 30) {
+						clearInterval(tick);
+						hideOverlay();
+					}
+				});
 		}, 3000);
 	}
 
 	// ---- small helpers ----------------------------------------------------
 	function setBusy(sel, on) {
 		const $b = typeof sel === "string" ? $body.find(sel) : sel;
-		if (on) { $b.prop("disabled", true).attr("data-label", $b.html()).html(`<span class="ja-spin"></span> Working…`); }
-		else if ($b.attr("data-label")) { $b.prop("disabled", false).html($b.attr("data-label")); }
+		if (on) {
+			$b.prop("disabled", true)
+				.attr("data-label", $b.html())
+				.html(`<span class="ja-spin"></span> Working…`);
+		} else if ($b.attr("data-label")) {
+			$b.prop("disabled", false).html($b.attr("data-label"));
+		}
 	}
 
 	function showOverlay(text) {
 		hideOverlay();
-		$(`<div class="ja-overlay"><div class="ja-overlay-card"><span class="ja-spin"></span> ${esc(text)}</div></div>`).appendTo(document.body);
+		$(
+			`<div class="ja-overlay"><div class="ja-overlay-card"><span class="ja-spin"></span> ${esc(
+				text
+			)}</div></div>`
+		).appendTo(document.body);
 	}
-	function hideOverlay() { $(".ja-overlay").remove(); }
+	function hideOverlay() {
+		$(".ja-overlay").remove();
+	}
 
 	function injectStyles() {
 		if (document.getElementById("ja-styles")) return;

@@ -40,14 +40,15 @@ from __future__ import annotations
 import json
 
 import frappe
+from frappe import _
+from frappe.utils import cint, now_datetime
+
 from jarvis.permissions import (
 	has_jarvis_admin_access,
 	is_skill_reviewer,
 	require_jarvis_admin,
 	require_jarvis_user,
 )
-from frappe import _
-from frappe.utils import cint, now_datetime
 
 QUESTION = "Jarvis Personalise Question"
 RULE = "Jarvis Personalise Question Rule"

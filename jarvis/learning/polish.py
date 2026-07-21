@@ -87,8 +87,13 @@ def polish_skill_draft(pattern_name: str, acting_user: str) -> dict:
 		JLP,
 		pattern_name,
 		[
-			"name", "skill_draft", "pattern_statement",
-			"support_n", "confidence_pct", "strength_band", "exception_n",
+			"name",
+			"skill_draft",
+			"pattern_statement",
+			"support_n",
+			"confidence_pct",
+			"strength_band",
+			"exception_n",
 		],
 		as_dict=True,
 	)
@@ -243,8 +248,7 @@ def _run_gateway_turn(prompt: str) -> str:
 	from jarvis.chat.turn_handler import _resolve_model_and_provider
 
 	settings = frappe.get_single(SETTINGS)
-	gateway_url = (settings.agent_url or "").replace(
-		"http://", "ws://").replace("https://", "wss://")
+	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 	if not gateway_url:
 		return ""
 	# No conversation exists for a polish turn; an empty model_override lets
@@ -259,7 +263,11 @@ def _run_gateway_turn(prompt: str) -> str:
 			skey = sess.create_session(label=label)
 			try:
 				for ev in sess.stream_agent_turn(
-					skey, prompt, f"polish:{skey}", model=model, provider=provider,
+					skey,
+					prompt,
+					f"polish:{skey}",
+					model=model,
+					provider=provider,
 				):
 					if ev.get("kind") == "assistant" and ev.get("text"):
 						text = ev["text"]
@@ -275,7 +283,8 @@ def _run_gateway_turn(prompt: str) -> str:
 					sess.delete_session(skey)
 				except Exception:
 					frappe.logger("jarvis.learning.polish").debug(
-						"throwaway polish session delete failed", exc_info=True,
+						"throwaway polish session delete failed",
+						exc_info=True,
 					)
 	except Exception:
 		frappe.log_error(

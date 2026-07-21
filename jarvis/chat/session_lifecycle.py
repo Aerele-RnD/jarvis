@@ -54,6 +54,7 @@ starve it. Everything is best-effort on a dedicated connection (never the pool -
 a sweep must not contend with live turns), batch-capped so a backlog drains over
 a few runs instead of stampeding a gateway, and managed-mode only.
 """
+
 from __future__ import annotations
 
 import logging
@@ -105,6 +106,7 @@ def _retention_days() -> int:
 		return 0
 	return max(days, MIN_RETENTION_DAYS)
 
+
 # An unreferenced gateway session younger than this is skipped: it may be
 # an in-flight title/prewarm throwaway, or a conversation whose freshly
 # created session_key has not committed yet.
@@ -150,8 +152,7 @@ def rotate_dormant_sessions() -> dict:
 		return {"skipped": "self-hosted"}
 
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").replace(
-		"http://", "ws://").replace("https://", "wss://")
+	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 	if not gateway_url:
 		return {"skipped": "no agent_url"}
 
@@ -358,7 +359,8 @@ def _reap_orphans(sess, budget: int, summary: dict) -> None:
 		summary["errors"] += 1
 		return
 	known = {
-		k for (k,) in frappe.db.sql(
+		k
+		for (k,) in frappe.db.sql(
 			"SELECT session_key FROM `tabJarvis Conversation` "
 			"WHERE session_key IS NOT NULL AND session_key != ''"
 		)

@@ -42,6 +42,7 @@ worker process exits. SIGTERM during a job lets the in-flight call
 finish before the drain proceeds (atexit runs after the foreground
 work completes).
 """
+
 from __future__ import annotations
 
 import atexit
@@ -54,7 +55,6 @@ from dataclasses import dataclass, field
 
 from jarvis.chat.openclaw_client import OpenclawSession
 from jarvis.exceptions import OpenclawUnreachableError
-
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ class _PooledEntry:
 	"""One pooled session. ``in_use`` is guarded by the owning group's
 	Condition; the session object itself is only ever touched by the
 	checkout that marked the entry in-use."""
+
 	session: OpenclawSession
 	last_used: float
 	gateway_url: str
@@ -94,6 +95,7 @@ class _GatewayGroup:
 	attempts so a burst of checkouts cannot overshoot the cap). Slow
 	work - connect, healthcheck, close - happens OUTSIDE the Condition,
 	on entries the caller owns."""
+
 	gateway_url: str
 	cond: threading.Condition = field(default_factory=threading.Condition)
 	entries: list[_PooledEntry] = field(default_factory=list)
@@ -189,12 +191,12 @@ def _acquire_entry(group: _GatewayGroup) -> _PooledEntry:
 			# is itself the signal that the persistent executor is needed.
 			logger.info(
 				"openclaw_session_pool: pool-hit gateway=%s idle_s=%.1f",
-				group.gateway_url, time.monotonic() - entry.last_used,
+				group.gateway_url,
+				time.monotonic() - entry.last_used,
 			)
 			return entry
 		logger.info(
-			"openclaw_session_pool: stale entry, reconnecting "
-			"gateway=%s idle_s=%.1f connected=%s",
+			"openclaw_session_pool: stale entry, reconnecting gateway=%s idle_s=%.1f connected=%s",
 			group.gateway_url,
 			time.monotonic() - entry.last_used,
 			_safe_connected(entry.session),
@@ -247,7 +249,8 @@ def _do_connect(gateway_url: str) -> OpenclawSession:
 	elapsed_ms = int((time.monotonic() - t0) * 1000)
 	logger.info(
 		"openclaw_session_pool: pool-miss connect gateway=%s total_ms=%d",
-		gateway_url, elapsed_ms,
+		gateway_url,
+		elapsed_ms,
 	)
 	return sess
 

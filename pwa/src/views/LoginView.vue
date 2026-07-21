@@ -1,7 +1,7 @@
 <script setup>
-import { ref } from "vue"
-import BrandMark from "../components/BrandMark.vue"
-import { call } from "frappe-ui"
+import { ref } from "vue";
+import BrandMark from "../components/BrandMark.vue";
+import { call } from "frappe-ui";
 
 // The app's own sign-in, inside the PWA's scope.
 //
@@ -9,26 +9,26 @@ import { call } from "frappe-ui"
 // manifest scope, which an installed PWA hands off to the browser. The user
 // taps the Jarvis icon and lands in a Chrome tab. Signing in here keeps them in
 // the app, which is the whole point of installing it.
-const email = ref("")
-const password = ref("")
-const showPassword = ref(false)
-const busy = ref(false)
-const error = ref("")
+const email = ref("");
+const password = ref("");
+const showPassword = ref(false);
+const busy = ref(false);
+const error = ref("");
 
 async function submit() {
-	if (busy.value || !email.value.trim() || !password.value) return
-	busy.value = true
-	error.value = ""
+	if (busy.value || !email.value.trim() || !password.value) return;
+	busy.value = true;
+	error.value = "";
 	try {
-		const r = await call("login", { usr: email.value.trim(), pwd: password.value })
+		const r = await call("login", { usr: email.value.trim(), pwd: password.value });
 
 		// Two-factor is a multi-step flow (tmp_id + OTP) this screen doesn't
 		// implement. Say so plainly instead of leaving the user on a form that
 		// will never succeed.
 		if (r?.verification || r?.tmp_id) {
-			error.value = "This account uses two-factor sign-in. Please sign in on the web first."
-			busy.value = false
-			return
+			error.value = "This account uses two-factor sign-in. Please sign in on the web first.";
+			busy.value = false;
+			return;
 		}
 
 		// A full navigation, not a router push: the CSRF token is bound to the
@@ -37,15 +37,15 @@ async function submit() {
 		// in-page transition would fail CSRF. Reloading re-renders the shell with
 		// the new session's token — and it stays inside /jarvis-mobile, so an
 		// installed app never leaves itself.
-		window.location.href = "/jarvis-mobile"
+		window.location.href = "/jarvis-mobile";
 	} catch (e) {
 		// Frappe throws AuthenticationError (401) for bad credentials; anything
 		// else is worth showing verbatim rather than flattening to "login failed".
-		const msg = String(e?.message || e || "")
+		const msg = String(e?.message || e || "");
 		error.value = /auth|password|incorrect|invalid login/i.test(msg)
 			? "That email or password isn't right."
-			: msg || "Couldn't sign in. Try again."
-		busy.value = false
+			: msg || "Couldn't sign in. Try again.";
+		busy.value = false;
 	}
 }
 </script>
@@ -92,11 +92,33 @@ async function submit() {
 						:aria-pressed="showPassword"
 						@click="showPassword = !showPassword"
 					>
-						<svg v-if="showPassword" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+						<svg
+							v-if="showPassword"
+							viewBox="0 0 24 24"
+							width="20"
+							height="20"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.8"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path
+								d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
+							/>
 							<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24M1 1l22 22" />
 						</svg>
-						<svg v-else viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+						<svg
+							v-else
+							viewBox="0 0 24 24"
+							width="20"
+							height="20"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.8"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
 							<circle cx="12" cy="12" r="3" />
 						</svg>
@@ -106,7 +128,11 @@ async function submit() {
 
 			<div v-if="error" class="jv-login-error">{{ error }}</div>
 
-			<button class="jv-login-btn" type="submit" :disabled="busy || !email.trim() || !password">
+			<button
+				class="jv-login-btn"
+				type="submit"
+				:disabled="busy || !email.trim() || !password"
+			>
 				<span v-if="busy" class="jv-spinner" />
 				<span v-else>Sign in</span>
 			</button>

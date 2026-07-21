@@ -50,9 +50,7 @@ class JarvisMacro(Document):
 			if not prompt:
 				frappe.throw(_("Step {0} has an empty prompt.").format(i))
 			if len(prompt) > MAX_PROMPT_LEN:
-				frappe.throw(
-					_("Step {0} prompt must be at most {1} characters.").format(i, MAX_PROMPT_LEN)
-				)
+				frappe.throw(_("Step {0} prompt must be at most {1} characters.").format(i, MAX_PROMPT_LEN))
 			s.prompt = prompt
 			s.label = (s.label or "").strip()
 

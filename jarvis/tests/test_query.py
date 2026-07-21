@@ -48,8 +48,7 @@ class TestQuerySpecValidation(FrappeTestCase):
 
 	def test_rejects_join_missing_required_fields(self):
 		for missing in ("doctype", "alias", "on"):
-			j = {"doctype": "User", "alias": "u",
-				 "on": {"u.name": "dt.name"}}
+			j = {"doctype": "User", "alias": "u", "on": {"u.name": "dt.name"}}
 			del j[missing]
 			with self.assertRaises(InvalidArgumentError, msg=missing):
 				query({"from": "DocType", "alias": "dt", "joins": [j]})
@@ -58,28 +57,39 @@ class TestQuerySpecValidation(FrappeTestCase):
 		"""Two tables with the same alias would make field references
 		ambiguous; the validator must catch it."""
 		with self.assertRaises(InvalidArgumentError) as cm:
-			query({
-				"from": "DocType", "alias": "x",
-				"joins": [{"doctype": "User", "alias": "x",
-						   "on": {"x.name": "x.name"}}],
-			})
+			query(
+				{
+					"from": "DocType",
+					"alias": "x",
+					"joins": [{"doctype": "User", "alias": "x", "on": {"x.name": "x.name"}}],
+				}
+			)
 		self.assertIn("collides", str(cm.exception))
 
 	def test_rejects_invalid_join_type(self):
 		with self.assertRaises(InvalidArgumentError):
-			query({
-				"from": "DocType",
-				"joins": [{"doctype": "User", "alias": "u",
-						   "type": "cross",  # not supported
-						   "on": {"u.name": "DocType.name"}}],
-			})
+			query(
+				{
+					"from": "DocType",
+					"joins": [
+						{
+							"doctype": "User",
+							"alias": "u",
+							"type": "cross",  # not supported
+							"on": {"u.name": "DocType.name"},
+						}
+					],
+				}
+			)
 
 	def test_rejects_unknown_operator(self):
 		with self.assertRaises(InvalidArgumentError) as cm:
-			query({
-				"from": "DocType",
-				"where": [{"field": "name", "op": "REGEX", "value": ".*"}],
-			})
+			query(
+				{
+					"from": "DocType",
+					"where": [{"field": "name", "op": "REGEX", "value": ".*"}],
+				}
+			)
 		self.assertIn("not allowed", str(cm.exception))
 
 	def test_rejects_invalid_limit(self):
@@ -115,20 +125,27 @@ class TestQueryPermissions(FrappeTestCase):
 		# regardless of whether a prior test left these metas cached.
 		frappe.get_meta("Sales Invoice")
 		frappe.get_meta("Sales Invoice Item")
-		with patch("frappe.has_permission", side_effect=fake_has_perm), \
-		     patch("frappe.database.query.Engine") as fake_engine, \
-		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+		with (
+			patch("frappe.has_permission", side_effect=fake_has_perm),
+			patch("frappe.database.query.Engine") as fake_engine,
+			patch("pypika.queries.QueryBuilder.run", return_value=[]),
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
-			query({
-				"from": "Sales Invoice", "alias": "si",
-				"joins": [{
-					"type": "left",
-					"doctype": "Sales Invoice Item",
-					"alias": "sii",
-					"on": {"sii.parent": "si.name"},
-				}],
-				"select": ["si.name"],
-			})
+			query(
+				{
+					"from": "Sales Invoice",
+					"alias": "si",
+					"joins": [
+						{
+							"type": "left",
+							"doctype": "Sales Invoice Item",
+							"alias": "sii",
+							"on": {"sii.parent": "si.name"},
+						}
+					],
+					"select": ["si.name"],
+				}
+			)
 
 		self.assertIn("Sales Invoice", checked)
 		self.assertIn("Sales Invoice Item", checked)
@@ -167,8 +184,10 @@ class TestQueryDocTypeAllowlist(FrappeTestCase):
 
 	def test_empty_allowlist_imposes_no_extra_restriction(self):
 		"""Default state - allowlist is empty/unset, no extra gate."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			result = query({"from": "DocType", "limit": 1})
 		self.assertIn("rows", result)
@@ -181,8 +200,10 @@ class TestQueryQbTranslation(FrappeTestCase):
 	def _build_sql(self, spec: dict) -> str:
 		"""Helper: build the query through the full pipeline, capture
 		the qb expression's resolved SQL via .get_sql()."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			# We let the real qb run; patch only the actual SQL exec.
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]) as _:
@@ -196,46 +217,59 @@ class TestQueryQbTranslation(FrappeTestCase):
 		self.assertIn("name", sql.lower())
 
 	def test_select_aggregate(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{"agg": "count", "field": "*", "as": "n"}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [{"agg": "count", "field": "*", "as": "n"}],
+			}
+		)
 		self.assertIn("COUNT", sql.upper())
 		self.assertIn("n", sql)  # the alias appears
 
 	def test_where_equality(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{"field": "dt.issingle", "op": "=", "value": 0}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [{"field": "dt.issingle", "op": "=", "value": 0}],
+			}
+		)
 		self.assertIn("issingle", sql)
 
 	def test_where_in(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{"field": "dt.module", "op": "in",
-					   "value": ["Core", "Custom"]}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [{"field": "dt.module", "op": "in", "value": ["Core", "Custom"]}],
+			}
+		)
 		self.assertIn("IN", sql.upper())
 
 	def test_order_by(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"order_by": [{"field": "dt.name", "dir": "desc"}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"order_by": [{"field": "dt.name", "dir": "desc"}],
+			}
+		)
 		self.assertIn("ORDER BY", sql.upper())
 		self.assertIn("DESC", sql.upper())
 
 	def test_group_by(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.module",
-					   {"agg": "count", "field": "*", "as": "n"}],
-			"group_by": ["dt.module"],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.module", {"agg": "count", "field": "*", "as": "n"}],
+				"group_by": ["dt.module"],
+			}
+		)
 		self.assertIn("GROUP BY", sql.upper())
 
 	def test_limit(self):
@@ -246,20 +280,22 @@ class TestQueryQbTranslation(FrappeTestCase):
 		"""'in' operator demands a list, not a scalar."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType",
-					"where": [{"field": "module", "op": "in",
-							   "value": "Core"}],  # should be list
-				})
+				query(
+					{
+						"from": "DocType",
+						"where": [{"field": "module", "op": "in", "value": "Core"}],  # should be list
+					}
+				)
 
 	def test_between_demands_two_element_list(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType",
-					"where": [{"field": "name", "op": "between",
-							   "value": ["a"]}],  # one element
-				})
+				query(
+					{
+						"from": "DocType",
+						"where": [{"field": "name", "op": "between", "value": ["a"]}],  # one element
+					}
+				)
 
 
 class TestQueryPermissionConditionsWoven(FrappeTestCase):
@@ -270,12 +306,15 @@ class TestQueryPermissionConditionsWoven(FrappeTestCase):
 		"""Patch Engine to return a recognisable criterion; assert the
 		predicate appears in the resolved SQL."""
 		from pypika import Field
+
 		# A literal-equality criterion: ``modified = 'sentinel-marker'``.
 		# Easy to spot in the produced SQL.
 		sentinel = Field("modified") == "sentinel-marker"
 
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = sentinel
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query({"from": "DocType", "select": ["name"]})
@@ -285,8 +324,10 @@ class TestQueryPermissionConditionsWoven(FrappeTestCase):
 	def test_none_from_engine_is_skipped(self):
 		"""When the user has no restrictions, Engine returns None - we
 		must not append anything to the WHERE."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query({"from": "DocType", "select": ["name"]})
@@ -301,8 +342,10 @@ class TestQueryRowGuard(FrappeTestCase):
 	caller didn't opt in via ``confirm_large``."""
 
 	def test_guard_fires_above_threshold(self):
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			# tabDocType has hundreds of rows on every Frappe site - a
 			# reliable fixture for the row-guard test.
@@ -312,15 +355,19 @@ class TestQueryRowGuard(FrappeTestCase):
 			self.assertGreater(cm.exception.row_count, ROW_GUARD)
 
 	def test_guard_silent_under_threshold(self):
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			result = query({"from": "DocType", "limit": ROW_GUARD - 50})
 		self.assertLessEqual(len(result["rows"]), ROW_GUARD - 50)
 
 	def test_guard_opt_in_bypasses(self):
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			result = query(
 				{"from": "DocType", "limit": ROW_GUARD + 50},
@@ -335,13 +382,16 @@ class TestQueryHappyPath(FrappeTestCase):
 	(System Manager)."""
 
 	def test_returns_rows_and_resolved_sql(self):
-		result = query({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{"field": "dt.issingle", "op": "=", "value": 1}],
-			"order_by": [{"field": "dt.name", "dir": "asc"}],
-			"limit": 5,
-		})
+		result = query(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [{"field": "dt.issingle", "op": "=", "value": 1}],
+				"order_by": [{"field": "dt.name", "dir": "asc"}],
+				"limit": 5,
+			}
+		)
 		self.assertIn("sql", result)
 		self.assertIn("rows", result)
 		self.assertGreater(len(result["rows"]), 0)
@@ -349,14 +399,16 @@ class TestQueryHappyPath(FrappeTestCase):
 
 	def test_aggregate_with_group_by(self):
 		"""Real aggregate query: count DocTypes per module."""
-		result = query({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.module",
-					   {"agg": "count", "field": "*", "as": "n"}],
-			"group_by": ["dt.module"],
-			"order_by": [{"field": "n", "dir": "desc"}],
-			"limit": 5,
-		})
+		result = query(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.module", {"agg": "count", "field": "*", "as": "n"}],
+				"group_by": ["dt.module"],
+				"order_by": [{"field": "n", "dir": "desc"}],
+				"limit": 5,
+			}
+		)
 		self.assertGreater(len(result["rows"]), 0)
 		self.assertIn("module", result["rows"][0])
 		self.assertIn("n", result["rows"][0])
@@ -372,8 +424,10 @@ class TestQueryV02Additions(FrappeTestCase):
 
 	def _build_sql(self, spec: dict) -> str:
 		"""Build through the full pipeline, capture the resolved SQL."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query(spec)
@@ -383,20 +437,26 @@ class TestQueryV02Additions(FrappeTestCase):
 
 	def test_distinct_emits_distinct_in_sql(self):
 		"""distinct=True at the spec root produces SELECT DISTINCT."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.module"],
-			"distinct": True,
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.module"],
+				"distinct": True,
+			}
+		)
 		self.assertIn("DISTINCT", sql.upper())
 
 	def test_distinct_false_no_distinct(self):
 		"""distinct=False (or omitted) does NOT add DISTINCT."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.module"],
-			"distinct": False,
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.module"],
+				"distinct": False,
+			}
+		)
 		self.assertNotIn("DISTINCT", sql.upper())
 
 	def test_distinct_rejects_non_bool(self):
@@ -407,22 +467,26 @@ class TestQueryV02Additions(FrappeTestCase):
 	# ---- OFFSET ----------------------------------------------------
 
 	def test_offset_emits_offset_in_sql(self):
-		sql = self._build_sql({
-			"from": "DocType",
-			"select": ["name"],
-			"limit": 10,
-			"offset": 20,
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"select": ["name"],
+				"limit": 10,
+				"offset": 20,
+			}
+		)
 		self.assertIn("OFFSET 20", sql.upper())
 
 	def test_offset_zero_does_not_emit_offset(self):
 		"""offset=0 is a no-op; pypika shouldn't emit OFFSET 0 either."""
-		sql = self._build_sql({
-			"from": "DocType",
-			"select": ["name"],
-			"limit": 10,
-			"offset": 0,
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"select": ["name"],
+				"limit": 10,
+				"offset": 0,
+			}
+		)
 		self.assertNotIn("OFFSET", sql.upper())
 
 	def test_offset_rejects_negative(self):
@@ -444,15 +508,20 @@ class TestQueryV02Additions(FrappeTestCase):
 
 	def test_count_distinct_emits_count_distinct(self):
 		"""distinct=True on a count aggregate becomes COUNT(DISTINCT field)."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"agg": "count",
-				"field": "dt.module",
-				"distinct": True,
-				"as": "n",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"agg": "count",
+						"field": "dt.module",
+						"distinct": True,
+						"as": "n",
+					}
+				],
+			}
+		)
 		# Substring matches accommodate dialect spacing variation
 		# (some dialects emit COUNT(DISTINCT x), others COUNT( DISTINCT x )).
 		upper = sql.upper().replace(" ", "")
@@ -461,52 +530,75 @@ class TestQueryV02Additions(FrappeTestCase):
 	def test_sum_distinct_emits_sum_distinct(self):
 		"""DISTINCT modifier applies to all aggregates uniformly. Use
 		tabDocType.idx (a numeric field guaranteed present)."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"agg": "sum",
-				"field": "dt.idx",
-				"distinct": True,
-				"as": "s",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"agg": "sum",
+						"field": "dt.idx",
+						"distinct": True,
+						"as": "s",
+					}
+				],
+			}
+		)
 		upper = sql.upper().replace(" ", "")
 		self.assertIn("SUM(DISTINCT", upper)
 
 	# ---- EXISTS / NOT EXISTS ---------------------------------------
 
 	def test_exists_subquery_emits_exists(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{
-				"op": "exists",
-				"value": {
-					"from": "DocField", "alias": "df",
-					"where": [{
-						"field": "df.parent", "op": "=",
-						"value": {"$field": "dt.name"},
-					}],
-				},
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [
+					{
+						"op": "exists",
+						"value": {
+							"from": "DocField",
+							"alias": "df",
+							"where": [
+								{
+									"field": "df.parent",
+									"op": "=",
+									"value": {"$field": "dt.name"},
+								}
+							],
+						},
+					}
+				],
+			}
+		)
 		self.assertIn("EXISTS", sql.upper())
 
 	def test_not_exists_subquery_emits_not_exists(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{
-				"op": "not exists",
-				"value": {
-					"from": "DocField", "alias": "df",
-					"where": [{
-						"field": "df.parent", "op": "=",
-						"value": {"$field": "dt.name"},
-					}],
-				},
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [
+					{
+						"op": "not exists",
+						"value": {
+							"from": "DocField",
+							"alias": "df",
+							"where": [
+								{
+									"field": "df.parent",
+									"op": "=",
+									"value": {"$field": "dt.name"},
+								}
+							],
+						},
+					}
+				],
+			}
+		)
 		upper = sql.upper()
 		self.assertIn("NOT", upper)
 		self.assertIn("EXISTS", upper)
@@ -514,20 +606,29 @@ class TestQueryV02Additions(FrappeTestCase):
 	def test_correlated_subquery_resolves_outer_field(self):
 		"""The {"$field": "dt.name"} marker must resolve to the OUTER
 		table's column, not a literal string."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{
-				"op": "exists",
-				"value": {
-					"from": "DocField", "alias": "df",
-					"where": [{
-						"field": "df.parent", "op": "=",
-						"value": {"$field": "dt.name"},
-					}],
-				},
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [
+					{
+						"op": "exists",
+						"value": {
+							"from": "DocField",
+							"alias": "df",
+							"where": [
+								{
+									"field": "df.parent",
+									"op": "=",
+									"value": {"$field": "dt.name"},
+								}
+							],
+						},
+					}
+				],
+			}
+		)
 		# The resolved SQL should reference the outer dt.name column,
 		# not the literal string 'dt.name'. We check that the literal
 		# string form is NOT present (with the surrounding quotes).
@@ -535,117 +636,171 @@ class TestQueryV02Additions(FrappeTestCase):
 
 	def test_exists_subspec_rejects_select(self):
 		"""SELECT in a sub-spec is rejected - subqueries auto-select 1."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"select": ["df.fieldname"],  # not allowed
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"select": ["df.fieldname"],  # not allowed
+								},
+							}
+						],
+					}
+				)
 			self.assertIn("select", str(cm.exception).lower())
 
 	def test_exists_subspec_rejects_order_by(self):
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"order_by": [{"field": "df.fieldname"}],
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"order_by": [{"field": "df.fieldname"}],
+								},
+							}
+						],
+					}
+				)
 
 	def test_exists_subspec_rejects_limit(self):
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"limit": 10,
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"limit": 10,
+								},
+							}
+						],
+					}
+				)
 
 	def test_exists_subspec_rejects_distinct(self):
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"distinct": True,
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"distinct": True,
+								},
+							}
+						],
+					}
+				)
 
 	def test_exists_recursion_depth_capped(self):
 		"""Two levels of nesting (outer + one EXISTS) is the cap;
 		three levels raises."""
 		# Build a depth-3 spec: outer -> EXISTS(... EXISTS(... ))
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"where": [{
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
 								"op": "exists",
 								"value": {
-									"from": "DocPerm", "alias": "dp",
-									"where": [{
-										"field": "dp.parent", "op": "=",
-										"value": {"$field": "df.parent"},
-									}],
+									"from": "DocField",
+									"alias": "df",
+									"where": [
+										{
+											"op": "exists",
+											"value": {
+												"from": "DocPerm",
+												"alias": "dp",
+												"where": [
+													{
+														"field": "dp.parent",
+														"op": "=",
+														"value": {"$field": "df.parent"},
+													}
+												],
+											},
+										}
+									],
 								},
-							}],
-						},
-					}],
-				})
+							}
+						],
+					}
+				)
 			self.assertIn("nesting", str(cm.exception).lower())
 
 	def test_exists_subspec_must_be_dict(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{"op": "exists", "value": "not-a-dict"}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [{"op": "exists", "value": "not-a-dict"}],
+					}
+				)
 
 	def test_exists_subspec_requires_from(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {"alias": "df"},  # missing 'from'
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
+								"op": "exists",
+								"value": {"alias": "df"},  # missing 'from'
+							}
+						],
+					}
+				)
 
 
 class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
@@ -664,6 +819,7 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 
 	def test_subspec_doctype_subjected_to_has_permission(self):
 		"""Role gate denies sub-spec DocType → PermissionDeniedError."""
+
 		# has_permission returns True for the outer doctype, False for
 		# the sub-spec's doctype. The pre-fix code would let this slip
 		# through because _collect_doctypes only saw the outer FROM.
@@ -673,42 +829,62 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 			if dt == "DocField":
 				return False
 			return True
+
 		with patch("frappe.has_permission", side_effect=_perm):
 			with self.assertRaises(PermissionDeniedError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"where": [{
-								"field": "df.parent", "op": "=",
-								"value": {"$field": "dt.name"},
-							}],
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"where": [
+										{
+											"field": "df.parent",
+											"op": "=",
+											"value": {"$field": "dt.name"},
+										}
+									],
+								},
+							}
+						],
+					}
+				)
 			self.assertIn("DocField", str(cm.exception))
 
 	def test_subspec_doctype_subjected_to_allowlist(self):
 		"""Per-site allowlist denies sub-spec doctype."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("jarvis.tools.query._load_doctype_allowlist",
-		           return_value={"DocType"}):  # DocField NOT in allowlist
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("jarvis.tools.query._load_doctype_allowlist", return_value={"DocType"}),
+		):  # DocField NOT in allowlist
 			with self.assertRaises(PermissionDeniedError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"where": [{
-								"field": "df.parent", "op": "=",
-								"value": {"$field": "dt.name"},
-							}],
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"where": [
+										{
+											"field": "df.parent",
+											"op": "=",
+											"value": {"$field": "dt.name"},
+										}
+									],
+								},
+							}
+						],
+					}
+				)
 			self.assertIn("DocField", str(cm.exception))
 			self.assertIn("allowlist", str(cm.exception).lower())
 
@@ -718,6 +894,7 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 		outer query's WHERE. This is the User Permission enforcement
 		that closes the row-level side-channel."""
 		from pypika import Field
+
 		# Distinctive sentinel literals only contributed by each
 		# perm-condition path. The literal strings make it
 		# unambiguous where they land in the resolved SQL.
@@ -731,63 +908,84 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 				return outer_sentinel
 			return None
 
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine_cls:
-			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
-				_perm_conds
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine_cls,
+		):
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = _perm_conds
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
-				result = query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name"],
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"where": [{
-								"field": "df.parent", "op": "=",
-								"value": {"$field": "dt.name"},
-							}],
-						},
-					}],
-				})
+				result = query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name"],
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"where": [
+										{
+											"field": "df.parent",
+											"op": "=",
+											"value": {"$field": "dt.name"},
+										}
+									],
+								},
+							}
+						],
+					}
+				)
 		sql = result["sql"]
 		# Both sentinels appear; the sub-spec one is the new
 		# behavior the fix introduces.
-		self.assertIn("SENTINEL_SUB", sql,
-		              "sub-spec permission condition missing from "
-		              "resolved SQL — security weave broken")
-		self.assertIn("SENTINEL_OUTER", sql,
-		              "outer permission condition missing — sanity check")
+		self.assertIn(
+			"SENTINEL_SUB",
+			sql,
+			"sub-spec permission condition missing from resolved SQL — security weave broken",
+		)
+		self.assertIn("SENTINEL_OUTER", sql, "outer permission condition missing — sanity check")
 		# And the sub sentinel is inside the EXISTS parenthesized
 		# subquery, not at the outer query top level.
 		exists_idx = sql.upper().find("EXISTS")
 		sub_idx = sql.find("SENTINEL_SUB")
-		self.assertGreater(sub_idx, exists_idx,
-		                   "sub-spec perm condition leaked to outer WHERE")
+		self.assertGreater(sub_idx, exists_idx, "sub-spec perm condition leaked to outer WHERE")
 
 	def test_collect_doctypes_walks_nested_exists(self):
 		"""Two-level EXISTS: outermost has FROM A, level-1 sub-spec
 		has FROM B, level-2 sub-spec has FROM C. All three doctypes
 		must be collected for role + allowlist gates."""
 		from jarvis.tools.query import _collect_doctypes
+
 		spec = {
-			"from": "DocType", "alias": "dt",
-			"where": [{
-				"op": "exists",
-				"value": {
-					"from": "DocField", "alias": "df",
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocPerm", "alias": "dp",
-							"where": [{
-								"field": "dp.parent", "op": "=",
-								"value": {"$field": "df.parent"},
-							}],
-						},
-					}],
-				},
-			}],
+			"from": "DocType",
+			"alias": "dt",
+			"where": [
+				{
+					"op": "exists",
+					"value": {
+						"from": "DocField",
+						"alias": "df",
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocPerm",
+									"alias": "dp",
+									"where": [
+										{
+											"field": "dp.parent",
+											"op": "=",
+											"value": {"$field": "df.parent"},
+										}
+									],
+								},
+							}
+						],
+					},
+				}
+			],
 		}
 		collected = _collect_doctypes(spec)
 		self.assertEqual(set(collected), {"DocType", "DocField", "DocPerm"})
@@ -795,23 +993,34 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 	def test_collect_doctypes_walks_subspec_joins(self):
 		"""A sub-spec's own joins also contribute doctypes."""
 		from jarvis.tools.query import _collect_doctypes
+
 		spec = {
-			"from": "DocType", "alias": "dt",
-			"where": [{
-				"op": "not exists",
-				"value": {
-					"from": "DocField", "alias": "df",
-					"joins": [{
-						"type": "inner", "doctype": "DocPerm",
-						"alias": "dp",
-						"on": {"dp.parent": "df.parent"},
-					}],
-					"where": [{
-						"field": "df.parent", "op": "=",
-						"value": {"$field": "dt.name"},
-					}],
-				},
-			}],
+			"from": "DocType",
+			"alias": "dt",
+			"where": [
+				{
+					"op": "not exists",
+					"value": {
+						"from": "DocField",
+						"alias": "df",
+						"joins": [
+							{
+								"type": "inner",
+								"doctype": "DocPerm",
+								"alias": "dp",
+								"on": {"dp.parent": "df.parent"},
+							}
+						],
+						"where": [
+							{
+								"field": "df.parent",
+								"op": "=",
+								"value": {"$field": "dt.name"},
+							}
+						],
+					},
+				}
+			],
 		}
 		collected = _collect_doctypes(spec)
 		self.assertEqual(set(collected), {"DocType", "DocField", "DocPerm"})
@@ -825,6 +1034,7 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 		silently bypassed perms on the second alias - a side-channel
 		identical in shape to the v0.2.1 outer/sub-spec gap."""
 		from pypika import Field
+
 		# Distinct sentinel per call so we can verify both calls
 		# landed in the resolved SQL (not just the first).
 		sentinels = [
@@ -845,40 +1055,54 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 				return sentinels.pop(0) if sentinels else None
 			return None
 
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine_cls:
-			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
-				_perm_conds
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine_cls,
+		):
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = _perm_conds
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
-				result = query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name"],
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"joins": [{
-								"type": "inner", "doctype": "DocField",
-								"alias": "df2",
-								"on": {"df2.parent": "df.parent"},
-							}],
-							"where": [{
-								"field": "df.parent", "op": "=",
-								"value": {"$field": "dt.name"},
-							}],
-						},
-					}],
-				})
+				result = query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name"],
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"joins": [
+										{
+											"type": "inner",
+											"doctype": "DocField",
+											"alias": "df2",
+											"on": {"df2.parent": "df.parent"},
+										}
+									],
+									"where": [
+										{
+											"field": "df.parent",
+											"op": "=",
+											"value": {"$field": "dt.name"},
+										}
+									],
+								},
+							}
+						],
+					}
+				)
 		sql = result["sql"]
 		# Both sentinels must appear in the resolved SQL.
 		self.assertIn(
-			"SELF_JOIN_SENTINEL_FIRST", sql,
+			"SELF_JOIN_SENTINEL_FIRST",
+			sql,
 			"sub-spec perm gate skipped the first alias - regression",
 		)
 		self.assertIn(
-			"SELF_JOIN_SENTINEL_SECOND", sql,
-			"sub-spec perm gate skipped the second alias - v0.2.1 "
-			"side-channel still open",
+			"SELF_JOIN_SENTINEL_SECOND",
+			sql,
+			"sub-spec perm gate skipped the second alias - v0.2.1 side-channel still open",
 		)
 		# Both sentinels are inside the EXISTS subquery, not at the
 		# outer WHERE level.
@@ -901,29 +1125,32 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 			# Capture the Engine instance's doctype attribute at
 			# call time.
 			engine_instance = fake_engine_cls.return_value
-			captured.append({
-				"dt": dt,
-				"engine_doctype": getattr(
-					engine_instance, "doctype", "<UNSET>"
-				),
-			})
+			captured.append(
+				{
+					"dt": dt,
+					"engine_doctype": getattr(engine_instance, "doctype", "<UNSET>"),
+				}
+			)
 			return None
 
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine_cls:
-			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
-				_capture
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine_cls,
+		):
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = _capture
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
-				query({
-					"from": "DocType",
-					"select": ["name"],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": ["name"],
+					}
+				)
 		self.assertTrue(captured, "engine.get_permission_conditions never called")
 		for c in captured:
 			self.assertEqual(
-				c["engine_doctype"], "DocType",
-				f"engine.doctype not set when querying {c['dt']!r}: "
-				f"{c['engine_doctype']!r}",
+				c["engine_doctype"],
+				"DocType",
+				f"engine.doctype not set when querying {c['dt']!r}: {c['engine_doctype']!r}",
 			)
 
 	def test_subspec_engine_has_doctype_attribute_set(self):
@@ -934,33 +1161,43 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 
 		def _capture(dt, table):
 			engine_instance = fake_engine_cls.return_value
-			captured.append({
-				"dt": dt,
-				"engine_doctype": getattr(
-					engine_instance, "doctype", "<UNSET>"
-				),
-			})
+			captured.append(
+				{
+					"dt": dt,
+					"engine_doctype": getattr(engine_instance, "doctype", "<UNSET>"),
+				}
+			)
 			return None
 
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine_cls:
-			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
-				_capture
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine_cls,
+		):
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = _capture
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name"],
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"where": [{
-								"field": "df.parent", "op": "=",
-								"value": {"$field": "dt.name"},
-							}],
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name"],
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"where": [
+										{
+											"field": "df.parent",
+											"op": "=",
+											"value": {"$field": "dt.name"},
+										}
+									],
+								},
+							}
+						],
+					}
+				)
 		# Find the sub-spec calls (dt == "DocField") and check the
 		# engine's doctype was the sub-spec's "from" value.
 		subspec_calls = [c for c in captured if c["dt"] == "DocField"]
@@ -976,7 +1213,8 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 		# value (DocField).
 		for c in subspec_calls:
 			self.assertEqual(
-				c["engine_doctype"], "DocField",
+				c["engine_doctype"],
+				"DocField",
 				f"sub_engine.doctype not set: {c['engine_doctype']!r}",
 			)
 
@@ -1015,11 +1253,13 @@ class TestQueryRobustnessHardening(FrappeTestCase):
 		to _resolve_field, which would produce table['']."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": ["name"],
-					"group_by": [""],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": ["name"],
+						"group_by": [""],
+					}
+				)
 			self.assertIn("non-empty", str(cm.exception).lower())
 
 	def test_field_ref_rejects_trailing_dot(self):
@@ -1027,20 +1267,26 @@ class TestQueryRobustnessHardening(FrappeTestCase):
 		generates broken SQL with empty column reference."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt."],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt."],
+					}
+				)
 			self.assertIn("alias.field", str(cm.exception).lower())
 
 	def test_field_ref_rejects_leading_dot(self):
 		"""``.field`` produces an empty alias half."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": [".name"],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": [".name"],
+					}
+				)
 			self.assertIn("alias.field", str(cm.exception).lower())
 
 	def test_join_on_empty_dict_rejected(self):
@@ -1048,66 +1294,99 @@ class TestQueryRobustnessHardening(FrappeTestCase):
 		terms[0] with IndexError. Reject with a clear error."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"joins": [{
-						"type": "inner", "doctype": "DocField",
-						"alias": "df", "on": {},
-					}],
-					"select": ["dt.name"],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"joins": [
+							{
+								"type": "inner",
+								"doctype": "DocField",
+								"alias": "df",
+								"on": {},
+							}
+						],
+						"select": ["dt.name"],
+					}
+				)
 			self.assertIn("on", str(cm.exception).lower())
 
 	def test_subspec_join_on_empty_dict_rejected(self):
 		"""Same guard inside a sub-spec join."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name"],
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"joins": [{
-								"type": "inner", "doctype": "DocPerm",
-								"alias": "dp", "on": {},
-							}],
-							"where": [{
-								"field": "df.parent", "op": "=",
-								"value": {"$field": "dt.name"},
-							}],
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name"],
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"joins": [
+										{
+											"type": "inner",
+											"doctype": "DocPerm",
+											"alias": "dp",
+											"on": {},
+										}
+									],
+									"where": [
+										{
+											"field": "df.parent",
+											"op": "=",
+											"value": {"$field": "dt.name"},
+										}
+									],
+								},
+							}
+						],
+					}
+				)
 			self.assertIn("on", str(cm.exception).lower())
 
 	def test_nested_field_marker_rejected(self):
 		"""Buried ``{$field: ...}`` inside a nested dict value would
 		reach pypika as a raw dict. Reject with a clear message."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name"],
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": "DocField", "alias": "df",
-							"where": [{
-								"field": "df.parent", "op": "in",
-								"value": [
-									"foo",
-									{"nested": {"$field": "dt.name"}},
-								],
-							}],
-						},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name"],
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": "DocField",
+									"alias": "df",
+									"where": [
+										{
+											"field": "df.parent",
+											"op": "in",
+											"value": [
+												"foo",
+												{"nested": {"$field": "dt.name"}},
+											],
+										}
+									],
+								},
+							}
+						],
+					}
+				)
 			self.assertIn("$field", str(cm.exception))
 
 
@@ -1121,118 +1400,146 @@ class TestQueryExprDSLPhase1Dates(FrappeTestCase):
 	"""
 
 	def _build_sql(self, spec: dict) -> str:
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query(spec)
 		return result["sql"]
 
 	def test_date_part_month_in_select(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "date_part",
-					"args": [
-						{"literal": "month"},
-						{"field": "dt.creation"},
-					],
-				},
-				"as": "month",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "date_part",
+							"args": [
+								{"literal": "month"},
+								{"field": "dt.creation"},
+							],
+						},
+						"as": "month",
+					}
+				],
+			}
+		)
 		self.assertIn("EXTRACT", sql.upper())
 		self.assertIn("MONTH", sql.upper())
 
 	def test_date_part_year_in_select(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "date_part",
-					"args": [{"literal": "year"}, {"field": "dt.creation"}],
-				},
-				"as": "year",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "date_part",
+							"args": [{"literal": "year"}, {"field": "dt.creation"}],
+						},
+						"as": "year",
+					}
+				],
+			}
+		)
 		self.assertIn("EXTRACT", sql.upper())
 		self.assertIn("YEAR", sql.upper())
 
 	def test_date_part_rejects_unknown_unit(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "date_part",
-							"args": [
-								{"literal": "fortnight"},
-								{"field": "creation"},
-							],
-						},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "date_part",
+									"args": [
+										{"literal": "fortnight"},
+										{"field": "creation"},
+									],
+								},
+								"as": "x",
+							}
+						],
+					}
+				)
 			self.assertIn("date_part", str(cm.exception))
 
 	def test_date_part_fiscal_year_explicit_error(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "date_part",
-							"args": [
-								{"literal": "fiscal_year"},
-								{"field": "creation"},
-							],
-						},
-						"as": "fy",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "date_part",
+									"args": [
+										{"literal": "fiscal_year"},
+										{"field": "creation"},
+									],
+								},
+								"as": "fy",
+							}
+						],
+					}
+				)
 			self.assertIn("fiscal_year", str(cm.exception))
 
 	def test_date_part_group_by_with_count_aggregate(self):
 		"""The load-bearing reporting case: 'count per month'."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [
-				{
-					"expr": {
-						"fn": "date_part",
-						"args": [
-							{"literal": "month"},
-							{"field": "dt.creation"},
-						],
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "date_part",
+							"args": [
+								{"literal": "month"},
+								{"field": "dt.creation"},
+							],
+						},
+						"as": "month",
 					},
-					"as": "month",
-				},
-				{"agg": "count", "field": "*", "as": "n"},
-			],
-			"group_by": ["month"],
-		})
+					{"agg": "count", "field": "*", "as": "n"},
+				],
+				"group_by": ["month"],
+			}
+		)
 		self.assertIn("EXTRACT", sql.upper())
 		self.assertIn("MONTH", sql.upper())
 		self.assertIn("COUNT", sql.upper())
 		self.assertIn("GROUP BY", sql.upper())
 
 	def test_date_trunc_month_emits_format_or_trunc(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "date_trunc",
-					"args": [
-						{"literal": "month"},
-						{"field": "dt.creation"},
-					],
-				},
-				"as": "month_start",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "date_trunc",
+							"args": [
+								{"literal": "month"},
+								{"field": "dt.creation"},
+							],
+						},
+						"as": "month_start",
+					}
+				],
+			}
+		)
 		upper = sql.upper()
 		self.assertTrue(
 			"DATE_FORMAT" in upper or "DATE_TRUNC" in upper or "STRFTIME" in upper,
@@ -1240,68 +1547,85 @@ class TestQueryExprDSLPhase1Dates(FrappeTestCase):
 		)
 
 	def test_date_add_in_where_predicate(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{
-				"expr": {
-					"fn": "date_add",
-					"args": [
-						{"field": "dt.creation"},
-						{"literal": 7},
-						{"literal": "day"},
-					],
-				},
-				"op": ">=",
-				"value": "2026-06-01",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [
+					{
+						"expr": {
+							"fn": "date_add",
+							"args": [
+								{"field": "dt.creation"},
+								{"literal": 7},
+								{"literal": "day"},
+							],
+						},
+						"op": ">=",
+						"value": "2026-06-01",
+					}
+				],
+			}
+		)
 		self.assertIn("DATE_ADD", sql.upper())
 
 	def test_expr_rejects_unknown_function(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {"fn": "not_a_function", "args": []},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {"fn": "not_a_function", "args": []},
+								"as": "x",
+							}
+						],
+					}
+				)
 			self.assertIn("not_a_function", str(cm.exception))
 
 	def test_expr_rejects_arity_mismatch(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "date_part",
-							"args": [{"literal": "month"}],
-						},
-						"as": "m",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "date_part",
+									"args": [{"literal": "month"}],
+								},
+								"as": "m",
+							}
+						],
+					}
+				)
 			self.assertIn("date_part", str(cm.exception))
 
 	def test_expr_rejects_wrong_arg_kind(self):
 		"""date_part's first arg must be a literal, not a field."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "date_part",
-							"args": [
-								{"field": "dt.unit"},
-								{"field": "dt.creation"},
-							],
-						},
-						"as": "m",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "date_part",
+									"args": [
+										{"field": "dt.unit"},
+										{"field": "dt.creation"},
+									],
+								},
+								"as": "m",
+							}
+						],
+					}
+				)
 			self.assertIn("literal", str(cm.exception).lower())
 
 	def test_expr_rejects_nesting_beyond_cap(self):
@@ -1313,70 +1637,90 @@ class TestQueryExprDSLPhase1Dates(FrappeTestCase):
 			}
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{"expr": deepest, "as": "x"}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [{"expr": deepest, "as": "x"}],
+					}
+				)
 			self.assertIn("nesting", str(cm.exception).lower())
 
 	def test_expr_select_requires_as_alias(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {"field": "creation"},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {"field": "creation"},
+							}
+						],
+					}
+				)
 			self.assertIn("as", str(cm.exception).lower())
 
 	def test_expr_field_node_resolves_correctly(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{"expr": {"field": "dt.name"}, "as": "name"}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [{"expr": {"field": "dt.name"}, "as": "name"}],
+			}
+		)
 		self.assertIn("name", sql)
 
 	def test_expr_literal_node(self):
-		sql = self._build_sql({
-			"from": "DocType",
-			"select": [
-				"name",
-				{"expr": {"literal": 42}, "as": "answer"},
-			],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"select": [
+					"name",
+					{"expr": {"literal": 42}, "as": "answer"},
+				],
+			}
+		)
 		self.assertIn("42", sql)
 
 	def test_aggregate_can_wrap_expression(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"agg": "max",
-				"expr": {
-					"fn": "date_part",
-					"args": [
-						{"literal": "year"},
-						{"field": "dt.creation"},
-					],
-				},
-				"as": "max_year",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"agg": "max",
+						"expr": {
+							"fn": "date_part",
+							"args": [
+								{"literal": "year"},
+								{"field": "dt.creation"},
+							],
+						},
+						"as": "max_year",
+					}
+				],
+			}
+		)
 		self.assertIn("MAX", sql.upper())
 		self.assertIn("EXTRACT", sql.upper())
 
 	def test_aggregate_rejects_both_field_and_expr(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"agg": "sum",
-						"field": "creation",
-						"expr": {"field": "creation"},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"agg": "sum",
+								"field": "creation",
+								"expr": {"field": "creation"},
+								"as": "x",
+							}
+						],
+					}
+				)
 			self.assertIn("expr", str(cm.exception).lower())
 
 
@@ -1384,134 +1728,186 @@ class TestQueryExprDSLPhase2NullAndArithmetic(FrappeTestCase):
 	"""Expression DSL Phase 2: NULL handling + arithmetic."""
 
 	def _build_sql(self, spec: dict) -> str:
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query(spec)
 		return result["sql"]
 
 	def test_coalesce_two_args(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "coalesce",
-					"args": [{"field": "dt.module"}, {"literal": "(unset)"}],
-				},
-				"as": "module_or_unset",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "coalesce",
+							"args": [{"field": "dt.module"}, {"literal": "(unset)"}],
+						},
+						"as": "module_or_unset",
+					}
+				],
+			}
+		)
 		self.assertIn("COALESCE", sql.upper())
 
 	def test_coalesce_variadic_three_args(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "coalesce",
-					"args": [
-						{"field": "dt.module"},
-						{"field": "dt.name"},
-						{"literal": "fallback"},
-					],
-				},
-				"as": "x",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "coalesce",
+							"args": [
+								{"field": "dt.module"},
+								{"field": "dt.name"},
+								{"literal": "fallback"},
+							],
+						},
+						"as": "x",
+					}
+				],
+			}
+		)
 		self.assertIn("COALESCE", sql.upper())
 
 	def test_ifnull(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "ifnull",
-					"args": [{"field": "dt.module"}, {"literal": "Other"}],
-				},
-				"as": "module",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "ifnull",
+							"args": [{"field": "dt.module"}, {"literal": "Other"}],
+						},
+						"as": "module",
+					}
+				],
+			}
+		)
 		self.assertIn("COALESCE", sql.upper())
 
 	def test_arithmetic_mul(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {"fn": "mul", "args": [{"field": "dt.idx"}, {"literal": 100}]},
-				"as": "scaled",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {"fn": "mul", "args": [{"field": "dt.idx"}, {"literal": 100}]},
+						"as": "scaled",
+					}
+				],
+			}
+		)
 		self.assertIn("*", sql)
 		self.assertIn("100", sql)
 
 	def test_arithmetic_add_sub_div(self):
 		for op_name, op_sym in [("add", "+"), ("sub", "-"), ("div", "/")]:
-			sql = self._build_sql({
-				"from": "DocType", "alias": "dt",
-				"select": [{
-					"expr": {"fn": op_name, "args": [{"field": "dt.idx"}, {"literal": 2}]},
-					"as": "x",
-				}],
-			})
+			sql = self._build_sql(
+				{
+					"from": "DocType",
+					"alias": "dt",
+					"select": [
+						{
+							"expr": {"fn": op_name, "args": [{"field": "dt.idx"}, {"literal": 2}]},
+							"as": "x",
+						}
+					],
+				}
+			)
 			self.assertIn(op_sym, sql, f"{op_name} should emit {op_sym!r}")
 
 	def test_neg_emits_unary_negation(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {"fn": "neg", "args": [{"field": "dt.idx"}]},
-				"as": "x",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {"fn": "neg", "args": [{"field": "dt.idx"}]},
+						"as": "x",
+					}
+				],
+			}
+		)
 		self.assertIn("0", sql)
 
 	def test_abs(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{"expr": {"fn": "abs", "args": [{"field": "dt.idx"}]}, "as": "x"}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [{"expr": {"fn": "abs", "args": [{"field": "dt.idx"}]}, "as": "x"}],
+			}
+		)
 		self.assertIn("ABS", sql.upper())
 
 	def test_round(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {"fn": "round", "args": [{"field": "dt.idx"}, {"literal": 2}]},
-				"as": "x",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {"fn": "round", "args": [{"field": "dt.idx"}, {"literal": 2}]},
+						"as": "x",
+					}
+				],
+			}
+		)
 		self.assertIn("ROUND", sql.upper())
 
 	def test_round_rejects_non_literal_digits(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {"fn": "round", "args": [{"field": "x"}, {"field": "y"}]},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {"fn": "round", "args": [{"field": "x"}, {"field": "y"}]},
+								"as": "x",
+							}
+						],
+					}
+				)
 
 	def test_ceil_and_floor(self):
 		for fn_name, expected in [("ceil", "CEIL"), ("floor", "FLOOR")]:
-			sql = self._build_sql({
-				"from": "DocType", "alias": "dt",
-				"select": [{"expr": {"fn": fn_name, "args": [{"field": "dt.idx"}]}, "as": "x"}],
-			})
+			sql = self._build_sql(
+				{
+					"from": "DocType",
+					"alias": "dt",
+					"select": [{"expr": {"fn": fn_name, "args": [{"field": "dt.idx"}]}, "as": "x"}],
+				}
+			)
 			self.assertIn(expected, sql.upper())
 
 	def test_nested_arithmetic_in_aggregate(self):
 		"""SUM(qty * rate) - the flagship combination."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"agg": "sum",
-				"expr": {"fn": "mul", "args": [{"field": "dt.idx"}, {"literal": 10}]},
-				"as": "total",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"agg": "sum",
+						"expr": {"fn": "mul", "args": [{"field": "dt.idx"}, {"literal": 10}]},
+						"as": "total",
+					}
+				],
+			}
+		)
 		self.assertIn("SUM", sql.upper())
 		self.assertIn("*", sql)
 
@@ -1520,28 +1916,37 @@ class TestQueryExprDSLPhase3CaseWhen(FrappeTestCase):
 	"""Expression DSL Phase 3: CASE WHEN conditional aggregation."""
 
 	def _build_sql(self, spec: dict) -> str:
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query(spec)
 		return result["sql"]
 
 	def test_case_when_with_else(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "case",
-					"args": [
-						{"when": {"field": "dt.module", "op": "=", "value": "Core"},
-						 "then": {"literal": "core"}},
-						{"else": {"literal": "other"}},
-					],
-				},
-				"as": "bucket",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "case",
+							"args": [
+								{
+									"when": {"field": "dt.module", "op": "=", "value": "Core"},
+									"then": {"literal": "core"},
+								},
+								{"else": {"literal": "other"}},
+							],
+						},
+						"as": "bucket",
+					}
+				],
+			}
+		)
 		upper = sql.upper()
 		self.assertIn("CASE", upper)
 		self.assertIn("WHEN", upper)
@@ -1549,39 +1954,53 @@ class TestQueryExprDSLPhase3CaseWhen(FrappeTestCase):
 		self.assertIn("END", upper)
 
 	def test_case_when_only_no_else(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "case",
-					"args": [
-						{"when": {"field": "dt.module", "op": "=", "value": "Core"},
-						 "then": {"literal": "core"}},
-					],
-				},
-				"as": "bucket",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "case",
+							"args": [
+								{
+									"when": {"field": "dt.module", "op": "=", "value": "Core"},
+									"then": {"literal": "core"},
+								},
+							],
+						},
+						"as": "bucket",
+					}
+				],
+			}
+		)
 		self.assertIn("CASE", sql.upper())
 		self.assertIn("WHEN", sql.upper())
 
 	def test_case_inside_sum_for_conditional_aggregate(self):
 		"""SUM(CASE WHEN ... THEN ... ELSE 0) - killer use case."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"agg": "sum",
-				"expr": {
-					"fn": "case",
-					"args": [
-						{"when": {"field": "dt.module", "op": "=", "value": "Core"},
-						 "then": {"field": "dt.idx"}},
-						{"else": {"literal": 0}},
-					],
-				},
-				"as": "core_idx_total",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"agg": "sum",
+						"expr": {
+							"fn": "case",
+							"args": [
+								{
+									"when": {"field": "dt.module", "op": "=", "value": "Core"},
+									"then": {"field": "dt.idx"},
+								},
+								{"else": {"literal": 0}},
+							],
+						},
+						"as": "core_idx_total",
+					}
+				],
+			}
+		)
 		upper = sql.upper()
 		self.assertIn("SUM", upper)
 		self.assertIn("CASE", upper)
@@ -1590,80 +2009,103 @@ class TestQueryExprDSLPhase3CaseWhen(FrappeTestCase):
 	def test_case_rejects_empty_clauses(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{"expr": {"fn": "case", "args": []}, "as": "x"}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [{"expr": {"fn": "case", "args": []}, "as": "x"}],
+					}
+				)
 			self.assertIn("case", str(cm.exception).lower())
 
 	def test_case_rejects_multiple_else(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "case",
-							"args": [
-								{"else": {"literal": 1}},
-								{"else": {"literal": 2}},
-							],
-						},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "case",
+									"args": [
+										{"else": {"literal": 1}},
+										{"else": {"literal": 2}},
+									],
+								},
+								"as": "x",
+							}
+						],
+					}
+				)
 			self.assertIn("else", str(cm.exception).lower())
 
 	def test_case_rejects_else_not_last(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "case",
-							"args": [
-								{"else": {"literal": 0}},
-								{"when": {"field": "module", "op": "=", "value": "Core"},
-								 "then": {"literal": 1}},
-							],
-						},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "case",
+									"args": [
+										{"else": {"literal": 0}},
+										{
+											"when": {"field": "module", "op": "=", "value": "Core"},
+											"then": {"literal": 1},
+										},
+									],
+								},
+								"as": "x",
+							}
+						],
+					}
+				)
 			self.assertIn("last", str(cm.exception).lower())
 
 	def test_case_rejects_when_without_then(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "case",
-							"args": [{"when": {"field": "module", "op": "=", "value": "Core"}}],
-						},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "case",
+									"args": [{"when": {"field": "module", "op": "=", "value": "Core"}}],
+								},
+								"as": "x",
+							}
+						],
+					}
+				)
 			self.assertIn("when", str(cm.exception).lower())
 
 	def test_case_rejects_exists_in_when(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": [{
-						"expr": {
-							"fn": "case",
-							"args": [{
-								"when": {"op": "exists", "value": {"from": "DocField"}},
-								"then": {"literal": 1},
-							}],
-						},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": [
+							{
+								"expr": {
+									"fn": "case",
+									"args": [
+										{
+											"when": {"op": "exists", "value": {"from": "DocField"}},
+											"then": {"literal": 1},
+										}
+									],
+								},
+								"as": "x",
+							}
+						],
+					}
+				)
 			self.assertIn("exists", str(cm.exception).lower())
 
 
@@ -1671,90 +2113,121 @@ class TestQueryExprDSLPhase4StringHelpers(FrappeTestCase):
 	"""Expression DSL Phase 4: string + numeric helpers."""
 
 	def _build_sql(self, spec: dict) -> str:
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query(spec)
 		return result["sql"]
 
 	def test_concat_two_args(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {"fn": "concat", "args": [{"field": "dt.module"}, {"literal": "/"}]},
-				"as": "labelled",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {"fn": "concat", "args": [{"field": "dt.module"}, {"literal": "/"}]},
+						"as": "labelled",
+					}
+				],
+			}
+		)
 		self.assertIn("CONCAT", sql.upper())
 
 	def test_concat_variadic_three_args(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "concat",
-					"args": [
-						{"field": "dt.module"},
-						{"literal": "/"},
-						{"field": "dt.name"},
-					],
-				},
-				"as": "full",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "concat",
+							"args": [
+								{"field": "dt.module"},
+								{"literal": "/"},
+								{"field": "dt.name"},
+							],
+						},
+						"as": "full",
+					}
+				],
+			}
+		)
 		self.assertIn("CONCAT", sql.upper())
 
 	def test_lower_for_case_insensitive_match(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name"],
-			"where": [{
-				"expr": {"fn": "lower", "args": [{"field": "dt.name"}]},
-				"op": "like",
-				"value": "%customer%",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name"],
+				"where": [
+					{
+						"expr": {"fn": "lower", "args": [{"field": "dt.name"}]},
+						"op": "like",
+						"value": "%customer%",
+					}
+				],
+			}
+		)
 		self.assertIn("LOWER", sql.upper())
 		self.assertIn("LIKE", sql.upper())
 
 	def test_upper_trim_length(self):
 		for fn_name, expected in [("upper", "UPPER"), ("trim", "TRIM"), ("length", "LENGTH")]:
-			sql = self._build_sql({
-				"from": "DocType", "alias": "dt",
-				"select": [{
-					"expr": {"fn": fn_name, "args": [{"field": "dt.module"}]},
-					"as": "x",
-				}],
-			})
+			sql = self._build_sql(
+				{
+					"from": "DocType",
+					"alias": "dt",
+					"select": [
+						{
+							"expr": {"fn": fn_name, "args": [{"field": "dt.module"}]},
+							"as": "x",
+						}
+					],
+				}
+			)
 			self.assertIn(expected, sql.upper())
 
 	def test_substring(self):
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [{
-				"expr": {
-					"fn": "substring",
-					"args": [{"field": "dt.module"}, {"literal": 1}, {"literal": 3}],
-				},
-				"as": "prefix",
-			}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {
+							"fn": "substring",
+							"args": [{"field": "dt.module"}, {"literal": 1}, {"literal": 3}],
+						},
+						"as": "prefix",
+					}
+				],
+			}
+		)
 		self.assertIn("SUBSTRING", sql.upper())
 
 	def test_substring_rejects_non_literal_offsets(self):
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType",
-					"select": [{
-						"expr": {
-							"fn": "substring",
-							"args": [{"field": "x"}, {"field": "y"}, {"literal": 3}],
-						},
-						"as": "x",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"expr": {
+									"fn": "substring",
+									"args": [{"field": "x"}, {"field": "y"}, {"literal": 3}],
+								},
+								"as": "x",
+							}
+						],
+					}
+				)
 
 
 class TestQuerySqlInjectionHardening(FrappeTestCase):
@@ -1772,8 +2245,10 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 	def _build_sql(self, spec: dict) -> str:
 		"""Mirror of TestQueryQbTranslation._build_sql: run the full
 		pipeline, capture the resolved SQL without executing."""
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine:
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
 			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
 				result = query(spec)
@@ -1786,10 +2261,13 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 		identifier quoting; reject it before it reaches the query."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name`"],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name`"],
+					}
+				)
 
 	def test_alias_with_backtick_rejected(self):
 		"""The FROM alias flows into pypika's ``.as_()`` sink."""
@@ -1804,40 +2282,53 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 		payload = "name`) UNION SELECT `password"
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name"],
-					"where": [{"field": f"dt.{payload}", "op": "=",
-					           "value": 1}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name"],
+						"where": [{"field": f"dt.{payload}", "op": "=", "value": 1}],
+					}
+				)
 
 	def test_select_output_alias_with_union_select_rejected(self):
 		"""The SELECT ``as`` output alias flows into pypika's ``.as_()``
 		sink and must be validated."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType",
-					"select": [{
-						"agg": "count", "field": "*",
-						"as": "n) UNION SELECT password FROM tabUser -- ",
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"select": [
+							{
+								"agg": "count",
+								"field": "*",
+								"as": "n) UNION SELECT password FROM tabUser -- ",
+							}
+						],
+					}
+				)
 
 	def test_join_alias_with_injection_rejected(self):
 		"""A JOIN alias with a space/paren payload is rejected before it
 		reaches ``.as_()``."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError):
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.name"],
-					"joins": [{
-						"type": "left", "doctype": "DocField",
-						"alias": "df) UNION SELECT",
-						"on": {"df.parent": "dt.name"},
-					}],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.name"],
+						"joins": [
+							{
+								"type": "left",
+								"doctype": "DocField",
+								"alias": "df) UNION SELECT",
+								"on": {"df.parent": "dt.name"},
+							}
+						],
+					}
+				)
 
 	# ---- unknown column / doctype rejection ------------------------
 
@@ -1846,10 +2337,13 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 		``get_valid_columns()``."""
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(InvalidArgumentError) as cm:
-				query({
-					"from": "DocType", "alias": "dt",
-					"select": ["dt.definitely_not_a_real_column"],
-				})
+				query(
+					{
+						"from": "DocType",
+						"alias": "dt",
+						"select": ["dt.definitely_not_a_real_column"],
+					}
+				)
 			self.assertIn("column", str(cm.exception).lower())
 
 	def test_unknown_doctype_rejected(self):
@@ -1864,12 +2358,15 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 	def test_standard_and_real_columns_still_pass(self):
 		"""Standard Frappe columns (name/creation/idx) plus real fields
 		(issingle/module) must NOT be rejected by the column check."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": ["dt.name", "dt.creation", "dt.idx", "dt.module"],
-			"where": [{"field": "dt.issingle", "op": "=", "value": 1}],
-			"order_by": [{"field": "dt.name", "dir": "asc"}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": ["dt.name", "dt.creation", "dt.idx", "dt.module"],
+				"where": [{"field": "dt.issingle", "op": "=", "value": 1}],
+				"order_by": [{"field": "dt.name", "dir": "asc"}],
+			}
+		)
 		self.assertIn("issingle", sql)
 		self.assertIn("creation", sql)
 
@@ -1877,17 +2374,20 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 		"""GROUP BY referencing a SELECT output alias (not a physical
 		column) must remain valid after the identifier hardening — the
 		alias is regex-checked but not column-existence-checked."""
-		sql = self._build_sql({
-			"from": "DocType", "alias": "dt",
-			"select": [
-				{"expr": {"fn": "date_part",
-				          "args": [{"literal": "month"},
-				                   {"field": "dt.creation"}]},
-				 "as": "month"},
-				{"agg": "count", "field": "*", "as": "n"},
-			],
-			"group_by": ["month"],
-		})
+		sql = self._build_sql(
+			{
+				"from": "DocType",
+				"alias": "dt",
+				"select": [
+					{
+						"expr": {"fn": "date_part", "args": [{"literal": "month"}, {"field": "dt.creation"}]},
+						"as": "month",
+					},
+					{"agg": "count", "field": "*", "as": "n"},
+				],
+				"group_by": ["month"],
+			}
+		)
 		self.assertIn("GROUP BY", sql.upper())
 
 	def test_optional_meta_column_still_pass(self):
@@ -1899,12 +2399,14 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 		the default_fields + docfields path that omits _assign); a
 		special doctype like DocType would mask the gap because its path
 		returns the full DB column list."""
-		sql = self._build_sql({
-			"from": "User", "alias": "u",
-			"select": ["u.name"],
-			"where": [{"field": "u._assign", "op": "like",
-			           "value": "%Administrator%"}],
-		})
+		sql = self._build_sql(
+			{
+				"from": "User",
+				"alias": "u",
+				"select": ["u.name"],
+				"where": [{"field": "u._assign", "op": "like", "value": "%Administrator%"}],
+			}
+		)
 		self.assertIn("_assign", sql)
 
 
@@ -1954,21 +2456,28 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 	@staticmethod
 	def _ensure_role(name: str) -> None:
 		if not frappe.db.exists("Role", name):
-			frappe.get_doc({
-				"doctype": "Role", "role_name": name, "desk_access": 1, "is_custom": 1,
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": "Role",
+					"role_name": name,
+					"desk_access": 1,
+					"is_custom": 1,
+				}
+			).insert(ignore_permissions=True)
 
 	@staticmethod
 	def _ensure_user(email: str, roles: tuple) -> None:
 		if not frappe.db.exists("User", email):
-			frappe.get_doc({
-				"doctype": "User",
-				"email": email,
-				"first_name": email.split("@")[0],
-				"send_welcome_email": 0,
-				"enabled": 1,
-				"user_type": "System User",
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": email.split("@")[0],
+					"send_welcome_email": 0,
+					"enabled": 1,
+					"user_type": "System User",
+				}
+			).insert(ignore_permissions=True)
 		user = frappe.get_doc("User", email)
 		if "System Manager" in frappe.get_roles(email):
 			user.remove_roles("System Manager")
@@ -1991,10 +2500,13 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 			custom=1,
 			istable=1,
 			fields=[
-				{"label": "Child Public", "fieldname": cls.CF_PUBLIC,
-				 "fieldtype": "Data", "permlevel": 0},
-				{"label": "Child Restricted", "fieldname": cls.CF_RESTRICTED,
-				 "fieldtype": "Data", "permlevel": 1},
+				{"label": "Child Public", "fieldname": cls.CF_PUBLIC, "fieldtype": "Data", "permlevel": 0},
+				{
+					"label": "Child Restricted",
+					"fieldname": cls.CF_RESTRICTED,
+					"fieldtype": "Data",
+					"permlevel": 1,
+				},
 			],
 			permissions=[],
 		).insert()
@@ -2002,12 +2514,14 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 			name=cls.PARENT_DT,
 			custom=1,
 			fields=[
-				{"label": "Public Field", "fieldname": cls.F_PUBLIC,
-				 "fieldtype": "Data", "permlevel": 0},
-				{"label": "Restricted Field", "fieldname": cls.F_RESTRICTED,
-				 "fieldtype": "Data", "permlevel": 1},
-				{"label": "Items", "fieldname": "items", "fieldtype": "Table",
-				 "options": cls.CHILD_DT},
+				{"label": "Public Field", "fieldname": cls.F_PUBLIC, "fieldtype": "Data", "permlevel": 0},
+				{
+					"label": "Restricted Field",
+					"fieldname": cls.F_RESTRICTED,
+					"fieldtype": "Data",
+					"permlevel": 1,
+				},
+				{"label": "Items", "fieldname": "items", "fieldtype": "Table", "options": cls.CHILD_DT},
 			],
 			permissions=[
 				{"role": cls.ROLE_BASE, "permlevel": 0, "read": 1, "write": 1, "create": 1},
@@ -2054,65 +2568,86 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 	def test_restricted_cannot_select_permlevel_field(self):
 		frappe.set_user(self.USER_RESTRICTED)
 		with self.assertRaises(PermissionDeniedError) as cm:
-			query({
-				"from": self.PARENT_DT, "alias": "p",
-				"select": ["p.public_field", "p.restricted_field"],
-			})
+			query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"select": ["p.public_field", "p.restricted_field"],
+				}
+			)
 		self.assertIn("restricted_field", str(cm.exception))
 
 	def test_restricted_cannot_filter_permlevel_field(self):
 		frappe.set_user(self.USER_RESTRICTED)
 		with self.assertRaises(PermissionDeniedError):
-			query({
-				"from": self.PARENT_DT, "alias": "p",
-				"select": ["p.public_field"],
-				"where": [{"field": "p.restricted_field", "op": "=", "value": "x"}],
-			})
+			query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"select": ["p.public_field"],
+					"where": [{"field": "p.restricted_field", "op": "=", "value": "x"}],
+				}
+			)
 
 	def test_restricted_cannot_order_by_permlevel_field(self):
 		frappe.set_user(self.USER_RESTRICTED)
 		with self.assertRaises(PermissionDeniedError):
-			query({
-				"from": self.PARENT_DT, "alias": "p",
-				"select": ["p.public_field"],
-				"order_by": [{"field": "p.restricted_field", "dir": "asc"}],
-			})
+			query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"select": ["p.public_field"],
+					"order_by": [{"field": "p.restricted_field", "dir": "asc"}],
+				}
+			)
 
 	def test_restricted_cannot_group_by_permlevel_field(self):
 		frappe.set_user(self.USER_RESTRICTED)
 		with self.assertRaises(PermissionDeniedError):
-			query({
-				"from": self.PARENT_DT, "alias": "p",
-				"select": ["p.public_field"],
-				"group_by": ["p.restricted_field"],
-			})
+			query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"select": ["p.public_field"],
+					"group_by": ["p.restricted_field"],
+				}
+			)
 
 	def test_restricted_cannot_having_permlevel_field(self):
 		frappe.set_user(self.USER_RESTRICTED)
 		with self.assertRaises(PermissionDeniedError):
-			query({
-				"from": self.PARENT_DT, "alias": "p",
-				"select": ["p.public_field"],
-				"group_by": ["p.public_field"],
-				"having": [{"field": "p.restricted_field", "op": "=", "value": "x"}],
-			})
+			query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"select": ["p.public_field"],
+					"group_by": ["p.public_field"],
+					"having": [{"field": "p.restricted_field", "op": "=", "value": "x"}],
+				}
+			)
 
 	def test_restricted_can_select_public_field(self):
 		"""Over-block guard: a permlevel-0 field still works for the
 		restricted user (runs fully real end-to-end)."""
 		frappe.set_user(self.USER_RESTRICTED)
-		result = query({
-			"from": self.PARENT_DT, "alias": "p",
-			"select": ["p.name", "p.public_field"],
-		})
+		result = query(
+			{
+				"from": self.PARENT_DT,
+				"alias": "p",
+				"select": ["p.name", "p.public_field"],
+			}
+		)
 		self.assertIn("rows", result)
 
 	def test_privileged_can_select_permlevel_field(self):
 		frappe.set_user(self.USER_PRIVILEGED)
-		result = query({
-			"from": self.PARENT_DT, "alias": "p",
-			"select": ["p.name", "p.public_field", "p.restricted_field"],
-		})
+		result = query(
+			{
+				"from": self.PARENT_DT,
+				"alias": "p",
+				"select": ["p.name", "p.public_field", "p.restricted_field"],
+			}
+		)
 		self.assertIn("rows", result)
 
 	# ---- child-table field positions (parenttype resolution) -------
@@ -2124,46 +2659,71 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 		frappe.set_user(self.USER_RESTRICTED)
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(PermissionDeniedError) as cm:
-				query({
-					"from": self.PARENT_DT, "alias": "p",
-					"joins": [{
-						"type": "left", "doctype": self.CHILD_DT, "alias": "c",
-						"on": {"c.parent": "p.name"},
-					}],
-					"select": ["p.name", "c.child_restricted"],
-				})
+				query(
+					{
+						"from": self.PARENT_DT,
+						"alias": "p",
+						"joins": [
+							{
+								"type": "left",
+								"doctype": self.CHILD_DT,
+								"alias": "c",
+								"on": {"c.parent": "p.name"},
+							}
+						],
+						"select": ["p.name", "c.child_restricted"],
+					}
+				)
 		self.assertIn("child_restricted", str(cm.exception))
 
 	def test_restricted_can_select_child_public_field(self):
 		frappe.set_user(self.USER_RESTRICTED)
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine, \
-		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+			patch("pypika.queries.QueryBuilder.run", return_value=[]),
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
-			result = query({
-				"from": self.PARENT_DT, "alias": "p",
-				"joins": [{
-					"type": "left", "doctype": self.CHILD_DT, "alias": "c",
-					"on": {"c.parent": "p.name"},
-				}],
-				"select": ["p.name", "c.child_public"],
-			})
+			result = query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"joins": [
+						{
+							"type": "left",
+							"doctype": self.CHILD_DT,
+							"alias": "c",
+							"on": {"c.parent": "p.name"},
+						}
+					],
+					"select": ["p.name", "c.child_public"],
+				}
+			)
 		self.assertIn("rows", result)
 
 	def test_privileged_can_select_child_permlevel_field(self):
 		frappe.set_user(self.USER_PRIVILEGED)
-		with patch("frappe.has_permission", return_value=True), \
-		     patch("frappe.database.query.Engine") as fake_engine, \
-		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+		with (
+			patch("frappe.has_permission", return_value=True),
+			patch("frappe.database.query.Engine") as fake_engine,
+			patch("pypika.queries.QueryBuilder.run", return_value=[]),
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
-			result = query({
-				"from": self.PARENT_DT, "alias": "p",
-				"joins": [{
-					"type": "left", "doctype": self.CHILD_DT, "alias": "c",
-					"on": {"c.parent": "p.name"},
-				}],
-				"select": ["p.name", "c.child_restricted"],
-			})
+			result = query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"joins": [
+						{
+							"type": "left",
+							"doctype": self.CHILD_DT,
+							"alias": "c",
+							"on": {"c.parent": "p.name"},
+						}
+					],
+					"select": ["p.name", "c.child_restricted"],
+				}
+			)
 		self.assertIn("rows", result)
 
 	# ---- DocType-level gate: child perm derived from a parent ------
@@ -2178,20 +2738,30 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 		gate derives permission from a readable owning parent (mirrors
 		get_list) instead of failing closed."""
 		frappe.set_user(self.USER_RESTRICTED)
-		with patch(
-			"jarvis.tools.get_list._child_table_parents",
-			return_value=[self.PARENT_DT],
-		), patch("frappe.database.query.Engine") as fake_engine, \
-		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+		with (
+			patch(
+				"jarvis.tools.get_list._child_table_parents",
+				return_value=[self.PARENT_DT],
+			),
+			patch("frappe.database.query.Engine") as fake_engine,
+			patch("pypika.queries.QueryBuilder.run", return_value=[]),
+		):
 			fake_engine.return_value.get_permission_conditions.return_value = None
-			result = query({
-				"from": self.PARENT_DT, "alias": "p",
-				"joins": [{
-					"type": "left", "doctype": self.CHILD_DT, "alias": "c",
-					"on": {"c.parent": "p.name"},
-				}],
-				"select": ["p.name", "c.child_public"],
-			})
+			result = query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"joins": [
+						{
+							"type": "left",
+							"doctype": self.CHILD_DT,
+							"alias": "c",
+							"on": {"c.parent": "p.name"},
+						}
+					],
+					"select": ["p.name", "c.child_public"],
+				}
+			)
 		self.assertIn("rows", result)
 
 	def test_child_with_no_readable_parent_is_denied(self):
@@ -2202,14 +2772,21 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 		frappe.set_user(self.USER_RESTRICTED)
 		with patch("jarvis.tools.get_list._child_table_parents", return_value=[]):
 			with self.assertRaises(PermissionDeniedError):
-				query({
-					"from": self.PARENT_DT, "alias": "p",
-					"joins": [{
-						"type": "left", "doctype": self.CHILD_DT, "alias": "c",
-						"on": {"c.parent": "p.name"},
-					}],
-					"select": ["p.name", "c.child_public"],
-				})
+				query(
+					{
+						"from": self.PARENT_DT,
+						"alias": "p",
+						"joins": [
+							{
+								"type": "left",
+								"doctype": self.CHILD_DT,
+								"alias": "c",
+								"on": {"c.parent": "p.name"},
+							}
+						],
+						"select": ["p.name", "c.child_public"],
+					}
+				)
 
 	# ---- join ON + EXISTS positions --------------------------------
 
@@ -2218,14 +2795,21 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 		frappe.set_user(self.USER_RESTRICTED)
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(PermissionDeniedError) as cm:
-				query({
-					"from": self.PARENT_DT, "alias": "p",
-					"joins": [{
-						"type": "left", "doctype": self.CHILD_DT, "alias": "c",
-						"on": {"c.child_restricted": "p.restricted_field"},
-					}],
-					"select": ["p.name"],
-				})
+				query(
+					{
+						"from": self.PARENT_DT,
+						"alias": "p",
+						"joins": [
+							{
+								"type": "left",
+								"doctype": self.CHILD_DT,
+								"alias": "c",
+								"on": {"c.child_restricted": "p.restricted_field"},
+							}
+						],
+						"select": ["p.name"],
+					}
+				)
 		# The lhs (c.child_restricted) resolves first, so the error names it.
 		self.assertIn("child_restricted", str(cm.exception))
 
@@ -2234,17 +2818,26 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 		frappe.set_user(self.USER_RESTRICTED)
 		with patch("frappe.has_permission", return_value=True):
 			with self.assertRaises(PermissionDeniedError):
-				query({
-					"from": self.PARENT_DT, "alias": "p",
-					"select": ["p.name"],
-					"where": [{
-						"op": "exists",
-						"value": {
-							"from": self.PARENT_DT, "alias": "p2",
-							"where": [{
-								"field": "p2.restricted_field", "op": "=",
-								"value": "x",
-							}],
-						},
-					}],
-				})
+				query(
+					{
+						"from": self.PARENT_DT,
+						"alias": "p",
+						"select": ["p.name"],
+						"where": [
+							{
+								"op": "exists",
+								"value": {
+									"from": self.PARENT_DT,
+									"alias": "p2",
+									"where": [
+										{
+											"field": "p2.restricted_field",
+											"op": "=",
+											"value": "x",
+										}
+									],
+								},
+							}
+						],
+					}
+				)

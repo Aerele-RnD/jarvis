@@ -4,6 +4,7 @@ Used by jarvis.oauth.api to drive the paste-back OAuth flow against
 the provider's own /oauth/authorize endpoint, with the codex-CLI-specific
 parameter set that auth.openai.com requires for codex's client_id.
 """
+
 import base64
 import json
 from urllib.parse import urlencode
@@ -19,9 +20,9 @@ class UnknownProviderError(JarvisError):
 _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 	"OpenAI": {
 		"authorize": "https://auth.openai.com/oauth/authorize",
-		"token":     "https://auth.openai.com/oauth/token",
-		"userinfo":  "https://api.openai.com/v1/userinfo",
-		"scope":     "openid profile email offline_access api.connectors.read api.connectors.invoke",
+		"token": "https://auth.openai.com/oauth/token",
+		"userinfo": "https://api.openai.com/v1/userinfo",
+		"scope": "openid profile email offline_access api.connectors.read api.connectors.invoke",
 		# POOL sign-ins (CLIProxyAPI subscription accounts) MUST use the
 		# codex-CLI scope set - no connectors scopes. The connectors scope
 		# yields an access_token with aud=https://api.openai.com/v1 (fine for
@@ -44,24 +45,24 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		# generic "unknown_error" page mid-flow without these.
 		"extra_authorize_params": {
 			"id_token_add_organizations": "true",
-			"codex_cli_simplified_flow":   "true",
-			"originator":                  "codex_cli_rs",
+			"codex_cli_simplified_flow": "true",
+			"originator": "codex_cli_rs",
 		},
 	},
 	"Google Gemini": {
 		"authorize": "https://accounts.google.com/o/oauth2/v2/auth",
-		"token":     "https://oauth2.googleapis.com/token",
+		"token": "https://oauth2.googleapis.com/token",
 		# Use Google's standard userinfo endpoint - the bundled gemini-cli
 		# OAuth client doesn't have `openid` registered, so no id_token comes
 		# back. Email is fetched via Bearer-authenticated userinfo instead.
-		"userinfo":  "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
+		"userinfo": "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
 		# Scopes MUST match what the bundled gemini-cli OAuth client has
 		# registered in its Google Cloud Console consent screen. Verified
 		# against openclaw/extensions/google/oauth.shared.ts:19-23.
 		# `https://www.googleapis.com/auth/generative-language` is NOT a real
 		# Google OAuth scope - Google returns Error 403 restricted_client
 		# "Unregistered scope(s) in the request" if anything else is sent.
-		"scope":     "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+		"scope": "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
 		# Gemini OAuth tokens are read by the `gemini` binary which
 		# openclaw spawns via the CliBackend registered at
 		# extensions/google/cli-backend.ts:16 (id "google-gemini-cli").
@@ -71,7 +72,7 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		"openclaw_provider": "google-gemini-cli",
 		"extra_authorize_params": {
 			"access_type": "offline",
-			"prompt":      "consent",
+			"prompt": "consent",
 		},
 	},
 	# xAI Grok — SAME authorization_code + PKCE paste-back flow as codex. The
@@ -81,10 +82,10 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 	# client, so client_secret stays empty. Pooled accounts feed cli-proxy-api's
 	# `xai` channel; there is no distinct pool_scope (one scope constant).
 	"xAI Grok": {
-		"authorize":   "https://auth.x.ai/oauth2/authorize",
-		"token":       "https://auth.x.ai/oauth2/token",
-		"userinfo":    "https://auth.x.ai/oauth2/userinfo",
-		"scope":       "openid profile email offline_access grok-cli:access api:access",
+		"authorize": "https://auth.x.ai/oauth2/authorize",
+		"token": "https://auth.x.ai/oauth2/token",
+		"userinfo": "https://auth.x.ai/oauth2/userinfo",
+		"scope": "openid profile email offline_access grok-cli:access api:access",
 		"openclaw_provider": "xai",
 		"redirect_uri": "http://127.0.0.1:56121/callback",
 		"requires_nonce": True,
@@ -108,9 +109,9 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 	# shows user_code + verification_uri and polls poll_pool_account_signin.
 	# Public device client (no secret, no PKCE). Custom X-Msh-* headers required.
 	"Kimi (Moonshot)": {
-		"grant_type":    "device_code",
+		"grant_type": "device_code",
 		"device_authorization": "https://auth.kimi.com/api/oauth/device_authorization",
-		"token":         "https://auth.kimi.com/api/oauth/token",
+		"token": "https://auth.kimi.com/api/oauth/token",
 		"openclaw_provider": "kimi",
 		"device_headers": {"X-Msh-Platform": "cli-proxy-api", "X-Msh-Version": "1.0.0"},
 		"poll_interval_s": 5,
@@ -193,9 +194,15 @@ def extract_account_id(provider: str, access_token: str) -> str:
 	return value if isinstance(value, str) else ""
 
 
-def build_authorize_url(*, provider: str, redirect_uri: str,
-                         code_challenge: str, state: str,
-                         pool: bool = False, oidc_nonce: str = "") -> str:
+def build_authorize_url(
+	*,
+	provider: str,
+	redirect_uri: str,
+	code_challenge: str,
+	state: str,
+	pool: bool = False,
+	oidc_nonce: str = "",
+) -> str:
 	"""Construct the /oauth/authorize URL with all required parameters.
 
 	``pool=True`` selects the provider's ``pool_scope`` when it defines one

@@ -70,9 +70,19 @@ _INDEX_SUMMARY_CHARS = 100
 _LOG_MAX_EVENTS = 150
 
 _PAGE_FIELDS = [
-	"name", "slug", "title", "page_type", "scope", "status", "summary",
-	"body_md", "sources", "last_confirmed_at", "contradiction_flag",
-	"modified", "mirror_hash",
+	"name",
+	"slug",
+	"title",
+	"page_type",
+	"scope",
+	"status",
+	"summary",
+	"body_md",
+	"sources",
+	"last_confirmed_at",
+	"contradiction_flag",
+	"modified",
+	"mirror_hash",
 ]
 
 
@@ -84,7 +94,7 @@ def _is_org_scope(scope) -> bool:
 def _wire_path(path: str) -> str:
 	"""Workspace-relative render path -> wire path relative to the fleet
 	endpoint's wiki dir ("wiki/customers/x.md" -> "customers/x.md")."""
-	return path[len("wiki/"):] if path.startswith("wiki/") else path
+	return path[len("wiki/") :] if path.startswith("wiki/") else path
 
 
 def page_path(page) -> str:
@@ -145,10 +155,7 @@ def _source_lines(raw) -> list[str]:
 	for entry in entries:
 		if not isinstance(entry, dict):
 			continue
-		parts = [
-			str(entry.get(key)) for key in ("date", "kind", "ref", "user")
-			if entry.get(key)
-		]
+		parts = [str(entry.get(key)) for key in ("date", "kind", "ref", "user") if entry.get(key)]
 		if parts:
 			out.append("- " + " · ".join(parts))
 	return out
@@ -164,10 +171,7 @@ def render_index() -> tuple[str, str]:
 		order_by="name asc",
 		limit_page_length=0,
 	)
-	pages = [
-		r for r in rows
-		if _is_org_scope(r.scope) and (r.status or "Active") == "Active"
-	]
+	pages = [r for r in rows if _is_org_scope(r.scope) and (r.status or "Active") == "Active"]
 	by_type: dict[str, list] = {}
 	for r in pages:
 		by_type.setdefault((r.page_type or "").strip() or "Org", []).append(r)
@@ -240,9 +244,7 @@ def sync(full: bool = False) -> dict:
 	try:
 		result = _sync(full=bool(full))
 	except Exception:
-		frappe.log_error(
-			title="wiki mirror: sync crashed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="wiki mirror: sync crashed", message=frappe.get_traceback())
 		result = {"ok": False, "reason": "sync crashed; see Error Log"}
 	_stamp_sync_status(result)
 	return result
@@ -303,8 +305,7 @@ def _sync(full: bool) -> dict:
 	known_paths = None
 	if full:
 		known_paths = sorted(
-			{_wire_path(page_path(r)) for r in active}
-			| {_wire_path(INDEX_PATH), _wire_path(LOG_PATH)}
+			{_wire_path(page_path(r)) for r in active} | {_wire_path(INDEX_PATH), _wire_path(LOG_PATH)}
 		)
 
 	from jarvis import admin_client
@@ -336,14 +337,10 @@ def _sync(full: bool) -> dict:
 		pushed += len(batch)
 		for f in batch:
 			if f["page"]:
-				frappe.db.set_value(
-					WIKI, f["page"], "mirror_hash", f["hash"], update_modified=False
-				)
+				frappe.db.set_value(WIKI, f["page"], "mirror_hash", f["hash"], update_modified=False)
 		if last:
 			for r in deletes:
-				frappe.db.set_value(
-					WIKI, r.name, "mirror_hash", "", update_modified=False
-				)
+				frappe.db.set_value(WIKI, r.name, "mirror_hash", "", update_modified=False)
 		frappe.db.commit()
 
 	return {
@@ -356,8 +353,7 @@ def _sync(full: bool) -> dict:
 	}
 
 
-def _file_entry(path: str, content: str, page: str | None = None,
-				digest: str | None = None) -> dict:
+def _file_entry(path: str, content: str, page: str | None = None, digest: str | None = None) -> dict:
 	return {
 		"path": _wire_path(path),
 		"content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
@@ -405,9 +401,7 @@ def enqueue_sync(full: bool = False) -> None:
 			full=bool(full),
 		)
 	except Exception:
-		frappe.log_error(
-			title="wiki mirror: enqueue failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="wiki mirror: enqueue failed", message=frappe.get_traceback())
 
 
 def on_wiki_page_change(doc, method: str | None = None) -> None:

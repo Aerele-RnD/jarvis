@@ -55,7 +55,9 @@ from jarvis.jarvis.doctype.jarvis_wiki_page.jarvis_wiki_page import (
 )
 from jarvis.learning.sanitizer import scan_instruction_injection
 from jarvis.permissions import (
-	JARVIS_REVIEWER_ROLES, has_jarvis_admin_access, require_jarvis_admin,
+	JARVIS_REVIEWER_ROLES,
+	has_jarvis_admin_access,
+	require_jarvis_admin,
 )
 
 WIKI = "Jarvis Wiki Page"
@@ -71,8 +73,15 @@ SETTINGS = "Jarvis Settings"
 _REVIEWER_ROLES = JARVIS_REVIEWER_ROLES
 
 PAGE_TYPES = (
-	"Customer", "Supplier", "Item", "Process", "Doctype",
-	"Exception", "Integration", "People", "Org",
+	"Customer",
+	"Supplier",
+	"Item",
+	"Process",
+	"Doctype",
+	"Exception",
+	"Integration",
+	"People",
+	"Org",
 )
 
 # [Context:] clause budget — shares ~700 chars with personal_skill_clause.
@@ -229,7 +238,7 @@ def _clip_body(body: str) -> str:
 	clipped = body[-MAX_BODY_LEN:]
 	nl = clipped.find("\n")
 	if 0 <= nl < 200:
-		clipped = clipped[nl + 1:]
+		clipped = clipped[nl + 1 :]
 	return clipped.lstrip()
 
 
@@ -328,10 +337,7 @@ def wiki_clause(conversation_id: str, context: dict | None = None) -> str:
 		# Scope visibility (belt and braces: entity-derived slugs are
 		# unsuffixed so only Org pages should ever match, but a clause must
 		# never inline a page the session user cannot read).
-		pages = [
-			p for p in pages
-			if wiki_permissions.can_read_page(p, frappe.session.user)
-		]
+		pages = [p for p in pages if wiki_permissions.can_read_page(p, frappe.session.user)]
 		if not pages:
 			return ""
 		by_slug = {p.slug: p for p in pages}
@@ -342,19 +348,14 @@ def wiki_clause(conversation_id: str, context: dict | None = None) -> str:
 			summary = _safe_clause_summary(p.summary)
 			bits.append(f"{p.slug}: {summary}" if summary else p.slug)
 		clause = "; wiki notes: " + "; ".join(bits)
-		more = [
-			p.slug
-			for p in ordered[_CLAUSE_MAX_INLINE:_CLAUSE_MAX_INLINE + _CLAUSE_MAX_MORE]
-		]
+		more = [p.slug for p in ordered[_CLAUSE_MAX_INLINE : _CLAUSE_MAX_INLINE + _CLAUSE_MAX_MORE]]
 		if more:
 			more_clause = f"; more wiki: {', '.join(more)} via jarvis__read_wiki"
 			if len(clause) + len(more_clause) <= _CLAUSE_MAX_CHARS:
 				clause += more_clause
 		return clause[:_CLAUSE_MAX_CHARS]
 	except Exception:
-		frappe.log_error(
-			title="wiki: clause build failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="wiki: clause build failed", message=frappe.get_traceback())
 		return ""
 
 
@@ -564,9 +565,7 @@ def _maybe_nudge(conversation_id: str, user: str) -> None:
 		return
 	if not wiki_enabled():
 		return
-	conv = frappe.db.get_value(
-		CONV, conversation_id, ["name", "file_box"], as_dict=True
-	)
+	conv = frappe.db.get_value(CONV, conversation_id, ["name", "file_box"], as_dict=True)
 	if not conv or cint(conv.file_box):
 		return
 	cache = frappe.cache()
@@ -580,10 +579,7 @@ def _maybe_nudge(conversation_id: str, user: str) -> None:
 	if not entities:
 		return
 
-	hours = (
-		cint(frappe.db.get_single_value(SETTINGS, "wiki_nudge_cooldown_hours"))
-		or _DEFAULT_COOLDOWN_HOURS
-	)
+	hours = cint(frappe.db.get_single_value(SETTINGS, "wiki_nudge_cooldown_hours")) or _DEFAULT_COOLDOWN_HOURS
 	# Cooldown is stamped even though the user may ignore the nudge — one
 	# prompt per conversation per window, never a nag loop. Atomic NX set
 	# (pickled so get_value round-trips): of two concurrent turns racing past
@@ -596,11 +592,14 @@ def _maybe_nudge(conversation_id: str, user: str) -> None:
 	)
 	if not won:
 		return
-	publish_to_user(user, {
-		"kind": "wiki:nudge",
-		"conversation_id": conversation_id,
-		"entities": entities,
-	})
+	publish_to_user(
+		user,
+		{
+			"kind": "wiki:nudge",
+			"conversation_id": conversation_id,
+			"entities": entities,
+		},
+	)
 
 
 def _nudge_entities(conversation_id: str) -> list[dict]:
@@ -627,13 +626,15 @@ def _nudge_entities(conversation_id: str) -> list[dict]:
 		seen.add(page_ref["slug"])
 		slugs.append(page_ref["slug"])
 		label = ref["name"] if page_ref["ref_name"] else ref["doctype"]
-		out.append({
-			"doctype": ref["doctype"],
-			"name": ref["name"],
-			"label": label,
-			"has_page": False,
-			"_slug": page_ref["slug"],
-		})
+		out.append(
+			{
+				"doctype": ref["doctype"],
+				"name": ref["name"],
+				"label": label,
+				"has_page": False,
+				"_slug": page_ref["slug"],
+			}
+		)
 		if len(out) >= _NUDGE_MAX_ENTITIES:
 			break
 	if not out:
@@ -663,7 +664,8 @@ def dismiss_nudge(conversation: str) -> dict:
 	if owner != frappe.session.user and frappe.session.user != "Administrator":
 		frappe.throw(_("Not your conversation."), frappe.PermissionError)
 	frappe.cache().set_value(
-		_NUDGE_OFF_KEY.format(conv=conversation), 1,
+		_NUDGE_OFF_KEY.format(conv=conversation),
+		1,
 		expires_in_sec=_NUDGE_OFF_TTL_S,
 	)
 	return {"ok": True}
@@ -703,9 +705,7 @@ def _ingest_note(note_name: str) -> None:
 	if updates is None:
 		return  # extraction failed (logged); stays New for the sweep
 
-	applied, failed = apply_extracted_page_updates(
-		updates, "voice", note.owner, ref=note.name
-	)
+	applied, failed = apply_extracted_page_updates(updates, "voice", note.owner, ref=note.name)
 	if failed:
 		# A page write failed (already logged per-update): leave the note New
 		# so the daily voice_facts sweep retries — marking it Processed here
@@ -723,7 +723,8 @@ def _ingest_note(note_name: str) -> None:
 			"processed_at": now_datetime(),
 			"processed_note": (
 				f"wiki ingest: {applied} page update(s) applied"
-				if applied else "wiki ingest: nothing durable found"
+				if applied
+				else "wiki ingest: nothing durable found"
 			),
 		},
 		update_modified=False,
@@ -802,9 +803,7 @@ def _extract_page_updates(note, entities, suggested, existing) -> list | None:
 			max_tokens=4000,
 		)
 	except Exception:
-		frappe.log_error(
-			title="wiki: ingest extraction failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="wiki: ingest extraction failed", message=frappe.get_traceback())
 		return None
 	updates = _parse_updates(raw)
 	if updates is None:
@@ -823,7 +822,7 @@ def _parse_updates(raw: str) -> list | None:
 	if start < 0 or end <= start:
 		return None
 	try:
-		data = json.loads(text[start:end + 1])
+		data = json.loads(text[start : end + 1])
 	except Exception:
 		return None
 	if not isinstance(data, list):
@@ -872,9 +871,7 @@ def apply_extracted_page_updates(
 				applied += 1
 		except Exception:
 			failed += 1
-			frappe.log_error(
-				title="wiki: page update failed", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="wiki: page update failed", message=frappe.get_traceback())
 	return applied, failed
 
 
@@ -951,9 +948,7 @@ def _apply_one_update(
 		return _merge_update_into_page(name, update, source, user, ref)
 
 
-def _merge_update_into_page(
-	name: str, update: dict, source: str, user: str | None, ref: str | None
-) -> bool:
+def _merge_update_into_page(name: str, update: dict, source: str, user: str | None, ref: str | None) -> bool:
 	body_md = update.get("body_md")
 	append_md = update.get("append_md")
 	contradiction = bool(update.get("contradiction"))
@@ -973,9 +968,7 @@ def _merge_update_into_page(
 		incoming = body_md.strip()
 		if contradiction and existing:
 			stamp = now_datetime().strftime("%Y-%m-%d")
-			doc.body_md = _clip_body(
-				f"{existing}\n\n## Contradiction flagged ({stamp})\n\n{incoming}"
-			)
+			doc.body_md = _clip_body(f"{existing}\n\n## Contradiction flagged ({stamp})\n\n{incoming}")
 			doc.contradiction_flag = 1
 		else:
 			doc.body_md = _clip_body(incoming)
@@ -1029,9 +1022,7 @@ def _publish_review_pending(queue: str) -> None:
 # wiki promotion (User page -> Role/Org, via the Review board)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
-def request_wiki_promotion(
-	page: str, to_scope: str, target_role: str = "", note: str = ""
-) -> dict:
+def request_wiki_promotion(page: str, to_scope: str, target_role: str = "", note: str = "") -> dict:
 	"""Ask a reviewer to widen one of the caller's OWN User-scope wiki pages to
 	Role/Org visibility (Skills-area rework part 3). Snapshots the body into a
 	Pending ``Jarvis Wiki Promotion Request`` and pings the reviewer set — the
@@ -1041,8 +1032,10 @@ def request_wiki_promotion(
 	user = frappe.session.user
 
 	page = (page or "").strip()
-	name = page if page and frappe.db.exists(WIKI, page) else (
-		frappe.db.get_value(WIKI, {"slug": page.lower()}, "name") if page else None
+	name = (
+		page
+		if page and frappe.db.exists(WIKI, page)
+		else (frappe.db.get_value(WIKI, {"slug": page.lower()}, "name") if page else None)
 	)
 	if not name:
 		frappe.throw(_("Wiki page not found."))
@@ -1060,24 +1053,24 @@ def request_wiki_promotion(
 	if to_scope == "Role" and not target_role:
 		frappe.throw(_("Promoting to Role scope needs a target role."))
 
-	req = frappe.get_doc({
-		"doctype": PROMO,
-		"page": doc.name,
-		"from_scope": "User",
-		"to_scope": to_scope,
-		"target_role": target_role if to_scope == "Role" else None,
-		"body_snapshot": doc.body_md or "",
-		"note": (note or "").strip()[:140] or None,
-		"status": "Pending",
-	})
+	req = frappe.get_doc(
+		{
+			"doctype": PROMO,
+			"page": doc.name,
+			"from_scope": "User",
+			"to_scope": to_scope,
+			"target_role": target_role if to_scope == "Role" else None,
+			"body_snapshot": doc.body_md or "",
+			"note": (note or "").strip()[:140] or None,
+			"status": "Pending",
+		}
+	)
 	req.insert(ignore_permissions=True)
 	_publish_review_pending("promotion")
 	return {"ok": True, "request": req.name, "page": doc.slug}
 
 
-def apply_promotion(
-	request_name: str, approve, note: str = "", reviewer: str | None = None
-) -> dict:
+def apply_promotion(request_name: str, approve, note: str = "", reviewer: str | None = None) -> dict:
 	"""Decide a promotion request (called by ``jarvis.chat.learned_api``, which
 	owns the reviewer gate — this is NOT whitelisted). On approve, merge the
 	frozen body_snapshot into the Role/Org target page (audience-suffix slug
@@ -1235,7 +1228,7 @@ def list_wiki_pages_page(
 			frappe.throw(_("Invalid page type filter."))
 		conditions.append("page_type = %(page_type)s")
 		values["page_type"] = page_type
-	scope_filter = (str(scope_filter).strip().lower() if scope_filter else "all")
+	scope_filter = str(scope_filter).strip().lower() if scope_filter else "all"
 	if scope_filter not in ("all", "org", "role", "mine"):
 		frappe.throw(_("Invalid scope filter."))
 	if scope_filter == "org":
@@ -1248,22 +1241,15 @@ def list_wiki_pages_page(
 		values["me"] = user
 	if search:
 		values["like"] = f"%{str(search).strip()[:140]}%"
-		conditions.append(
-			"(slug like %(like)s or title like %(like)s or summary like %(like)s)"
-		)
+		conditions.append("(slug like %(like)s or title like %(like)s or summary like %(like)s)")
 	if cint(attention):
-		values["stale_cutoff"] = frappe.utils.add_to_date(
-			now_datetime(), days=-_STALE_DAYS
-		)
+		values["stale_cutoff"] = frappe.utils.add_to_date(now_datetime(), days=-_STALE_DAYS)
 		conditions.append(
-			"(contradiction_flag = 1 or last_confirmed_at is null"
-			" or last_confirmed_at < %(stale_cutoff)s)"
+			"(contradiction_flag = 1 or last_confirmed_at is null or last_confirmed_at < %(stale_cutoff)s)"
 		)
 	where = " and ".join(conditions)
 
-	total = cint(frappe.db.sql(
-		f"select count(*) from `tabJarvis Wiki Page` where {where}", values
-	)[0][0])
+	total = cint(frappe.db.sql(f"select count(*) from `tabJarvis Wiki Page` where {where}", values)[0][0])
 	values.update({"limit": pl, "offset": offset})
 	rows = frappe.db.sql(
 		f"""select name, slug, title, page_type, ifnull(scope, 'Org') as scope,
@@ -1316,19 +1302,13 @@ def get_wiki_caps() -> dict:
 	return {
 		"creatable_scopes": wiki_permissions.creatable_scopes(user),
 		"manageable_roles": wiki_permissions.manageable_roles(user),
-		"is_sm": (
-			user == "Administrator"
-			or "System Manager" in frappe.get_roles(user)
-		),
+		"is_sm": (user == "Administrator" or "System Manager" in frappe.get_roles(user)),
 		"knowledge_language": knowledge_language.get_knowledge_language(),
 		"wiki_lint_last_run_at": _dt_str(lint_at),
-		"wiki_lint_summary": frappe.db.get_single_value(
-			SETTINGS, "wiki_lint_summary"
-		) or None,
+		"wiki_lint_summary": frappe.db.get_single_value(SETTINGS, "wiki_lint_summary") or None,
 		"wiki_mirror_last_synced_at": _dt_str(synced_at),
-		"wiki_mirror_last_sync_status": frappe.db.get_single_value(
-			SETTINGS, "wiki_mirror_last_sync_status"
-		) or None,
+		"wiki_mirror_last_sync_status": frappe.db.get_single_value(SETTINGS, "wiki_mirror_last_sync_status")
+		or None,
 	}
 
 
@@ -1415,9 +1395,7 @@ def create_wiki_page(
 		if target_role not in wiki_permissions.manageable_roles(user):
 			return {
 				"ok": False,
-				"reason": _("You cannot manage wiki pages for role {0}.").format(
-					target_role
-				),
+				"reason": _("You cannot manage wiki pages for role {0}.").format(target_role),
 			}
 	else:
 		target_role = None
@@ -1426,20 +1404,22 @@ def create_wiki_page(
 	if not slug:
 		return {"ok": False, "reason": _("Title does not produce a valid slug.")}
 
-	doc = frappe.get_doc({
-		"doctype": WIKI,
-		"slug": slug,
-		"title": title[:140],
-		"page_type": page_type,
-		"scope": scope,
-		"target_role": target_role,
-		"target_user": user if scope == "User" else None,
-		"summary": _clip_summary(summary),
-		"body_md": _clip_body(str(body_md or "")),
-		"status": "Active",
-		"sources": frappe.as_json([_source_entry("manual", None, user)]),
-		"last_confirmed_at": now_datetime(),
-	})
+	doc = frappe.get_doc(
+		{
+			"doctype": WIKI,
+			"slug": slug,
+			"title": title[:140],
+			"page_type": page_type,
+			"scope": scope,
+			"target_role": target_role,
+			"target_user": user if scope == "User" else None,
+			"summary": _clip_summary(summary),
+			"body_md": _clip_body(str(body_md or "")),
+			"status": "Active",
+			"sources": frappe.as_json([_source_entry("manual", None, user)]),
+			"last_confirmed_at": now_datetime(),
+		}
+	)
 	try:
 		doc.insert(ignore_permissions=True)
 	except frappe.DuplicateEntryError:
@@ -1593,8 +1573,7 @@ def get_wiki_graph() -> dict:
 		where += f" and ({vis})"
 	fields = ", ".join(f"`{f}`" for f in [*wiki_graph._PAGE_FIELDS, "summary"])
 	pages = frappe.db.sql(
-		f"select {fields} from `tabJarvis Wiki Page` where {where} "
-		"order by modified desc limit %(lim)s",
+		f"select {fields} from `tabJarvis Wiki Page` where {where} order by modified desc limit %(lim)s",
 		{"lim": wiki_graph.MAX_PAGES},
 		as_dict=True,
 	)
