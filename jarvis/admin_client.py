@@ -512,6 +512,50 @@ def post_push_learned_skills(learned_skills: list[dict]) -> dict:
 	)
 
 
+def post_agent_run(run_id: str, agent_id: str, session_key: str, message: str, timeout_s: int = 600) -> dict:
+	"""Dispatch ONE marketplace-agent delegate turn: bench → admin → fleet → the
+	customer's container (Phase 2C run relay).
+
+	The agent scheduler (``jarvis.chat.agent_scheduler._launch_audit``) mints the
+	Jarvis Agent Run + the per-run ``session_key`` (Phase 1), then calls here.
+	Admin resolves the customer's own running container and forwards to the fleet
+	agent-run verb, which dispatches the turn DETACHED on the cron lane and returns
+	the 202 run-state (``{run_id, status:"queued", ...}``) immediately. The run
+	completes later on the fleet worker; poll ``get_agent_run_status`` for the
+	result (Phase 3 ``record_agent_run`` will be the completion/writeback path).
+
+	``session_key`` is passed VERBATIM end-to-end (the only user resolver — the
+	fleet never touches the Chat Session row). Idempotent on ``run_id`` at the
+	fleet boundary: a re-dispatch of a seen run returns the existing state.
+
+	Raises:
+		AdminAuthError, AdminUnreachableError, AdminValidationError.
+	"""
+	return _post(
+		path=_m("api.tenant.agent_run"),
+		body={
+			"run_id": run_id,
+			"agent_id": agent_id,
+			"session_key": session_key,
+			"message": message,
+			"timeout_s": timeout_s,
+		},
+	)
+
+
+def get_agent_run_status(run_id: str) -> dict:
+	"""Poll a delegate run's state via admin → fleet (Phase 2C run relay).
+
+	Returns ``{status, result:{reply, canvas_ref, gateway_session_id, ...}, error}``.
+	Used by the Phase-3 completion path to learn when a dispatched delegate run has
+	finished and to pull its result. Raises AdminAuthError / AdminUnreachableError /
+	AdminValidationError (an unknown run surfaces as a downstream error)."""
+	return _post(
+		path=_m("api.tenant.agent_run_status"),
+		body={"run_id": run_id},
+	)
+
+
 def push_wiki_files(
 	files: list[dict], delete: list | None = None, known_paths: list | None = None
 ) -> dict | None:

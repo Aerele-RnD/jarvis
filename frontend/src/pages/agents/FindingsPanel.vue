@@ -11,6 +11,13 @@
 				:label="run.status"
 			/>
 			<Button
+				v-if="run.dashboard"
+				variant="subtle"
+				label="Open dashboard"
+				iconLeft="bar-chart-2"
+				@click="router.push('/dashboards/' + run.dashboard)"
+			/>
+			<Button
 				v-if="run.conversation"
 				variant="subtle"
 				label="Open Chat"
@@ -242,8 +249,11 @@ import { takeFindingToChat } from "@/api/agents";
 
 const props = defineProps({
 	// full row from list_runs_page: {name, status, trigger, started_at,
-	// finished_at, conversation, findings_count, blocker_count, error,
-	// coverage_note, ...}
+	// finished_at, conversation, dashboard, findings_count, blocker_count,
+	// error, coverage_note, ...}. `dashboard` is the saved Jarvis Dashboard
+	// name (Run.dashboard); the run header links to /dashboards/:id when set.
+	// NB: list_runs_page must include `dashboard` in its fields for the link to
+	// appear (cross-file — see report notes).
 	run: { type: Object, required: true },
 });
 

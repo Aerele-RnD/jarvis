@@ -401,9 +401,9 @@
 											<path d="m21 21-4.35-4.35" />
 										</svg>
 									</div>
-									<div class="nm">Ledger Scrutiny</div>
+									<div class="nm">Close Auditor</div>
 									<div class="ds">
-										Analytical review &amp; audit checks on your books
+										Read-only period-end integrity checks on your books
 									</div>
 									<span class="m-inst on">Installed</span>
 								</div>

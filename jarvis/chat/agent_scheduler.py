@@ -13,9 +13,12 @@ review:
   row, so binding it to Administrator would bypass every DocType permission,
   silently, unattended. A fail-closed guard REFUSES to bind a scheduled audit
   to Administrator / Guest / a disabled user.
-* **O1:** a per-owner monthly scheduled-scan budget (skip + record ``failed``
-  when over budget), so scheduled scans can't drain the customer's own
-  subscription.
+* **O1/A14:** a monthly agent-run budget keyed PER INSTALLATION (with a per-tenant
+  aggregate ceiling), read from ``Jarvis Settings.agent_run_budget_monthly``, that
+  counts manual + scheduled runs together and EXCLUDES failed rows (skip + record
+  ``failed`` + notify the owner when over budget), so scans can't drain the
+  customer's own subscription. Keyed on the installation, not the owner, because
+  ``run_as_user`` decouples the executing identity from the owner.
 * **O3:** the turn is dispatched ``background=1`` (unattended), so it never
   jumps ahead of a human's queued question.
 * **O4:** ``next_run_at`` advances ONLY after a successful enqueue; on failure a
@@ -26,6 +29,8 @@ review:
 ``_launch_audit`` is shared with ``agents_api.run_agent_now`` so a manual
 trigger takes the EXACT same code path as the scheduler.
 """
+
+from datetime import timedelta
 
 import frappe
 from frappe.utils import now_datetime
@@ -38,9 +43,19 @@ LISTING = "Jarvis Agent Listing"
 RUN = "Jarvis Agent Run"
 CONV = "Jarvis Conversation"
 
-# O1: a simple constant monthly cap on SCHEDULED scans per owner (interactive /
-# manual runs are not counted). Keep it simple for v1 but present.
-MAX_SCHEDULED_RUNS_PER_OWNER_PER_MONTH = 60
+# A14: the per-INSTALLATION monthly run budget (manual + scheduled combined; failed
+# runs excluded). Read from Jarvis Settings.agent_run_budget_monthly at run time; a
+# floor of 31 (a full daily schedule) is enforced so a misconfigured 0 can never
+# wedge every scheduled agent for a whole month. Default leaves headroom for a daily
+# schedule PLUS ad-hoc manual runs.
+DEFAULT_AGENT_RUN_BUDGET_MONTHLY = 62
+MIN_AGENT_RUN_BUDGET_MONTHLY = 31
+
+# A8/A15 reaper: a run genuinely stuck ``running`` past this is dead — the fleet
+# run worker fails a run on exec/RPC death (A15) and record_agent_run finalizes a
+# live one, so this is a pure BACKSTOP. Sits well above the max bundle
+# ``timeout_s`` (manifest ceiling 5400s) so it can only ever catch orphans.
+STALE_RUN_AFTER_SECONDS = 3 * 3600
 
 
 # --------------------------------------------------------------------------- #
@@ -53,7 +68,7 @@ def run_due_agent_audits() -> None:
 	due = frappe.get_all(
 		INSTALLATION,
 		filters={"enabled": 1, "schedule_enabled": 1, "next_run_at": ["<=", now]},
-		fields=["name", "owner", "agent", "schedule_frequency", "schedule_time"],
+		fields=["name", "owner", "run_as_user", "agent", "schedule_frequency", "schedule_time"],
 	)
 	if not due:
 		return
@@ -76,30 +91,42 @@ def run_due_agent_audits() -> None:
 			_advance(row, now)
 			continue
 
+		# Phase 1 identity: the audit executes AS the install's run_as_user (its
+		# jarvis__* reads are permission-bounded to that user). Falls back to
+		# owner for installs from before run_as_user / the A13 backfill.
+		run_as = row.run_as_user or row.owner
+
 		# S1 fail-closed identity guard — never bind a scheduled audit turn to
-		# Administrator / Guest / a disabled user.
-		if not _valid_owner(row.owner):
-			_record_failed(row, "scheduled audit skipped: invalid owner (fail-closed guard)")
+		# Administrator / Guest / a disabled RUN-AS user.
+		if not _valid_owner(run_as):
+			_record_failed(row, "scheduled audit skipped: invalid run-as user (fail-closed guard)")
 			_advance(row, now)
 			continue
 
-		# RBAC: the listing may have been restricted (or the owner's roles
+		# RBAC: the listing may have been restricted (or the run-as user's roles
 		# revoked) AFTER install. Skip, record WHY, and consume the slot — never
-		# dispatch a turn for an owner the agent no longer permits.
-		if not _user_allowed_for_agent(row.agent, row.owner):
-			_record_failed(row, "owner's roles no longer permit this agent")
+		# dispatch a turn for a run-as identity the agent no longer permits
+		# (gotcha #8 — the EXECUTING identity is gated, not the triggerer).
+		if not _user_allowed_for_agent(row.agent, run_as):
+			_record_failed(row, "run-as user's roles no longer permit this agent")
 			_advance(row, now)
 			continue
 
-		# O1 cost cap.
-		if _scheduled_runs_this_month(row.owner) >= MAX_SCHEDULED_RUNS_PER_OWNER_PER_MONTH:
-			_record_failed(row, "scheduled scan budget exceeded")
+		# A14 cost cap — per installation + per-tenant aggregate (the subscription is
+		# the tenant's). Manual + scheduled counted together; failed rows excluded, so
+		# the _record_failed row we write below can never self-perpetuate the cap.
+		over, why = _over_run_budget(row.name)
+		if over:
+			_record_failed(row, why)
+			_notify_owner(row.owner, row, reason=why)
 			_advance(row, now)
 			continue
 
-		# S1 hinge: create conv + message row INSIDE set_user(owner).
+		# S1 hinge: mint the run session + create conv/run INSIDE set_user(run_as).
+		# Row ownership is reassigned to the human owner inside _launch_audit; only
+		# the ERP-read identity is the run-as user.
 		try:
-			frappe.set_user(row.owner)
+			frappe.set_user(run_as)
 			inst = frappe.get_doc(INSTALLATION, row.name)
 			_launch_audit(inst, trigger="scheduled")
 			frappe.set_user(original_user)
@@ -120,24 +147,97 @@ def run_due_agent_audits() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# A8 stale-run reaper (backstop) — hooks cron
+# --------------------------------------------------------------------------- #
+def reap_stale_agent_runs() -> int:
+	"""Fail agent runs stuck ``running`` past ``STALE_RUN_AFTER_SECONDS`` and tear
+	down their orphaned per-run session rows (A8). Backstop only: a healthy run
+	finalizes via ``record_agent_run`` and a dead delegate fails itself via the
+	fleet worker (A15); this catches the crash that killed both. Returns the count
+	reaped. Runs as Administrator (scheduler); best-effort, never raises out."""
+	from jarvis.chat import agent_runs
+
+	cutoff = now_datetime() - timedelta(seconds=STALE_RUN_AFTER_SECONDS)
+	stuck = frappe.get_all(
+		RUN,
+		filters={"status": "running", "started_at": ["<", cutoff]},
+		fields=["name", "session_key", "owner", "agent", "installation"],
+	)
+	reaped = 0
+	for r in stuck:
+		try:
+			frappe.db.set_value(
+				RUN,
+				r.name,
+				{
+					"status": "failed",
+					"finished_at": frappe.utils.now(),
+					"error": "run exceeded max duration; reaped by the stale-run sweep (A8 backstop)",
+				},
+				update_modified=False,
+			)
+			# A8: the session bearer must not outlive the (now-failed) run.
+			agent_runs.teardown_run_session(r.session_key)
+			log_activity(
+				agent=r.agent,
+				agent_title=frappe.db.get_value(LISTING, r.agent, "title"),
+				installation=r.installation,
+				action="run_failed",
+				run=r.name,
+				detail="reaped: run exceeded max duration",
+				owner=r.owner,
+			)
+			reaped += 1
+		except Exception:
+			frappe.log_error(
+				title=f"jarvis agent: stale-run reap failed: {r.name}",
+				message=frappe.get_traceback(),
+			)
+	if reaped:
+		frappe.db.commit()
+	return reaped
+
+
+# --------------------------------------------------------------------------- #
 # shared launch (scheduler + manual run_agent_now take the SAME path)
 # --------------------------------------------------------------------------- #
 def _launch_audit(inst, trigger: str) -> dict:
 	"""Create the audit conversation + a ``running`` Jarvis Agent Run + enqueue
 	the triggering turn. MUST run as the installation owner (the scheduler
 	set_user's it; run_agent_now is already the owner). Returns
-	``{run, conversation}``. Identity/budget guards + next_run_at advancement are
-	the caller's job."""
-	from jarvis.chat import api
-
+	``{run, conversation, session_key}``. Identity/budget guards + next_run_at
+	advancement are the caller's job."""
 	listing = frappe.get_doc(LISTING, inst.agent)
 	owner = inst.owner
+	# Phase 1 identity: the run's ERP-read identity. The caller (scheduler /
+	# run_agent_now) has already switched the session to this user, so
+	# frappe.session.user == run_as_user here — scope + watermark below are
+	# resolved AS the run-as user (permission-bounded).
+	run_as_user = inst.run_as_user or owner
 
-	# Fresh conversation, owned by the owner (we run under set_user(owner) / the
-	# owner is the caller). ignore_permissions matches the macro engine.
+	# Fresh conversation. ROW ownership is the human owner (reassigned below) so
+	# if_owner visibility works; the ERP-read identity is the run-as user.
+	# ignore_permissions matches the macro engine.
 	conv = frappe.get_doc({"doctype": CONV, "title": f"{listing.title} audit"[:140], "status": "Active"})
 	conv.flags.ignore_permissions = True
 	conv.insert()
+
+	# PP-5: the run's IMMUTABLE launch-time provenance, stamped once at insert (the
+	# controller's _IMMUTABLE_LAUNCH_FIELDS guard refuses any later ORM change):
+	#   * bundle_version — a SNAPSHOT of the version this run actually executes, taken
+	#     from the installation's installed_version (falling back to the listing) so it
+	#     is fixed even though the listing/installation versions are mutable.
+	#   * preparation_mode — a snapshot of the installation's activation_state
+	#     (shadow|live) at launch, so a run made in shadow is forever attributable as
+	#     such even after the install is later promoted.
+	#   * initiating_human — the human who triggered a MANUAL run; None for a
+	#     scheduled cron run (no human initiated it). On the manual path the caller has
+	#     switched the session to the run-as user, so frappe.session.user is the
+	#     triggering human ONLY on a self-mapped install (run_as == triggerer); see the
+	#     cross-file note for the run_as != triggerer case.
+	bundle_version = inst.installed_version or listing.version or None
+	preparation_mode = inst.activation_state or "shadow"
+	initiating_human = frappe.session.user if trigger == "manual" else None
 
 	run = frappe.get_doc(
 		{
@@ -148,20 +248,46 @@ def _launch_audit(inst, trigger: str) -> dict:
 			"status": "running",
 			"conversation": conv.name,
 			"started_at": frappe.utils.now(),
+			"bundle_version": bundle_version,
+			"preparation_mode": preparation_mode,
+			"initiating_human": initiating_human,
 		}
 	)
 	run.flags.ignore_permissions = True
 	run.insert()
 
-	# Defensive: if launched on behalf of another user, hand the owner-scoped
-	# rows to the intended owner (mirrors macros.run_macro).
+	# Defensive: hand the row-owned rows to the intended HUMAN owner (mirrors
+	# macros.run_macro). When run_as_user != owner the session user here is the
+	# run-as user, so this reassignment is what keeps row ownership = owner.
 	if owner != frappe.session.user:
 		for dt, name in ((CONV, conv.name), (RUN, run.name)):
 			frappe.db.set_value(dt, name, "owner", owner, update_modified=False)
+
+	# Phase 1: mint a per-run Jarvis Chat Session bound to the RUN-AS user and
+	# stamp it on the Run. This is the row the delegate's jarvis__* calls resolve
+	# their identity from (api.py:44-141 → impersonate(run_as_user)). The dispatch
+	# itself is stubbed until Phase 2; the session + scope + watermark are the
+	# Phase-1 deliverable.
+	slug = listing.agent_slug
+	# openclaw session keys are `agent:<agent-id>:<key>` and the gateway resolves
+	# the session under that agent-id. The delegate agent id is `agent-<slug>`
+	# (fleet-agent compose.agent_delegates), so the id component MUST be the full
+	# delegate id, not the bare slug — otherwise the gateway `agent` RPC's
+	# agentId (`agent-<slug>`) and the session key's embedded id (`<slug>`)
+	# disagree. The bench never parses this shape (it matches the Jarvis Chat
+	# Session row verbatim), so aligning it is free on the bench side and correct
+	# on the openclaw side.
+	session_key = f"agent:agent-{slug}:{run.name}"
+	_mint_run_session(session_key, run_as_user)
+	frappe.db.set_value(RUN, run.name, "session_key", session_key, update_modified=False)
+
+	# A6 explicit scope + A17 consistency watermark + A12 permission profile —
+	# all best-effort (never abort the launch) and computed AS the run-as user.
+	scope = _stamp_scope_and_watermark(run.name, inst, run_as_user)
+
 	frappe.db.commit()
 
-	# Activity trail (best-effort, Link-free): we run under set_user(owner) /
-	# as the owner, so the feed row is owner-scoped like the run itself.
+	# Activity trail (best-effort, Link-free): row is owner-scoped like the run.
 	log_activity(
 		agent=inst.agent,
 		agent_title=listing.title,
@@ -171,39 +297,177 @@ def _launch_audit(inst, trigger: str) -> dict:
 		detail=f"trigger: {trigger}",
 	)
 
-	# O3: dispatch as an unattended background turn (interactive=False) so it
-	# never jumps ahead of a human's queued question. delegated_send() marks
-	# this as a trusted server re-entry so send_message's Jarvis-access gate
-	# (and the now role-gated Message create perm) accept it even when the
-	# impersonated owner does not hold the Jarvis User role.
-	from jarvis.permissions import delegated_send
+	# Dispatch: every agent is a DELEGATE — it runs server-side via admin -> fleet
+	# -> the tenant's gateway, sharing every identity/scope guard above. The fleet
+	# dispatches the turn DETACHED on the cron lane (A11 — never queues customer
+	# chat) and returns 202; the Run stays "running" until the Phase-3
+	# record_agent_run writeback (or a status poll) marks it done — the dispatch
+	# does NOT block on the run finishing.
+	from jarvis import admin_client
+	from jarvis.chat.agent_catalog import registry_timeout_s
 
-	with delegated_send():
-		result = api.send_message(
-			conversation=conv.name,
-			message=_audit_prompt(listing, inst, trigger),
-			background=1,
-		)
-	if not result.get("ok"):
-		raise RuntimeError(f"send_message refused: {result.get('reason')}")
-	return {"run": run.name, "conversation": conv.name}
-
-
-def _audit_prompt(listing, inst, trigger: str) -> str:
-	cfg = ""
 	try:
-		parsed = frappe.parse_json(inst.config) if inst.config else None
-		if parsed:
-			cfg = f"\n\nEngagement config: {frappe.as_json(parsed)}"
+		admin_client.post_agent_run(
+			run_id=run.name,
+			agent_id=f"agent-{slug}",
+			session_key=session_key,
+			message=_audit_prompt(listing, inst, trigger, scope),
+			timeout_s=registry_timeout_s(slug),
+		)
 	except Exception:
-		cfg = ""
-	slug = listing.agent_slug
+		# The dispatch call itself failed. Mark THIS Run failed (mirror
+		# _record_failed's writeback onto the already-created "running" row so
+		# it is never orphaned), then re-raise so the caller's retry/notify path
+		# runs (scheduler: no next_run_at advance -> retry next hour;
+		# run_agent_now: surfaces the error to the UI).
+		frappe.db.set_value(
+			RUN,
+			run.name,
+			{
+				"status": "failed",
+				"finished_at": frappe.utils.now(),
+				"error": "agent-run dispatch failed; see Error Log",
+			},
+			update_modified=False,
+		)
+		# A8: a run that never dispatched must not leave its session bearer.
+		from jarvis.chat import agent_runs
+
+		agent_runs.teardown_run_session(session_key)
+		frappe.db.commit()
+		frappe.log_error(
+			title=f"jarvis agent-run dispatch failed: {run.name}",
+			message=frappe.get_traceback(),
+		)
+		raise
+	return {"run": run.name, "conversation": conv.name, "session_key": session_key}
+
+
+# --------------------------------------------------------------------------- #
+# Phase 1 identity helpers — per-run session, scope, watermark, perm-profile
+# --------------------------------------------------------------------------- #
+def _mint_run_session(session_key: str, user: str) -> None:
+	"""Insert the per-run ``Jarvis Chat Session`` row that maps session_key →
+	run-as user, mirroring ``chat/api._ensure_session_key``'s shape: snapshot the
+	bench's current ``chat_device_id`` so a re-pair invalidates the row (the
+	device-binding check at ``api.py:106-139``). ignore_permissions — this is
+	trusted server infrastructure, and session_key is unique (run.name is a hash)."""
+	device_id = (frappe.db.get_single_value("Jarvis Settings", "chat_device_id") or "").strip()
+	frappe.get_doc(
+		{
+			"doctype": "Jarvis Chat Session",
+			"session_key": session_key,
+			"user": user,
+			"chat_device_id": device_id,
+		}
+	).insert(ignore_permissions=True)
+
+
+def _stamp_scope_and_watermark(run_name: str, inst, run_as_user: str) -> dict | None:
+	"""Resolve the explicit scope (A6), compute the GL consistency watermark
+	(A17) and the run-as permission profile (A12), and stamp them on the Run.
+
+	All best-effort: a bench without a resolvable Company (e.g. no erpnext setup)
+	must NOT abort the launch — it degrades to an unscoped run (no watermark). The
+	watermark + scope are resolved AS the run-as user (this runs under that
+	session). Returns the resolved scope dict (or None)."""
+	from jarvis.chat import agent_scope
+
+	values: dict = {}
+	scope = None
+	try:
+		scope = agent_scope.resolve_scope(inst)
+		values["scope_json"] = frappe.as_json(scope)
+	except Exception:
+		frappe.log_error(
+			title="jarvis agent: scope resolution failed (unscoped run)",
+			message=frappe.get_traceback(),
+		)
+
+	if scope and scope.get("company") and scope.get("to_date"):
+		# A17: row-count + max(modified) over the scope's GL as-of window. The old
+		# engine ran the whole pack in one snapshot; the chunked container run
+		# spans minutes, so a mid-run backdated JV (endemic at Indian year-end)
+		# is caught by recomputing this at writeback (Phase 3) and comparing.
+		try:
+			wm = frappe.db.sql(
+				"""select count(*) n, max(modified) m from `tabGL Entry`
+				   where company = %(company)s and posting_date <= %(to_date)s""",
+				{"company": scope["company"], "to_date": scope["to_date"]},
+				as_dict=True,
+			)[0]
+			values["wm_row_count"] = int(wm.n or 0)
+			values["wm_gl_max_modified"] = wm.m
+		except Exception:
+			frappe.log_error(
+				title="jarvis agent: GL watermark computation failed",
+				message=frappe.get_traceback(),
+			)
+
+	try:
+		values["permission_profile"] = _permission_profile(run_as_user)
+	except Exception:
+		pass
+
+	if values:
+		frappe.db.set_value(RUN, run_name, values, update_modified=False)
+	return scope
+
+
+def _permission_profile(user: str) -> str:
+	"""A compact JSON summary + sha256 of the run-as user's roles + user-permission
+	keys, so a drift between mapping-time and run-time perms is detectable (A12)."""
+	import hashlib
+	import json
+
+	from frappe.permissions import get_user_permissions
+
+	roles = sorted(frappe.get_roles(user))
+	try:
+		perms = get_user_permissions(user) or {}
+	except Exception:
+		perms = {}
+	up_keys: dict = {}
+	for dt, entries in perms.items():
+		vals = sorted({(e.get("doc") if isinstance(e, dict) else str(e)) for e in (entries or [])})
+		up_keys[dt] = [v for v in vals if v]
+	summary = {"roles": roles, "user_permissions": up_keys}
+	digest = hashlib.sha256(json.dumps(summary, sort_keys=True).encode()).hexdigest()
+	return json.dumps({"hash": digest, **summary})
+
+
+def _audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str:
+	"""The GENERIC, non-leaky run message handed to the delegate (A2/A6).
+
+	It names NO rule, tool, threshold, engagement step, or domain — the delegate's
+	bundled SKILL.md (sourced admin-side from the PRIVATE bundle store, never the
+	bench) carries the actual "how". The bench injects only:
+	  * a pointer to the engagement config on the installation (the delegate reads
+	    it there via its own permission-bounded tools — the config is not dumped
+	    into context), and
+	  * the EXPLICIT resolved SCOPE verbatim (A6), so the bundle NEVER infers "the
+	    current period" (a UTC container clock vs an IST site picks the wrong FY for
+	    ~5.5h/day, catastrophic at Mar-31/Apr-1). Prior-FY selection stays versioned
+	    bench code, injected — never LLM prose.
+	Kept short: the delegate resolves the run/installation linkage for its Phase-3
+	writeback from the session_key the bench minted, not from this text."""
+	scope_block = ""
+	if scope:
+		scope_block = (
+			"\n\nEXPLICIT SCOPE (use these EXACT values; never infer the period): "
+			f'company="{scope.get("company")}", '
+			f'fiscal_year="{scope.get("fiscal_year")}", '
+			f'from_date="{scope.get("from_date")}", '
+			f'to_date="{scope.get("to_date")}", '
+			f'prior_fy_start="{scope.get("prior_fy_start")}", '
+			f'prior_fy_end="{scope.get("prior_fy_end")}".'
+		)
 	return (
-		f"[Automated {trigger} audit] Run the {listing.title} ({slug}) now for the current period. "
-		f"Follow your agent-{slug} skill exactly: compute engagement materiality, then call "
-		f'jarvis__run_scrutiny for domain "{listing.category}" — and pass '
-		f'installation="{inst.name}" to it so your findings are recorded — then report the '
-		f"severity-tagged findings summary it returns. Read-only — never write.{cfg}"
+		f"[Automated {trigger} run] Run your bundled playbook for this trigger now over "
+		f"the scope below. Your engagement configuration is on your installation "
+		f"({inst.name}); read it there. Follow your skill exactly and do only what it "
+		f"authorises."
+		f"{scope_block}"
 	)
 
 
@@ -216,9 +480,54 @@ def _valid_owner(owner: str) -> bool:
 	return bool(frappe.db.get_value("User", owner, "enabled"))
 
 
-def _scheduled_runs_this_month(owner: str) -> int:
+def _agent_run_budget_monthly() -> int:
+	"""A14: the per-INSTALLATION monthly run budget from Jarvis Settings, floored at
+	MIN_AGENT_RUN_BUDGET_MONTHLY (a full daily schedule) so a misconfigured 0/blank
+	never wedges every scheduled agent for a month. Read at run time (not a constant)
+	so a bench admin can raise it without a code change."""
+	try:
+		v = frappe.utils.cint(frappe.db.get_single_value("Jarvis Settings", "agent_run_budget_monthly"))
+	except Exception:
+		v = 0
+	return v if v >= MIN_AGENT_RUN_BUDGET_MONTHLY else DEFAULT_AGENT_RUN_BUDGET_MONTHLY
+
+
+def _expected_monthly_runs(frequency: str) -> int:
+	"""Upper-bound runs/month a schedule frequency generates (daily ~31, weekly 5,
+	monthly 1). Used at install/validate to warn when a schedule can't fit its
+	budget."""
+	return {"daily": 31, "weekly": 5, "monthly": 1}.get((frequency or "").strip().lower(), 31)
+
+
+def _runs_this_month(*, installation: str | None = None) -> int:
+	"""This month's NON-FAILED agent runs — for ONE installation (the per-install
+	budget) or the whole tenant (the aggregate ceiling). Failed rows are EXCLUDED
+	(A14): every skip path writes a ``failed`` row, so counting them would make the
+	cap self-perpetuating once hit. Manual + scheduled are counted together."""
 	month_start = frappe.utils.get_first_day(frappe.utils.today())
-	return frappe.db.count(RUN, {"owner": owner, "trigger": "scheduled", "creation": [">=", month_start]})
+	filters = {"creation": [">=", month_start], "status": ["!=", "failed"]}
+	if installation:
+		filters["installation"] = installation
+	return frappe.db.count(RUN, filters)
+
+
+def _over_run_budget(installation: str) -> tuple[bool, str]:
+	"""A14 gate for BOTH the scheduler and the manual run_agent_now path. Returns
+	``(over, reason)`` when THIS installation's next run would breach either:
+	  * the per-installation monthly budget, OR
+	  * the per-tenant aggregate ceiling (budget × enabled installs) — a backstop so
+	    N installs can't multiply the drain even if per-install accounting is bypassed
+	    by a burst.
+	Keyed on the installation + tenant, NEVER the owner (run_as_user decouples the
+	executing identity from the owner, so a per-owner count both mis- and
+	under-counts)."""
+	budget = _agent_run_budget_monthly()
+	if _runs_this_month(installation=installation) >= budget:
+		return True, "monthly run budget exceeded for this agent"
+	enabled = frappe.db.count(INSTALLATION, {"enabled": 1}) or 1
+	if _runs_this_month() >= budget * enabled:
+		return True, "tenant-wide monthly agent run budget exceeded"
+	return False, ""
 
 
 def _advance(row, now) -> None:
@@ -271,19 +580,35 @@ def _record_failed(row, reason: str) -> None:
 	frappe.db.commit()
 
 
-def _notify_owner(owner: str, row) -> None:
-	"""Best-effort owner notification on enqueue failure (never raises)."""
+def _notify_owner(owner: str, row, reason: str | None = None) -> None:
+	"""Best-effort owner notification on enqueue failure OR budget exhaustion (A14),
+	never raises. A budget message says the cap is hit + resets next month (it will
+	NOT simply retry next hour), so the owner is not left waiting on a run that can't
+	start until the budget rolls over or an admin raises it."""
 	if not _valid_owner(owner):
 		return
+	is_budget = bool(reason) and "budget" in reason.lower()
 	try:
 		frappe.get_doc(
 			{
 				"doctype": "Notification Log",
 				"for_user": owner,
 				"type": "Alert",
-				"subject": f"Scheduled audit could not start: {row.agent}",
+				"subject": (
+					f"Agent run budget reached: {row.agent}"
+					if is_budget
+					else f"Scheduled audit could not start: {row.agent}"
+				),
 				"email_content": (
-					"A scheduled agent audit could not be started. It will retry on the next hourly run."
+					(
+						f"A scheduled agent run was skipped — {reason}. Runs resume next "
+						"month, or ask an admin to raise the monthly agent-run budget in "
+						"Jarvis Settings."
+					)
+					if is_budget
+					else (
+						"A scheduled agent audit could not be started. It will retry on the next hourly run."
+					)
 				),
 			}
 		).insert(ignore_permissions=True)

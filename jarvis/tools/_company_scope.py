@@ -4,7 +4,7 @@ ERPNext scopes multi-company access via User Permissions on Company, not the
 Company doctype's own read role - so a user with no Company User Permission is
 NOT company-restricted, and a user WITH one may only touch companies in that
 set. Gating on Company-doctype read would wrongly deny the "Auditor" role
-(GL read, Company `select` only). Mirrors run_scrutiny's gate.
+(GL read, Company `select` only).
 """
 
 from __future__ import annotations
