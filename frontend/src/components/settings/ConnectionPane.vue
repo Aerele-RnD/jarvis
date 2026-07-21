@@ -11,21 +11,15 @@
 				Connection status is unavailable right now.
 				<button type="button" class="jv-mon-retry" @click="load">Retry</button>
 			</div>
-			<div v-else-if="!applicable" class="jv-mon-note">
-				Connection details apply to multi-model (proxy) setups. This tenant runs a single
-				model (direct), so there is no proxy connection to report.
-			</div>
 			<template v-else>
 				<div class="jv-mon-kv">
 					<span>Status</span>
-					<b :class="conn.auth_present ? 'jv-ok' : 'jv-warn'">{{
-						conn.auth_present ? "Connected" : "Not connected"
-					}}</b>
+					<b :class="statusClass">{{ statusLabel }}</b>
 				</div>
 				<div v-if="conn.default_model" class="jv-mon-kv">
 					<span>Model</span><b>{{ conn.default_model }}</b>
 				</div>
-				<div v-if="conn.oauth_expires_at" class="jv-mon-kv">
+				<div v-if="isProxy && conn.oauth_expires_at" class="jv-mon-kv">
 					<span>Expires</span><b>{{ expiresLabel }}</b>
 				</div>
 			</template>
@@ -54,18 +48,22 @@ const expiresLabel = computed(() => {
 	return ms ? new Date(Number(ms)).toLocaleString() : "—";
 });
 
-// Connection is only meaningful for proxy tenants. get_llm_connection_status
-// returns proxy auth/profile fields; a direct (single-model) tenant has none
-// of them, so treat an empty payload as "not applicable" rather than a
-// misleading "Not connected".
-const applicable = computed(() => {
-	const c = conn.value || {};
-	return !!(
-		c.auth_present ||
-		c.default_model ||
-		c.oauth_expires_at ||
-		(Array.isArray(c.profile_ids) && c.profile_ids.length)
-	);
+// get_llm_connection_status now short-circuits server-side for a DIRECT
+// (single-model) tenant instead of surfacing the raw proxy-auth payload, so
+// `proxy_active` tells the two states apart explicitly - no more guessing
+// from which fields happen to be populated (that heuristic used to misread
+// a direct tenant's own default_model as "connection details present" and
+// render an orange "Not connected" even though chat worked fine).
+const isProxy = computed(() => !!conn.value.proxy_active);
+const statusLabel = computed(() => {
+	if (!isProxy.value) return "Direct";
+	return conn.value.auth_present ? "Connected" : "Not connected";
+});
+// Direct is a mode, not a warning - neutral text, no jv-ok/jv-warn tint
+// (matches BillingMeteringPane's uncoloured "Mode" row for the same value).
+const statusClass = computed(() => {
+	if (!isProxy.value) return "";
+	return conn.value.auth_present ? "jv-ok" : "jv-warn";
 });
 
 async function load() {

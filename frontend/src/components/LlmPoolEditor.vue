@@ -353,13 +353,24 @@
 							/>
 						</div>
 						<div class="jv-pool-field">
-							<label class="jv-pool-lab">API key</label>
+							<label class="jv-pool-lab"
+								>API key<span
+									v-if="isLocalProviderRow(panelRow)"
+									class="jv-pool-opt"
+								>
+									(optional)</span
+								></label
+							>
 							<input
 								v-model="panelRow.apiKey"
 								:disabled="!editable"
 								type="password"
 								:placeholder="
-									panelRow.hasKey ? 'key set, re-enter to change' : 'API key'
+									panelRow.hasKey
+										? 'key set, re-enter to change'
+										: isLocalProviderRow(panelRow)
+										? 'Not required for local providers'
+										: 'API key'
 								"
 								class="jv-cfg-inp"
 							/>
@@ -1153,7 +1164,13 @@
 							v-model="m.apiKey"
 							:disabled="!editable"
 							type="password"
-							:placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'"
+							:placeholder="
+								m.hasKey
+									? 'key set, re-enter to change'
+									: isLocalProviderRow(m)
+									? 'Not required for local providers'
+									: 'API key'
+							"
 						/>
 						<input
 							v-model="m.baseUrl"
@@ -1555,6 +1572,8 @@ import {
 	defaultSubscriptionModel,
 	apiKeyModelHealth,
 	isCodeOnlyPaste,
+	effectiveApiKey,
+	LOCAL_PROVIDER_IDS,
 } from "@/llm/pool";
 import { errMessage as _err } from "@/lib/errors";
 import { useConfirm } from "@/composables/useConfirm";
@@ -1626,7 +1645,7 @@ const ready = computed(() => {
 	return !!(
 		(r.provider || "").trim() &&
 		(r.model || "").trim() &&
-		((r.apiKey || "").trim() || r.hasKey)
+		((r.apiKey || "").trim() || r.hasKey || isLocalProviderRow(r))
 	);
 });
 const credTypes = [
@@ -2033,11 +2052,11 @@ function openEdit(i) {
 // ---- pre-save "Test" (API-key rows only) ---------------------------------
 // Provider ids whose usual endpoint only makes sense reached from INSIDE the
 // tenant's bifrost container (localhost / a customer LAN), never from this
-// browser's bench - MUST match jarvis.llm_key_probe.LOCAL_PROVIDER_IDS. The
-// button still runs (a customer CAN point "vllm"/"ollama" at a real public
-// URL), this only softens the promise with an upfront disclaimer instead of
-// silently implying a guarantee the bench can't make.
-const LOCAL_PROVIDER_IDS = new Set(["ollama", "vllm"]);
+// browser's bench - LOCAL_PROVIDER_IDS is shared with pool.js's own key-
+// optionality check (both MUST match jarvis.llm_key_probe.LOCAL_PROVIDER_IDS).
+// The Test button still runs (a customer CAN point "vllm"/"ollama" at a real
+// public URL), this only softens the promise with an upfront disclaimer
+// instead of silently implying a guarantee the bench can't make.
 function isLocalProviderRow(row) {
 	return !!(row && LOCAL_PROVIDER_IDS.has(providerId(row.provider)));
 }
@@ -2049,7 +2068,8 @@ function testBlockedReason(row) {
 	if (!row) return "Nothing to test";
 	if (!(row.provider || "").trim()) return "Choose a provider to test";
 	if (!(row.model || "").trim()) return "Enter a model id to test";
-	if (!(row.apiKey || "").trim())
+	// Local providers (Ollama, vLLM) take no key - nothing blocks the probe.
+	if (!(row.apiKey || "").trim() && !isLocalProviderRow(row))
 		return row.hasKey ? "Re-enter the key to test it" : "Enter an API key to test";
 	return "";
 }
@@ -2327,6 +2347,16 @@ function onProviderChange(m, newProvider) {
 	const d = PROVIDER_DEFAULTS[m.provider] || {};
 	m.model = d.model || "";
 	m.baseUrl = d.baseUrl || "";
+	// A stored key (hasKey) belongs to the OLD provider's key_ref, not this one -
+	// carrying it forward would either merge the wrong provider's secret on save
+	// (onboarding.py's merge-by-provider fallback keys on the NEW provider, so it
+	// actually finds nothing) or, for a fresh switch to Ollama/vLLM, leave the row
+	// looking "has a key" while save sends a blank api_key - reproducing the exact
+	// "api_key is blank on an enabled model" rejection this switch already causes
+	// between any two providers. Same reasoning as onUpstreamChange dropping
+	// connected accounts on a subscription upstream switch, just below.
+	m.hasKey = false;
+	m.apiKey = "";
 }
 // Provider switch on a subscription row in the simplified onboarding editor:
 // re-default the (hidden) model AND drop any already-connected account, which is
@@ -2838,7 +2868,7 @@ function buildSaveModels(sourceRows) {
 		const m = {
 			provider: (r.provider || "").trim(),
 			model: (r.model || "").trim(),
-			api_key: (r.apiKey || "").trim(),
+			api_key: effectiveApiKey(r.provider, r.apiKey, r.hasKey),
 			order: i,
 		};
 		if (r.hasKey) m.has_key = true; // let validatePool + backend merge keep a stored key on re-save

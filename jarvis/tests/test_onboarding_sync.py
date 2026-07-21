@@ -628,3 +628,157 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 			s.db_set("last_model_statuses", bad, update_modified=False)
 			frappe.db.commit()
 			self.assertEqual(onboarding.get_llm_sync_status()["model_statuses"], [])
+
+
+class TestApplyDevConnection(FrappeTestCase):
+	"""jarvis.onboarding.apply_dev_connection - the bench-only companion that
+	finishes the operator dev-signup flow. Admin v2 un-whitelisted
+	dev_force_signup (closed the free-container backdoor), so the browser can no
+	longer POST it as guest; an operator runs dev_force_signup on the admin bench
+	via `bench execute` and applies its JSON here."""
+
+	# The full key set admin's dev_force_signup returns.
+	_DEV_DATA = {
+		"customer": "dev@example.com",
+		"api_key": "dev-key",
+		"api_secret": "dev-secret",
+		"customer_password": "dev-pw",
+		"agent_url": "ws://localhost:19003",
+		"agent_token": "dev-agent-token",
+		"tenant": "T-DEV-1",
+		"subscription": "Annual Plan",
+		"tenant_status": "running",
+	}
+
+	def setUp(self):
+		self._snap = _snapshot_settings()
+		self._orig_sandbox = frappe.db.get_single_value("Jarvis Settings", "sandbox_mode")
+		_set_token("")
+
+	def tearDown(self):
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", self._orig_sandbox or 0)
+		frappe.db.commit()
+		_restore_settings(self._snap)
+
+	def _sandbox(self, on: bool):
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1 if on else 0)
+		frappe.db.commit()
+
+	def test_happy_path_writes_connection_and_returns_readiness(self):
+		"""Sandbox on + a valid dict: the native creds + container connection are
+		persisted, and the return is is_ready_for_chat()'s {ready, reason} shape."""
+		self._sandbox(True)
+		out = onboarding.apply_dev_connection(dict(self._DEV_DATA))
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.get_password("jarvis_admin_api_key"), "dev-key")
+		self.assertEqual(s.get_password("jarvis_admin_api_secret"), "dev-secret")
+		self.assertEqual(s.agent_url, "ws://localhost:19003")
+		self.assertEqual(s.get_password("agent_token"), "dev-agent-token")
+		self.assertEqual(s.get("jarvis_admin_customer_email"), "dev@example.com")
+		self.assertIsInstance(out, dict)
+		self.assertIn("ready", out)
+		self.assertIn("reason", out)
+
+	def test_accepts_json_string_data(self):
+		"""A double-encoded string (data handed in as JSON text) is parsed too."""
+		import json
+
+		self._sandbox(True)
+		onboarding.apply_dev_connection(json.dumps(self._DEV_DATA))
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.get_password("jarvis_admin_api_key"), "dev-key")
+
+	def test_rejects_when_sandbox_off(self):
+		"""Same gate as dev_onboard: refuse unless sandbox mode is on, and write
+		nothing (never inject an admin connection onto a production bench)."""
+		self._sandbox(False)
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.apply_dev_connection(dict(self._DEV_DATA))
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.get_password("jarvis_admin_api_key", raise_exception=False) or "", "")
+
+	def test_rejects_malformed_dicts(self):
+		"""Non-dict input and a dict missing the required credential keys both
+		fail fast with a ValidationError and persist nothing."""
+		self._sandbox(True)
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.apply_dev_connection(["not", "a", "dict"])
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.apply_dev_connection({"agent_url": "ws://h:1"})
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.apply_dev_connection({"api_key": "k"})  # missing api_secret
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.get_password("jarvis_admin_api_key", raise_exception=False) or "", "")
+
+
+class TestDevOnboardAdminBlocked(FrappeTestCase):
+	"""When admin has un-whitelisted dev_force_signup, dev_onboard must surface
+	the operator bench flow, NOT the misleading 'check admin credentials' toast,
+	and must not persist a half-written connection."""
+
+	def setUp(self):
+		self._snap = _snapshot_settings()
+		self._orig_sandbox = frappe.db.get_single_value("Jarvis Settings", "sandbox_mode")
+		_set_token("")
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "http://admin.example.com"
+		)
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
+		frappe.db.commit()
+
+	def tearDown(self):
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", self._orig_sandbox or 0)
+		frappe.db.commit()
+		_restore_settings(self._snap)
+
+	def test_surfaces_operator_flow_when_not_whitelisted(self):
+		"""The "... is not whitelisted" refusal (whichever admin exception carries
+		it) is intercepted: the message names apply_dev_connection and NOT the
+		credential toast, and no connection is written."""
+		from jarvis.exceptions import AdminAuthError
+
+		with patch(
+			"jarvis.onboarding.admin_client.dev_signup",
+			side_effect=AdminAuthError("dev_force_signup is not whitelisted.", status_code=403),
+		):
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				onboarding.dev_onboard("e@x.com", "Co", "Annual Plan")
+		msg = str(ctx.exception)
+		self.assertIn("apply_dev_connection", msg)
+		self.assertNotIn("check the bench's admin credentials", msg)
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.get_password("jarvis_admin_api_key", raise_exception=False) or "", "")
+
+	def test_other_admin_errors_keep_their_clean_toast(self):
+		"""Regression guard: a NON-block admin failure must NOT be swallowed into
+		the operator-flow message; it keeps its own clean toast."""
+		from jarvis.exceptions import AdminUnreachableError
+
+		with patch(
+			"jarvis.onboarding.admin_client.dev_signup",
+			side_effect=AdminUnreachableError("boom"),
+		):
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				onboarding.dev_onboard("e@x.com", "Co", "Annual Plan")
+		msg = str(ctx.exception)
+		self.assertIn("unreachable", msg)
+		self.assertNotIn("apply_dev_connection", msg)
+
+	def test_admin_v1_that_still_whitelists_succeeds(self):
+		"""Backwards compat: an older admin v1 that still whitelists
+		dev_force_signup returns a connection normally; dev_onboard persists it
+		(no interception)."""
+		with patch(
+			"jarvis.onboarding.admin_client.dev_signup",
+			return_value={
+				"customer": "v1@x.com",
+				"api_key": "v1-key",
+				"api_secret": "v1-secret",
+				"agent_url": "ws://localhost:19009",
+				"agent_token": "v1-tok",
+			},
+		):
+			onboarding.dev_onboard("e@x.com", "Co", "Annual Plan")
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.get_password("jarvis_admin_api_key"), "v1-key")
+		self.assertEqual(s.agent_url, "ws://localhost:19009")

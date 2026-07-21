@@ -435,6 +435,36 @@
 									<div v-if="state.devActive" class="jv-ob-devnote">
 										Developer mode: payment is skipped (dev signup).
 									</div>
+									<div
+										v-if="state.devBlocked"
+										class="jv-ob-devblock"
+										role="alert"
+									>
+										<p class="jv-ob-devblock-title">
+											Dev signup runs from the bench, not the browser
+										</p>
+										<p class="jv-ob-devblock-body">
+											This admin has turned off browser dev signup on
+											purpose. An operator finishes it in two bench commands,
+											then reload this page.
+										</p>
+										<ol class="jv-ob-devblock-steps">
+											<li>
+												<span
+													>On the admin bench, print the
+													connection:</span
+												>
+												<code>{{ devAdminCmd }}</code>
+											</li>
+											<li>
+												<span
+													>On this bench, apply the JSON it
+													printed:</span
+												>
+												<code>{{ devApplyCmd }}</code>
+											</li>
+										</ol>
+									</div>
 									<Banner
 										v-if="state.payErr"
 										type="error"
@@ -861,6 +891,10 @@ const state = reactive({
 	// with empty args).
 	reconciledConnect: false,
 	devActive: null, // UX-only mirror of desk's boot-time `dev`; null until probed on entering "pay"
+	// True when dev signup failed because the admin has un-whitelisted
+	// dev_force_signup (the deliberate free-container backdoor close). We then
+	// render the bench operator flow instead of the generic red error banner.
+	devBlocked: false,
 	successData: null,
 	// provisioning gate: after pay, the openclaw container is still spinning up.
 	// We block entry to the Connect step until it's running (else save_llm_pool
@@ -915,6 +949,24 @@ const payCta = computed(() => {
 	if (isTrialPlan.value) return "Start free trial";
 	return isFreePlan.value ? "Sign up" : `Pay ${inr(selectedPlan.value.price_inr)}`;
 });
+
+// Bench commands shown when the admin has un-whitelisted dev_force_signup
+// (state.devBlocked). Bound as text (Vue escapes it), so the literal angle
+// brackets render as-is. The admin command is prefilled with the details the
+// customer already entered; the apply command's data object is the JSON the
+// admin command prints.
+const devAdminCmd = computed(
+	() =>
+		"bench --site <admin-site> execute jarvis_admin_v2.billing.signup.dev_force_signup --kwargs '" +
+		JSON.stringify({
+			email: state.email || "...",
+			company_name: state.company || "...",
+			plan: state.planName || "...",
+		}) +
+		"'"
+);
+const devApplyCmd =
+	"bench --site <this-site> execute jarvis.onboarding.apply_dev_connection --kwargs '{\"data\": { ...paste the JSON from step 1... }}'";
 
 // Review-card labels (preview .rev): "Pro · Monthly" plan row and a plain
 // amount in the emphasized total row.
@@ -1170,6 +1222,7 @@ async function enterPayStep() {
 // stale cached "true" must never skip a real charge either.
 async function onPayClick() {
 	state.payErr = "";
+	state.devBlocked = false;
 	// Guard against a signup with empty args: on a reconciled resume (or any
 	// state loss) there is no local plan/email/company, and startSignup(email,
 	// company, null) would create a broken signup upstream.
@@ -1198,7 +1251,16 @@ async function runDevOnboard() {
 		await proceedAfterPay(); // gate on provisioning before → "connect"
 	} catch (e) {
 		state.payBusy = false;
-		state.payErr = errMsg(e);
+		const msg = errMsg(e);
+		// Admin has un-whitelisted dev_force_signup (deliberate backdoor close).
+		// The backend now points at the bench operator flow and names
+		// apply_dev_connection in the message; detect that stable token and show
+		// the two-command instructions instead of the generic red error.
+		if (/apply_dev_connection/.test(msg)) {
+			state.devBlocked = true;
+		} else {
+			state.payErr = msg;
+		}
 	}
 }
 
@@ -2132,6 +2194,48 @@ onMounted(async () => {
 	padding: 8px 12px;
 	margin: 14px auto 0;
 	max-width: 560px;
+}
+.jv-ob-devblock {
+	font-size: 12.5px;
+	color: var(--text-2);
+	background: var(--amber-bg);
+	border: 1px solid var(--amber-bd);
+	border-radius: 8px;
+	padding: 12px 14px;
+	margin: 14px auto 0;
+	max-width: 560px;
+	text-align: left;
+}
+.jv-ob-devblock-title {
+	margin: 0 0 6px;
+	font-weight: 560;
+	color: var(--amber);
+}
+.jv-ob-devblock-body {
+	margin: 0 0 10px;
+}
+.jv-ob-devblock-steps {
+	margin: 0;
+	padding-left: 18px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.jv-ob-devblock-steps li {
+	line-height: 1.5;
+}
+.jv-ob-devblock-steps code {
+	display: block;
+	margin-top: 5px;
+	padding: 7px 9px;
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 11.5px;
+	color: var(--text);
+	white-space: pre-wrap;
+	word-break: break-all;
 }
 
 /* ---- Connect ---- */

@@ -268,8 +268,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				// Managed tenants: account management now lives in the Jarvis SPA.
 				// Redirect there unless ?billing=1 (the billing/upgrade flow is not
 				// yet in the SPA — Phase 2). Self-hosted tenants above keep this page.
+				// "/jarvis/account" is a retired route (the account page's content
+				// moved into the SPA settings dialog, which has no URL deep-link
+				// scheme to open a specific pane) - repoint to the SPA root.
 				if (!new URLSearchParams(window.location.search).get("billing")) {
-					window.location.replace("/jarvis/account");
+					window.location.replace("/jarvis/");
 					return null;
 				}
 
@@ -1488,7 +1491,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			const p = $(this).val();
 			const d = PROVIDER_DEFAULTS[p] || {};
 			const row = ui.customRows[i] || {};
-			const patch = { provider: p };
+			// A stored key (has_key) belongs to the OLD provider's key_ref - carry it
+			// forward and a switch to Ollama/vLLM with no retyped key would still send
+			// a blank api_key while has_key=true, hitting the exact "blank api_key"
+			// rejection this whole editor exists to avoid for local providers.
+			const patch = { provider: p, has_key: false, apiKey: "" };
 			if (!(row.model || "").trim() && d.model) patch.model = d.model;
 			if (!(row.baseUrl || "").trim() && d.baseUrl) patch.baseUrl = d.baseUrl;
 			ui.customRows[i] = Object.assign({}, row, patch);
@@ -1695,10 +1702,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					},
 				};
 			}
+			const P = window.jarvis_onboarding_llm || {};
 			const m = {
 				provider: (r.provider || "").trim(),
 				model: (r.model || "").trim(),
-				api_key: (r.apiKey || "").trim(),
+				// Local providers (Ollama, vLLM) take no key; effectiveApiKey fills a
+				// harmless placeholder instead of an empty string so this still clears
+				// the backend's blank-api_key guard, matching validatePool above.
+				api_key: P.effectiveApiKey
+					? P.effectiveApiKey(r.provider, r.apiKey, r.has_key)
+					: (r.apiKey || "").trim(),
 				order: i,
 			};
 			const b = (r.baseUrl || "").trim();

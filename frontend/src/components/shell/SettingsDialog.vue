@@ -373,7 +373,7 @@ const DESCRIPTIONS = {
 	shortcuts: "Keyboard shortcuts available in chat.",
 	plan: "Your subscription, renewal and upgrade options.",
 	aimodels: "The AI connection that powers Jarvis.",
-	connection: "Proxy connection status for this workspace.",
+	connection: "Connection status for this workspace.",
 	billing: "Live usage and cost across the model pool.",
 };
 

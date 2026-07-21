@@ -225,11 +225,28 @@ def get_llm_usage() -> dict:
 def get_llm_connection_status() -> dict:
 	"""Connection card for the Monitor tab: auth profile present + OAuth expiry.
 	Wrapper over admin_client.post_llm_auth_status, remapped to the customer
-	contract field names. Never returns token material. System-Manager only."""
+	contract field names. Never returns token material. System-Manager only.
+
+	DIRECT tenants (proxy_active=0, no Bifrost/cliproxy sidecar) short-circuit
+	before the admin round-trip, mirroring get_llm_usage above - there is no
+	proxy auth profile to report. Before this, the raw admin payload's
+	leftover fields (a stale/default default_model with auth_profile_present
+	false) made the SPA's ConnectionPane render a misleading orange "Not
+	connected" for a direct tenant whose chat verifiably works."""
 	require_jarvis_admin()
+	settings = frappe.get_single("Jarvis Settings")
+	if not getattr(settings, "proxy_active", 0):
+		return {
+			"proxy_active": False,
+			"auth_present": False,
+			"oauth_expires_at": None,
+			"profile_ids": [],
+			"default_model": settings.get("llm_model") or "",
+		}
 	raw = _surface(admin_client.post_llm_auth_status) or {}
 	data = raw.get("data", raw) or {}
 	return {
+		"proxy_active": True,
 		"auth_present": bool(data.get("auth_profile_present")),
 		"oauth_expires_at": data.get("openai_profile_expires_ms"),
 		"profile_ids": data.get("profile_ids", []),

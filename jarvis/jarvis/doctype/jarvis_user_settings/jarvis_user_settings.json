@@ -26,7 +26,8 @@
     "month_tokens",
     "total_tokens",
     "last_usage_at",
-    "last_synced_at"
+    "last_synced_at",
+    "user_model_usage"
   ],
   "fields": [
     {
@@ -156,6 +157,16 @@
       "read_only": 1,
       "no_copy": 1,
       "description": "When admin_sync_usage last refreshed per-session snapshots."
+    },
+    {
+      "fieldname": "user_model_usage",
+      "fieldtype": "Table",
+      "label": "Per-Model Usage",
+      "options": "Jarvis User Model Usage",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "Per-model month-to-date token counters + per-model caps. Written only by server code (jarvis.chat.usage). 0 cap = unlimited. Bench keeps the current month only; admin persists history from the daily push."
     }
   ],
   "permissions": [

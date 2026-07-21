@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import frappe
 
+from jarvis.chat import user_settings_api
 from jarvis.chat.usage import current_month_key as _usage_month_key
 from jarvis.permissions import (
 	has_jarvis_access,
@@ -950,6 +951,22 @@ def send_message(
 			return {"ok": False, "reason": f"invalid thinking level {thinking_override!r}"}
 		conv_doc.thinking_override = level
 
+	# Per-model enforcement (fleet spec §7): now that the conversation (and any
+	# fresh model_override) is settled, resolve the effective model and re-check
+	# the caps. Resolved HERE (not in policy) so policy stays import-light and
+	# never imports turn_handler (import cycle). Pool "Auto" -> "" -> the per-model
+	# gate is skipped inside validate_can_send (spec §2). The aggregate gate is
+	# re-evaluated (cheap, idempotent, fail-open) so there is one validated entry.
+	try:
+		from jarvis.chat.turn_handler import _resolve_model_and_provider
+
+		eff_model, _prov = _resolve_model_and_provider(conv_doc)
+	except Exception:
+		eff_model = ""
+	ok, reason = validate_can_send(user, model=eff_model)
+	if not ok:
+		return {"ok": False, "reason": reason}
+
 	# Non-image files keep a compact "📎 name" marker on the visible message;
 	# image attachments are stored as canvas items so the SPA shows them inline
 	# as clickable thumbnails (same preview as generated images). Either way the
@@ -1307,6 +1324,7 @@ def _measured_usage(user: str) -> dict | None:
 		"monthly_token_limit": 0,
 		"usage_month": None,
 		"last_usage_at": None,
+		"per_model": [],
 	}
 	row = frappe.db.get_value(
 		"Jarvis User Settings",
@@ -1338,6 +1356,10 @@ def _measured_usage(user: str) -> dict | None:
 			"last_usage_at": row.last_usage_at,
 		}
 	)
+	# Reuse user_settings_api's per-model query + row-shaping rather than
+	# reimplementing it here (the two had drifted into duplicate copies of
+	# the same logic).
+	measured["per_model"] = user_settings_api._per_model_rows(user)
 	return measured
 
 
