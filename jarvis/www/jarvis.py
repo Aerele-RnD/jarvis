@@ -1,8 +1,37 @@
 import frappe
 
-from jarvis.permissions import has_jarvis_access, has_jarvis_admin_access
+from jarvis.permissions import (
+	grant_default_support,
+	has_jarvis_access,
+	has_jarvis_admin_access,
+	support_scope,
+)
 
 no_cache = 1
+
+_SUPPORT_AVAILABLE_CACHE_KEY = "jarvis:support_available"
+_SUPPORT_AVAILABLE_TTL_S = 300
+# R1-7: negative-cache a transient CP blip for a shorter window so support reappears promptly.
+_SUPPORT_UNAVAILABLE_TTL_S = 60
+
+
+def _support_available() -> bool:
+	"""Fleet-wide support kill switch, Redis-cached (P8) so boot never blocks on a CP round-trip.
+	Uses support_status (relaxed auth) — NOT get_connection, which 403s suspended customers (P7).
+	Any failure ⇒ False (button hidden, never an error)."""
+	cache = frappe.cache()
+	cached = cache.get_value(_SUPPORT_AVAILABLE_CACHE_KEY)
+	if cached is not None:
+		return cached == "1"
+	try:
+		from jarvis import admin_client
+
+		available = bool(admin_client.support_status(timeout_s=8).get("available"))
+	except Exception:
+		available = False
+	ttl = _SUPPORT_AVAILABLE_TTL_S if available else _SUPPORT_UNAVAILABLE_TTL_S
+	cache.set_value(_SUPPORT_AVAILABLE_CACHE_KEY, "1" if available else "0", expires_in_sec=ttl)
+	return available
 
 
 def get_context(context):
@@ -41,5 +70,13 @@ def get_context(context):
 		# first routed render on a settings request.
 		"time_zone": frappe.utils.get_system_timezone(),
 	}
+
+	# Support panel gating (Plan 3 B5). Lazy-grant the default support role to this chat user so
+	# support isn't dark (P2 — grant_default_support clears the role cache so support_scope sees
+	# it in this same request), then expose both the per-user access flag and the fleet kill switch.
+	grant_default_support()
+	context.boot["has_support_access"] = support_scope() is not None
+	context.boot["support_available"] = _support_available()
+
 	frappe.db.commit()
 	return context
