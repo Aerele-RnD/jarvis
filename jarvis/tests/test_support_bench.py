@@ -163,3 +163,22 @@ class TestSupportBoot(FrappeTestCase):
 
 		with patch("jarvis.admin_client.support_status", return_value={"available": True}):
 			self.assertTrue(jw._support_available())
+
+
+class TestAuthenticatedRawErrors(FrappeTestCase):
+	def test_bearer_4xx_raises_validation_not_returned_as_success(self):
+		# R1-3: a CP 404/413/500 on the bearer path must raise, not come back as a 200 body.
+		from jarvis.exceptions import AdminValidationError
+
+		settings = MagicMock()
+		settings.get_password.side_effect = lambda f, **k: None
+		r404 = MagicMock(status_code=404, text="not found")
+		with (
+			patch("frappe.get_single", return_value=settings),
+			patch.object(admin_client, "_admin_url", return_value="http://cp"),
+			patch.object(admin_client, "_admin_access_token", return_value="tok"),
+			patch.object(admin_client, "requests") as rq,
+		):
+			rq.post.return_value = r404
+			with self.assertRaises(AdminValidationError):
+				admin_client._authenticated_raw("/p", {}, timeout_s=10)

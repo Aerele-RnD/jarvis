@@ -39,7 +39,7 @@
 					rows="6"
 					class="w-full border rounded px-3 py-2 mb-2"
 				></textarea>
-				<input type="file" @change="onNewFile" class="mb-3 block text-sm" />
+				<input type="file" class="mb-3 block text-sm" @change="onNewFile" />
 				<div class="flex gap-2">
 					<button
 						class="px-3 py-2 rounded bg-gray-900 text-white text-sm disabled:opacity-50"
@@ -78,7 +78,20 @@
 						<div class="text-xs uppercase text-gray-400 mb-1">Attachments</div>
 						<ul class="space-y-1">
 							<li v-for="a in ticketAttachments" :key="a.file_url">
-								<component :is="attachmentEl(a)" v-bind="attachmentProps(a)" />
+								<img
+									v-if="isImage(a.file_name)"
+									:src="dl(a.file_url)"
+									:alt="a.file_name"
+									class="max-w-xs rounded border"
+								/>
+								<a
+									v-else
+									:href="dl(a.file_url)"
+									target="_blank"
+									rel="noopener"
+									class="text-blue-600 underline text-sm"
+									>{{ a.file_name }}</a
+								>
 							</li>
 						</ul>
 					</div>
@@ -93,14 +106,27 @@
 							{{ m.sent_or_received === "Sent" ? "Support" : "You" }} ·
 							{{ m.creation }}
 						</div>
-						<!-- Sanitized + URL-rewritten agent/customer HTML -->
+						<!-- Rewrite THEN sanitize (sanitize is the last transform) -->
 						<div
 							class="prose prose-sm max-w-none"
 							v-html="renderMessage(m.content)"
 						></div>
 						<ul v-if="m.attachments && m.attachments.length" class="mt-2 space-y-1">
 							<li v-for="a in m.attachments" :key="a.file_url">
-								<component :is="attachmentEl(a)" v-bind="attachmentProps(a)" />
+								<img
+									v-if="isImage(a.file_name)"
+									:src="dl(a.file_url)"
+									:alt="a.file_name"
+									class="max-w-xs rounded border"
+								/>
+								<a
+									v-else
+									:href="dl(a.file_url)"
+									target="_blank"
+									rel="noopener"
+									class="text-blue-600 underline text-sm"
+									>{{ a.file_name }}</a
+								>
 							</li>
 						</ul>
 					</div>
@@ -114,7 +140,7 @@
 						class="w-full border rounded px-3 py-2 mb-2"
 					></textarea>
 					<div class="flex items-center gap-2">
-						<input type="file" @change="onReplyFile" class="text-sm" />
+						<input type="file" class="text-sm" @change="onReplyFile" />
 						<button
 							class="ml-auto px-3 py-2 rounded bg-gray-900 text-white text-sm disabled:opacity-50"
 							:disabled="(!replyBody && !replyFile) || busy"
@@ -164,6 +190,13 @@ function onNewFile(e) {
 }
 function onReplyFile(e) {
 	replyFile.value = e.target.files[0] || null;
+}
+
+function dl(fileUrl) {
+	return selected.value ? supportDownloadUrl(selected.value.name, fileUrl) : "";
+}
+function isImage(name) {
+	return /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(name || "");
 }
 
 async function loadTickets() {
@@ -222,47 +255,32 @@ async function sendReply() {
 async function closeTicket() {
 	busy.value = true;
 	try {
-		await supportCloseTicket(selected.value.name);
-		await openTicket(selected.value);
+		const name = selected.value.name;
+		await supportCloseTicket(name);
 		await loadTickets();
+		// R1-8: re-point `selected` at the refreshed row so the header status reflects Closed.
+		const t = tickets.value.find((x) => x.name === name);
+		if (t) await openTicket(t);
 	} finally {
 		busy.value = false;
 	}
 }
 
-// Sanitize (layer 2), then P5: rewrite relative /files/ + /private/files/ src/href to the
-// same-origin download proxy, and strip srcset — so inline agent images/links resolve.
+// R1-4: rewrite inline /files/ + /private/files/ src/href to the same-origin download proxy and
+// strip srcset FIRST, then DOMPurify.sanitize as the LAST transform (no post-sanitize mutation).
 function renderMessage(html) {
-	const clean = DOMPurify.sanitize(html || "");
-	if (!selected.value) return clean;
-	const doc = new DOMParser().parseFromString(clean, "text/html");
-	doc.querySelectorAll("img[src], a[href]").forEach((el) => {
-		const attr = el.tagName === "IMG" ? "src" : "href";
-		const v = el.getAttribute(attr) || "";
-		if (v.startsWith("/files/") || v.startsWith("/private/files/")) {
-			el.setAttribute(attr, supportDownloadUrl(selected.value.name, v));
-		}
-		el.removeAttribute("srcset");
-	});
-	return doc.body.innerHTML;
-}
-
-function isImage(name) {
-	return /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(name || "");
-}
-function attachmentEl(a) {
-	return isImage(a.file_name) ? "img" : "a";
-}
-function attachmentProps(a) {
-	const url = supportDownloadUrl(selected.value.name, a.file_url);
-	return isImage(a.file_name)
-		? { src: url, class: "max-w-xs rounded border", alt: a.file_name }
-		: {
-				href: url,
-				target: "_blank",
-				class: "text-blue-600 underline text-sm",
-				innerHTML: a.file_name,
-		  };
+	const doc = new DOMParser().parseFromString(html || "", "text/html");
+	if (selected.value) {
+		doc.querySelectorAll("img[src], a[href]").forEach((el) => {
+			const attr = el.tagName === "IMG" ? "src" : "href";
+			const v = el.getAttribute(attr) || "";
+			if (v.startsWith("/files/") || v.startsWith("/private/files/")) {
+				el.setAttribute(attr, supportDownloadUrl(selected.value.name, v));
+			}
+			el.removeAttribute("srcset");
+		});
+	}
+	return DOMPurify.sanitize(doc.body.innerHTML);
 }
 
 onMounted(loadTickets);

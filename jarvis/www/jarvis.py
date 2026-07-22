@@ -11,6 +11,8 @@ no_cache = 1
 
 _SUPPORT_AVAILABLE_CACHE_KEY = "jarvis:support_available"
 _SUPPORT_AVAILABLE_TTL_S = 300
+# R1-7: negative-cache a transient CP blip for a shorter window so support reappears promptly.
+_SUPPORT_UNAVAILABLE_TTL_S = 60
 
 
 def _support_available() -> bool:
@@ -27,9 +29,8 @@ def _support_available() -> bool:
 		available = bool(admin_client.support_status(timeout_s=8).get("available"))
 	except Exception:
 		available = False
-	cache.set_value(
-		_SUPPORT_AVAILABLE_CACHE_KEY, "1" if available else "0", expires_in_sec=_SUPPORT_AVAILABLE_TTL_S
-	)
+	ttl = _SUPPORT_AVAILABLE_TTL_S if available else _SUPPORT_UNAVAILABLE_TTL_S
+	cache.set_value(_SUPPORT_AVAILABLE_CACHE_KEY, "1" if available else "0", expires_in_sec=ttl)
 	return available
 
 

@@ -427,11 +427,29 @@ def support_download(*, ticket: str, file_url: str, requesting_user: str, scope:
 	)
 
 
+def _raise_for_admin_raw(resp):
+	"""Status routing for a RAW Response, mirroring _do_post's envelope routing (R1-3): 2xx returns
+	the Response; 401/403 -> AdminAuthError (drives the ladder); 429 -> AdminRateLimitedError; other
+	4xx -> AdminValidationError; 5xx -> AdminUnreachableError. DRIFT-GUARD: keep in sync with
+	_do_post's status branches — mirror any change there in both places."""
+	if resp.status_code < 400:
+		return resp
+	if resp.status_code in (401, 403):
+		raise AdminAuthError(f"admin returned {resp.status_code}", status_code=resp.status_code)
+	if resp.status_code == 429:
+		raise AdminRateLimitedError("rate_limited")
+	if resp.status_code < 500:
+		raise AdminValidationError(
+			_scrub_secrets((resp.text or "")[:_MAX_MESSAGE_CHARS]) or f"admin returned {resp.status_code}"
+		)
+	raise AdminUnreachableError(f"admin returned {resp.status_code}")
+
+
 def _authenticated_raw(path: str, body: dict, *, timeout_s: int):
-	"""Auth ladder (bearer -> 401 re-mint -> legacy fallback) around a RAW POST, returning the
-	requests.Response so the caller can read bytes (P3 — _do_post is JSON-only, so it can't be
-	reused for streamed media; the ladder is replicated here rather than refactoring the critical
-	_post path). Verified against _post's ladder semantics."""
+	"""Auth ladder (bearer -> 401 re-mint -> 403-terminal -> legacy fallback) around a RAW POST,
+	returning the requests.Response so the caller can read bytes (P3 — _do_post is JSON-only, so it
+	can't be reused for streamed media). DRIFT-GUARD: this replicates _post's ladder; mirror any
+	change to _post's auth ladder here too. Error status routing is in _raise_for_admin_raw."""
 	settings = frappe.get_single("Jarvis Settings")
 	admin_url = _admin_url(settings)
 	url = admin_url + path
@@ -442,32 +460,28 @@ def _authenticated_raw(path: str, body: dict, *, timeout_s: int):
 		except (requests.ConnectionError, requests.Timeout) as e:
 			raise AdminUnreachableError("admin is unreachable; check network / service status") from e
 
+	bearer = {"Content-Type": "application/json"}
 	access_token = _admin_access_token(settings, admin_url)
 	if access_token:
-		resp = _send({"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"})
-		if resp.status_code not in (401, 403):
-			return resp
-		if resp.status_code == 403:
-			raise AdminAuthError("admin returned 403", status_code=403)
-		access_token = _admin_access_token(settings, admin_url, force_refresh=True)
-		if access_token:
-			resp = _send({"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"})
-			if resp.status_code not in (401, 403):
-				return resp
-			if resp.status_code == 403:
-				raise AdminAuthError("admin returned 403", status_code=403)
-		frappe.cache().delete_value(_OAUTH_CACHE_KEY)
+		try:
+			return _raise_for_admin_raw(_send({**bearer, "Authorization": f"Bearer {access_token}"}))
+		except AdminAuthError as e:
+			if e.status_code == 403:
+				raise  # authorization denial, not a stale token — terminal
+			access_token = _admin_access_token(settings, admin_url, force_refresh=True)
+			if access_token:
+				try:
+					return _raise_for_admin_raw(_send({**bearer, "Authorization": f"Bearer {access_token}"}))
+				except AdminAuthError as retry_err:
+					if retry_err.status_code == 403:
+						raise
+			frappe.cache().delete_value(_OAUTH_CACHE_KEY)
 
 	api_key = (settings.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip()
 	api_secret = (settings.get_password("jarvis_admin_api_secret", raise_exception=False) or "").strip()
 	if not api_key or not api_secret:
 		raise AdminAuthError("not onboarded (no OAuth password and no api_key/secret)")
-	resp = _send({"Authorization": f"token {api_key}:{api_secret}", "Content-Type": "application/json"})
-	if resp.status_code in (401, 403):
-		raise AdminAuthError(f"admin returned {resp.status_code}", status_code=resp.status_code)
-	if resp.status_code >= 400:
-		raise AdminUnreachableError(f"admin returned {resp.status_code}")
-	return resp
+	return _raise_for_admin_raw(_send({**bearer, "Authorization": f"token {api_key}:{api_secret}"}))
 
 
 def renew() -> dict:
@@ -1041,6 +1055,9 @@ def _post(path: str, body: dict, *, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 
 	Folds the Settings + admin-URL read here so public wrappers stay one-liners
 	(one Settings load per call).
+
+	DRIFT-GUARD: _authenticated_raw (media, raw/streamed responses) replicates this
+	bearer->401-remint->403-terminal->legacy ladder; mirror any change here there too.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
 	admin_url = _admin_url(settings)
