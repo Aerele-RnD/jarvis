@@ -13,7 +13,6 @@
 				'jvw-fab--dragging': dragging,
 				'jvw-fab--faded': faded && !dragging,
 				'jvw-fab--dock-left': side === 'left',
-				'jvw-fab--behind': panelOpen,
 			}"
 			:style="fabStyle"
 			:aria-label="panelOpen ? 'Close Jarvis' : 'Ask Jarvis'"
@@ -38,7 +37,7 @@
 			ref="panelRef"
 			:open="panelOpen"
 			:context="effectiveContext"
-			:side="side"
+			:layout="panelBox"
 			@close="closePanel"
 			@open-full="openFull"
 			@dismiss-context="contextDismissed = true"
@@ -50,6 +49,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { FULL_CHAT_URL, conversationUrl, PANEL_MIN_VIEWPORT_PX } from "./config.mjs";
 import { contextFromRoute } from "./desk_context.mjs";
+import { panelLayout } from "./panel_anchor.mjs";
 import * as fabPos from "./fab_position.mjs";
 import Panel from "./Panel.vue";
 
@@ -81,6 +81,19 @@ const contextDismissed = ref(false);
 // Dismissing the chip suppresses context for the current page only; a new
 // route is a new subject, so the dismissal does not carry over.
 const effectiveContext = computed(() => (contextDismissed.value ? null : deskContext.value));
+
+// The window hangs off the FAB, so it re-lays-out on every drag frame and on
+// resize. fabXY is already reactive, which is what makes the panel travel with
+// the launcher instead of being stranded across the screen from it.
+const viewportTick = ref(0);
+const panelBox = computed(() => {
+	viewportTick.value; // re-run on resize / orientation change
+	const topInset = readCssPx(document.documentElement, "--navbar-height", 48);
+	return panelLayout(
+		{ x: fabXY.value.x, y: fabXY.value.y, size: fabPos.FAB_SIZE },
+		{ vw: window.innerWidth, vh: window.innerHeight, top: topInset }
+	);
+});
 
 function readDeskContext() {
 	const route = (window.frappe && frappe.get_route && frappe.get_route()) || [];
@@ -264,6 +277,7 @@ function onFabClick() {
 // storage means this is enough to keep it on-screen after a viewport change.
 function onResize() {
 	applyPosition({ animate: false });
+	viewportTick.value++; // re-anchor the panel to the new viewport
 }
 
 onMounted(() => {
@@ -358,14 +372,6 @@ onBeforeUnmount(() => {
 }
 .jvw-fab--faded {
 	opacity: 0.4;
-}
-/* The panel docks to the same edge the FAB is snapped to, and the FAB outranks
-   it on z-index — so an open panel would wear the launcher on top of its header
-   or composer. Retire the FAB while the panel is open; the panel's own close
-   button and Esc bring it back. */
-.jvw-fab--behind {
-	opacity: 0;
-	pointer-events: none;
 }
 
 /* ---- drag affordance ----

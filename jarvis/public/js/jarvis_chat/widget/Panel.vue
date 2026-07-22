@@ -4,7 +4,7 @@
 	<div
 		v-show="open"
 		class="jvp-root"
-		:class="`jvp-root--${side}`"
+		:style="rootStyle"
 		role="dialog"
 		aria-label="Jarvis chat"
 		@keydown.esc.stop="$emit('close')"
@@ -64,7 +64,7 @@
 					<button class="jvp-btn-subtle" type="button" @click="load">Retry</button>
 				</div>
 
-				<div v-else-if="!shownMessages.length && !stream.live" class="jvp-center">
+				<div v-else-if="!shownMessages.length && !stream.live && !thinking" class="jvp-center">
 					<svg class="jvp-empty-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
 					</svg>
@@ -84,7 +84,13 @@
 						:key="m.name"
 						:class="m.role === 'user' ? 'jvp-m-user' : 'jvp-m-bot'"
 					>{{ m.content }}</div>
-					<div v-if="stream.live" class="jvp-m-bot">{{ stream.live.text || "…" }}</div>
+					<div v-if="stream.live && stream.live.text" class="jvp-m-bot">{{ stream.live.text }}</div>
+					<!-- Waiting for the first token: a labelled state, not a bare
+					     spinner, so the user knows the turn was accepted. -->
+					<div v-else-if="thinking" class="jvp-think" role="status" aria-live="polite">
+						<span class="jvp-think-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+						<span class="jvp-think-txt">Working…</span>
+					</div>
 					<div v-if="loadError && shownMessages.length" class="jvp-inline-err">
 						<span class="jvp-err">{{ loadError }}</span>
 						<button class="jvp-btn-subtle" type="button" @click="retryLast">Retry</button>
@@ -171,7 +177,9 @@ import {
 const props = defineProps({
 	open: { type: Boolean, default: false },
 	context: { type: Object, default: null },
-	side: { type: String, default: "right" },
+	// Computed by panel_anchor.panelLayout from wherever the user dragged the
+	// FAB. The panel is a floating mini window, so it has no fixed home.
+	layout: { type: Object, default: null },
 });
 defineEmits(["close", "open-full", "dismiss-context"]);
 
@@ -191,9 +199,25 @@ const resolving = ref("");
 const lastSent = ref("");
 
 const contextText = computed(() => contextLabel(props.context));
+
+// The panel is positioned, not docked: left/top/width/height all come from the
+// FAB's current spot so dragging the launcher moves its window with it.
+const rootStyle = computed(() => {
+	const l = props.layout;
+	if (!l) return { display: "none" };
+	return {
+		left: `${l.left}px`,
+		top: `${l.top}px`,
+		width: `${l.width}px`,
+		height: `${l.height}px`,
+	};
+});
 // Tool rows and empty shells are filtered out: this panel is text-only, and
 // the raw list is mostly machine chatter (see chat_stream.visibleMessages).
 const shownMessages = computed(() => visibleMessages(messages.value));
+// A turn is in flight from the moment the POST is away until the first token
+// lands. Without this the panel looks inert for the whole worker round-trip.
+const thinking = computed(() => sending.value || (stream.value.busy && !stream.value.live));
 const canSend = computed(() => draft.value.trim().length > 0 && !sending.value && !stream.value.live);
 const hint = computed(() => {
 	if (stream.value.live) return "Jarvis is replying…";
@@ -361,22 +385,14 @@ defineExpose({ load, startNewChat, convId });
 <style scoped>
 /* Desk CSS variables only — the Desk already stamps the theme, so light/dark
    comes free and no dark: variants are needed (design.md 6). */
+/* A mini chat window, not a full-height dock: left/top/width/height are set
+   inline from panel_anchor.panelLayout() so the window follows the FAB
+   wherever the user dragged it. */
 .jvp-root {
 	position: fixed;
-	top: var(--navbar-height, 48px);
-	bottom: 0;
-	width: 400px;
-	max-width: 100vw;
 	z-index: 1029; /* under Frappe modals (1050), over page content */
 	display: flex;
-	padding: 12px;
 	pointer-events: none;
-}
-.jvp-root--right {
-	right: 0;
-}
-.jvp-root--left {
-	left: 0;
 }
 
 .jvp-panel {
@@ -700,5 +716,52 @@ defineExpose({ load, startNewChat, convId });
 .jvp-btn-solid[disabled] {
 	opacity: 0.6;
 	cursor: not-allowed;
+}
+
+/* ---- waiting for a reply ---- */
+.jvp-think {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	color: var(--text-muted);
+	font-size: 13.5px;
+}
+.jvp-think-dots {
+	display: inline-flex;
+	align-items: flex-end;
+	gap: 3px;
+	height: 12px;
+}
+.jvp-think-dots i {
+	width: 4px;
+	height: 4px;
+	border-radius: 999px;
+	background: currentColor;
+	opacity: 0.35;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.jvp-think-dots i {
+		animation: jvp-dot 1.2s infinite ease-in-out;
+	}
+	.jvp-think-dots i:nth-child(2) {
+		animation-delay: 0.15s;
+	}
+	.jvp-think-dots i:nth-child(3) {
+		animation-delay: 0.3s;
+	}
+}
+/* Progress feedback, not decoration — the one animation design.md's
+   no-motion rule does not cover, and it is gated on motion-safe anyway. */
+@keyframes jvp-dot {
+	0%,
+	80%,
+	100% {
+		transform: translateY(0);
+		opacity: 0.35;
+	}
+	40% {
+		transform: translateY(-4px);
+		opacity: 1;
+	}
 }
 </style>
