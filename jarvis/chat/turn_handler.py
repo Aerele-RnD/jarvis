@@ -65,6 +65,23 @@ MSG = "Jarvis Chat Message"
 _ASSISTANT_BATCH_SIZE = 10
 _ASSISTANT_BATCH_INTERVAL_MS = 250
 
+# chat.send ack budget. openclaw ingests and PREPROCESSES the whole message
+# before it acks the RPC, so this window has to cover the payload, not just
+# the WS round-trip. Two contributions, because a message grows two ways:
+#   - vision parts: each PDF page is rasterized + resized inside the RPC
+#     (measured 22s for a 4-page invoice).
+#   - inlined text: a CSV/TXT/JSON/MD attachment is folded into the prompt
+#     body (up to _MAX_INLINE_CHARS) and never becomes a vision part, so it
+#     used to add nothing to the budget while adding ~20k chars to the send.
+#     That is the "timed out in the UI, answered in the transcript" split
+#     brain: the bench gave up at 10s, openclaw completed the turn anyway.
+# The base also absorbs cold-session bootstrap (persona + skills catalog) on
+# a first turn, which is when the old flat 10s was tightest.
+_ACK_TIMEOUT_BASE_S = 30.0
+_ACK_TIMEOUT_PER_VISION_PART_S = 30.0
+_ACK_TIMEOUT_PER_INLINED_CHAR_S = 10.0 / 10_000  # ~10s per 10k inlined chars
+_ACK_TIMEOUT_CEILING_S = 180.0
+
 
 def persist_rich_outputs(
 	assistant_msg_name: str,
@@ -653,7 +670,14 @@ def handle_chat_send(payload: dict) -> None:
 		and _vision_enabled(settings)
 		and vision.supports_vision(settings.llm_provider)
 	)
+	# Measure how much the attachments grew the PROMPT, not just how many
+	# vision parts they produced. Text files (CSV/TXT/JSON/MD/logs) and the
+	# vision-off PDF text fallback are inlined into user_message and leave
+	# vision_parts empty, so growth is the only signal that the send is big.
+	# Feeds _ack_timeout_s() below.
+	_prompt_chars_before_attachments = len(user_message)
 	user_message, vision_parts = _prepare_attachments(user_message, attachments, vision_ok)
+	inlined_prompt_chars = max(0, len(user_message) - _prompt_chars_before_attachments)
 	# The /think directive: self-hosted still inlines it as the FIRST bytes
 	# of the message body (openclaw's leading-directive parser strips it
 	# from there); managed sends it as the chat_send ``thinking`` param
@@ -871,33 +895,54 @@ def handle_chat_send(payload: dict) -> None:
 							message=frappe.get_traceback(),
 						)
 					managed_attachments = _to_managed_attachments(vision_parts) if vision_parts else None
-					# openclaw preprocesses attachments BEFORE acking chat.send
-					# (each PDF page is rasterized + resized inside the RPC:
-					# measured 22s for a 4-page invoice). The default 10s ack
-					# timeout made every document send fail with
-					# "chat.send timed out" while the gateway completed the
-					# turn anyway. Scale the ack window with the payload.
-					ack_timeout = 10.0 + (30.0 * len(managed_attachments) if managed_attachments else 0.0)
-					ack = (
-						sess.chat_send(
-							conv.session_key,
-							user_message,
-							run_id,
-							thinking=(conv.thinking_override or "").strip() or None,
-							attachments=managed_attachments,
-							timeout_s=min(ack_timeout, 180.0),
+					ack_timeout = _ack_timeout_s(len(managed_attachments or []), inlined_prompt_chars)
+					ack_timed_out = False
+					try:
+						ack = (
+							sess.chat_send(
+								conv.session_key,
+								user_message,
+								run_id,
+								thinking=(conv.thinking_override or "").strip() or None,
+								attachments=managed_attachments,
+								timeout_s=ack_timeout,
+							)
+							or {}
 						)
-						or {}
-					)
+					except OpenclawUnreachableError as e:
+						# The ack window closed with the request frame already on
+						# the wire. openclaw routinely ACCEPTS the message and runs
+						# the whole turn while the bench is still waiting, so
+						# erroring here is a false negative: the user sees
+						# "chat.send timed out" while the transcript shows a
+						# finished answer, and a retry re-runs under a FRESH run_id
+						# (dedupe keys off run_id) and can duplicate writes. Park
+						# for snapshot recovery instead - the seq watermark was
+						# captured BEFORE the send, so recovery can tell this turn's
+						# messages from the previous turn's. Only the TIMEOUT is
+						# ambiguous; a rejection or a dead socket never reached the
+						# agent, so those still raise onto the real-error path.
+						if getattr(e, "code", None) != "ack-timeout":
+							raise
+						ack = {}
+						ack_timed_out = True
 					# chat.send delivered our message (incl. any drained notes) -
 					# drop exactly the notes we folded in (by id), so the correction
 					# is delivered once, not re-nagged, without clobbering a discard
 					# appended mid-turn or one a concurrent continuation delivered. A
 					# pre-ack failure raises OpenclawUnreachableError below instead of
-					# reaching here, leaving the notes for retry.
-					if drained_notes:
+					# reaching here, leaving the notes for retry. An ack TIMEOUT is
+					# excluded for the same reason: delivery is unproven there, and
+					# re-nagging a correction is a much cheaper mistake than silently
+					# dropping one.
+					if drained_notes and not ack_timed_out:
 						agent_notes.clear(conversation_id, drained_ids)
-					if ack.get("status") == "ok":
+					if ack_timed_out:
+						# Same park-and-recover path as a dropped stream, handled
+						# below AFTER this pool checkout releases the per-gateway
+						# lock so the recovery round-trip never blocks other turns.
+						terminal = {"kind": "relay:interrupted", "reason": "ack-timeout"}
+					elif ack.get("status") == "ok":
 						# Cached replay of a completed run (same run_id
 						# re-enqueued after the worker died post-completion).
 						# No events will follow; finalize from the durable
@@ -1398,6 +1443,23 @@ def _vision_enabled(settings) -> bool:
 	defaults to ON), mirroring selfhost_stream."""
 	v = settings.vision_attachments_enabled
 	return v is None or bool(v)
+
+
+def _ack_timeout_s(vision_part_count: int, inlined_prompt_chars: int) -> float:
+	"""Wall-clock window to wait for the ``chat.send`` ack, sized from the payload.
+
+	openclaw ingests and preprocesses the whole message before it acks, so a
+	big send needs a bigger window. Giving up early is a FALSE negative - the
+	gateway goes on to run the turn while the bench reports a timeout - so the
+	window errs generous and is bounded by ``_ACK_TIMEOUT_CEILING_S`` to keep a
+	genuinely wedged gateway from stalling a turn for minutes. A dead socket or
+	a refused connection still fails fast; they raise instead of waiting."""
+	return min(
+		_ACK_TIMEOUT_BASE_S
+		+ _ACK_TIMEOUT_PER_VISION_PART_S * max(0, vision_part_count)
+		+ _ACK_TIMEOUT_PER_INLINED_CHAR_S * max(0, inlined_prompt_chars),
+		_ACK_TIMEOUT_CEILING_S,
+	)
 
 
 def _to_managed_attachments(vision_parts: list[dict]) -> list[dict]:

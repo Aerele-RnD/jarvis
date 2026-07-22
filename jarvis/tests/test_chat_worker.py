@@ -10,9 +10,10 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.chat import openclaw_session_pool
+from jarvis.chat import openclaw_session_pool, turn_handler
 from jarvis.chat.api import create_conversation, get_conversation, send_message
 from jarvis.chat.worker import run_agent_turn
+from jarvis.exceptions import OpenclawUnreachableError
 from jarvis.tests.test_chat_api import (
 	TEST_USER,
 	_cleanup_user_conversations,
@@ -1166,16 +1167,115 @@ class TestOverflowParksForRecovery(FrappeTestCase):
 
 
 class TestChatSendAttachmentTimeout(FrappeTestCase):
-	"""openclaw preprocesses attachments (PDF page raster + resize) BEFORE
-	acking chat.send - 22s measured for a 4-page invoice vs the 10s default
-	ack timeout, so every document send errored 'chat.send timed out' while
-	the gateway ran the turn anyway. The ack window must scale with the
-	attachment count (and stay default without attachments)."""
+	"""openclaw ingests and preprocesses the message BEFORE acking chat.send,
+	so the ack window must scale with the payload. Two ways a send gets big:
+	vision parts (PDF page raster + resize - 22s measured for a 4-page
+	invoice) and INLINED TEXT (a CSV/TXT/JSON attachment is folded into the
+	prompt body and never becomes a vision part). Sizing the window off
+	vision parts alone left text attachments on the bare default, which is
+	how a CSV send errored 'chat.send timed out' in the UI while the
+	transcript showed the gateway completing the turn."""
 
-	def test_ack_timeout_scales_with_attachments(self):
-		src = open(frappe.get_app_path("jarvis", "chat", "turn_handler.py")).read()
-		self.assertIn("ack_timeout = 10.0 + (30.0 * len(managed_attachments)", src)
-		self.assertIn("timeout_s=min(ack_timeout, 180.0)", src)
+	def test_bare_send_uses_the_base_window(self):
+		self.assertEqual(turn_handler._ack_timeout_s(0, 0), turn_handler._ACK_TIMEOUT_BASE_S)
+
+	def test_vision_parts_extend_the_window(self):
+		self.assertEqual(
+			turn_handler._ack_timeout_s(2, 0),
+			turn_handler._ACK_TIMEOUT_BASE_S + 2 * turn_handler._ACK_TIMEOUT_PER_VISION_PART_S,
+		)
+
+	def test_inlined_text_extends_the_window(self):
+		"""The regression this fix exists for: a 20k-char CSV carries zero
+		vision parts, so the old formula gave it the bare default."""
+		csv_sized = turn_handler._ack_timeout_s(0, 20_000)
+		self.assertGreater(csv_sized, turn_handler._ACK_TIMEOUT_BASE_S)
+		# Materially bigger, not a rounding artifact.
+		self.assertGreaterEqual(csv_sized - turn_handler._ACK_TIMEOUT_BASE_S, 15.0)
+
+	def test_window_is_clamped(self):
+		"""A pathological payload must not stall a turn for minutes against a
+		genuinely wedged gateway."""
+		self.assertEqual(
+			turn_handler._ack_timeout_s(100, 10_000_000),
+			turn_handler._ACK_TIMEOUT_CEILING_S,
+		)
+
+	def test_negative_counts_never_shrink_the_window(self):
+		self.assertEqual(turn_handler._ack_timeout_s(-5, -5), turn_handler._ACK_TIMEOUT_BASE_S)
+
+	def test_text_attachment_produces_no_vision_parts(self):
+		"""Anchors the premise: the inlined-char count is the ONLY signal a
+		text attachment gives, so the budget has to read it."""
+		before = "hi"
+		msg, parts = turn_handler._prepare_attachments(before, None, vision_ok=True)
+		self.assertEqual(parts, [])
+		self.assertEqual(len(msg) - len(before), 0)
+
+
+class TestChatSendAckTimeoutParks(FrappeTestCase):
+	"""A chat.send ACK timeout is ambiguous: the request frame was already on
+	the wire, and openclaw routinely accepts the message and runs the whole
+	turn while the bench is still waiting. Erroring there is a false negative
+	(user sees a timeout, transcript shows a finished answer) and invites a
+	retry that re-runs under a fresh run_id and can duplicate writes. It must
+	park for snapshot recovery instead. A REJECTION or a dead socket never
+	reached the agent, so those must still error."""
+
+	def setUp(self):
+		openclaw_session_pool._POOL.clear()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message()
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def _run_with_send_raising(self, exc):
+		fake_sess = MagicMock()
+		fake_sess.chat_send.side_effect = exc
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.turn_recovery.recover_now") as recover_now:
+				with patch("jarvis.chat.worker.publish_to_user") as pub:
+					run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		row = frappe.db.get_value(
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			["recovering", "streaming", "error"],
+			as_dict=True,
+		)
+		return row, [c.args[1]["kind"] for c in pub.call_args_list], recover_now
+
+	def test_ack_timeout_parks_instead_of_erroring(self):
+		row, kinds, recover_now = self._run_with_send_raising(
+			OpenclawUnreachableError("chat.send timed out", code="ack-timeout")
+		)
+		self.assertEqual(row["recovering"], 1)
+		# Spinner stays up; turn_recovery finalizes from the gateway snapshot.
+		self.assertEqual(row["streaming"], 1)
+		self.assertFalse(row["error"])
+		self.assertIn("run:recovering", kinds)
+		self.assertNotIn("run:error", kinds)
+		recover_now.assert_called_once_with(self.conv)
+
+	def test_rejection_still_errors(self):
+		"""Guards the blast radius: only the ambiguous timeout parks."""
+		row, kinds, _ = self._run_with_send_raising(
+			OpenclawUnreachableError("chat.send rejected: bad-request: nope", code="bad-request")
+		)
+		self.assertEqual(row["recovering"], 0)
+		self.assertTrue(row["error"])
+		self.assertIn("run:error", kinds)
+		self.assertNotIn("run:recovering", kinds)
+
+	def test_untagged_transport_failure_still_errors(self):
+		row, kinds, _ = self._run_with_send_raising(OpenclawUnreachableError("openclaw WS closed: gone"))
+		self.assertEqual(row["recovering"], 0)
+		self.assertTrue(row["error"])
+		self.assertIn("run:error", kinds)
 
 
 class TestRelayOverflowParks(FrappeTestCase):

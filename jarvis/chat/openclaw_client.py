@@ -1029,7 +1029,13 @@ class OpenclawSession:
 						details=details if isinstance(details, dict) else None,
 					)
 				return frame
-		raise OpenclawUnreachableError(f"{method} timed out")
+		# Tagged so callers can tell an AMBIGUOUS outcome from a definite one:
+		# the request frame was already written, so the peer may well have
+		# accepted and acted on it - we just never saw the response. chat.send
+		# uses this to park for snapshot recovery instead of reporting a false
+		# error (see turn_handler). A rejection or a dead socket is definite
+		# and raises without this code.
+		raise OpenclawUnreachableError(f"{method} timed out", code="ack-timeout")
 
 	def _recv(self, timeout_s: float) -> dict | None:
 		"""Read one frame from the WS, parse JSON, or return None on a soft
