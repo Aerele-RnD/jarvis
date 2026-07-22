@@ -173,7 +173,7 @@ const props = defineProps({
 	context: { type: Object, default: null },
 	side: { type: String, default: "right" },
 });
-const emit = defineEmits(["close", "open-full", "dismiss-context"]);
+defineEmits(["close", "open-full", "dismiss-context"]);
 
 const panelEl = ref(null);
 const bodyEl = ref(null);
