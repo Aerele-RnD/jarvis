@@ -116,6 +116,17 @@
         "Item"
       ],
       "rule_tokens": [],
+      "writes": [
+        {
+          "doctype": "Jarvis Approval Request",
+          "mode": "approval-request"
+        },
+        {
+          "doctype": "Purchase Invoice",
+          "mode": "draft"
+        }
+      ],
+      "rule_pack": "ap-exception-family",
       "timeout_s": 600,
       "min_apps": [
         "erpnext"
@@ -170,6 +181,17 @@
         "Communication"
       ],
       "rule_tokens": [],
+      "writes": [
+        {
+          "doctype": "Jarvis Approval Request",
+          "mode": "approval-request"
+        },
+        {
+          "doctype": "Dunning",
+          "mode": "draft"
+        }
+      ],
+      "rule_pack": "revops-hygiene",
       "timeout_s": 600,
       "min_apps": [
         "erpnext"
@@ -223,6 +245,8 @@
         "ali-lwp-9c21",
         "ali-punch-7d14"
       ],
+      "writes": null,
+      "rule_pack": "payroll-integrity",
       "timeout_s": 1800,
       "min_apps": [
         "hrms"
@@ -272,6 +296,17 @@
         "Jarvis Approval Request"
       ],
       "rule_tokens": [],
+      "writes": [
+        {
+          "doctype": "Jarvis Approval Request",
+          "mode": "approval-request"
+        },
+        {
+          "doctype": "Payment Entry",
+          "mode": "draft"
+        }
+      ],
+      "rule_pack": "finance-close-control",
       "timeout_s": 1200,
       "min_apps": [
         "erpnext"
@@ -329,6 +364,8 @@
         "bm-fc-1d7a",
         "bm-inv-6b03"
       ],
+      "writes": null,
+      "rule_pack": "measurement",
       "timeout_s": 3600,
       "min_apps": [
         "erpnext"
@@ -368,6 +405,8 @@
         "bmhd-lat-4c19",
         "bmhd-win-9e2f"
       ],
+      "writes": null,
+      "rule_pack": "measurement",
       "timeout_s": 900,
       "min_apps": [
         "erpnext",
@@ -411,6 +450,8 @@
         "bmh-ovl-7d12",
         "bmh-win-3ab8"
       ],
+      "writes": null,
+      "rule_pack": "measurement",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext",
@@ -428,7 +469,7 @@
       "domain": "india-compliance",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Scans your cash payments and cash receipts and lists the ones that cross India's income-tax cash limits: expenses paid in cash above ₹10,000 to one payee in a day (₹35,000 for transporters), and cash received of ₹2,00,000 or more in aggregate from one person. Ships a monthly preventive worklist and a pre-flighted Form 3CD data pack. Read-only breach-candidate list for your CA to review; never edits a voucher, books anything, files a return, or decides that any payment is actually disallowed or penalised.",
       "tools_required": [
@@ -465,6 +506,8 @@
         "s40a3_disallowance_measure",
         "s40a3_limits"
       ],
+      "writes": null,
+      "rule_pack": "india-compliance-workbench",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext",
@@ -515,6 +558,8 @@
         "ca-cl-a4e6",
         "ca-cl-c058"
       ],
+      "writes": null,
+      "rule_pack": "finance-close-control",
       "timeout_s": 2400,
       "min_apps": [
         "erpnext"
@@ -563,6 +608,17 @@
         "Stock Ledger Entry"
       ],
       "rule_tokens": [],
+      "writes": [
+        {
+          "doctype": "Jarvis Approval Request",
+          "mode": "approval-request"
+        },
+        {
+          "doctype": "Stock Reconciliation",
+          "mode": "draft"
+        }
+      ],
+      "rule_pack": "inventory-health",
       "timeout_s": 600,
       "min_apps": [
         "erpnext"
@@ -613,6 +669,8 @@
         "dsa-shelf-b7e5",
         "dsa-turn-9c48"
       ],
+      "writes": null,
+      "rule_pack": "inventory-health",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -662,6 +720,8 @@
         "dp-quiet-3f88",
         "dp-rank-a20e"
       ],
+      "writes": null,
+      "rule_pack": "revops-hygiene",
       "timeout_s": 1800,
       "min_apps": [
         "crm"
@@ -678,7 +738,7 @@
       "domain": "ap",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Read-only AP hygiene sweep. Retrospectively surfaces duplicate-payment candidates — payments that appear to have been made twice (same vendor, same amount, close dates, look-alike references) — pairing documents and cross-checking settlement evidence. Also flags near-duplicate purchase invoices, one vendor entered as two masters, check-digit-invalid GSTIN/PAN, and bank-detail changes just before a payment. Hands finance a ranked, evidence-linked candidate worklist and dashboard. Never edits a master, touches a payment, or decides claw-backs.",
       "tools_required": [
@@ -719,6 +779,8 @@
         "gst_gstin_checkdigit_algorithm",
         "pan_format"
       ],
+      "writes": null,
+      "rule_pack": "ap-exception-family",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -735,7 +797,7 @@
       "domain": "inventory",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "For batch-tracked pharma/FMCG/food stock: replays each day's outward movements to catch FEFO violations — a dispatch that skipped an older-expiry batch that still had stock — and lists on-hand batches inside the near-expiry and past-expiry horizon, ranked by value. Read-only; hyperlinks every finding to its batch and dispatch. Never touches stock, holds a shipment, or writes off a batch.",
       "tools_required": [
@@ -769,6 +831,8 @@
         "gdp_near_expiry_horizon_convention",
         "shelf_life_horizon_fraction"
       ],
+      "writes": null,
+      "rule_pack": "inventory-health",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -821,6 +885,8 @@
         "fad-mat-7c21",
         "fad-salv-b1a6"
       ],
+      "writes": null,
+      "rule_pack": "finance-close-control",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -873,6 +939,8 @@
         "grn-offpo-3d51",
         "grn-uomtol-4b17"
       ],
+      "writes": null,
+      "rule_pack": "inventory-health",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -889,7 +957,7 @@
       "domain": "gst-compliance",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Works only the residue left after india_compliance's Purchase Reconciliation Tool: ranks the unmatched, mismatched and aged rows between your GSTR-2B ledger and your purchase register by rupees, groups them into a supplier follow-up worklist, and tracks the ageing window per invoice. Read-only; never edits an invoice, files a return, or decides what you may claim.",
       "tools_required": [
@@ -924,6 +992,8 @@
         "rule37_180d",
         "s16_4_window"
       ],
+      "writes": null,
+      "rule_pack": "india-compliance-workbench",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext",
@@ -941,7 +1011,7 @@
       "domain": "gst-compliance",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Pre-file data-quality worklist for your GST returns: on an india_compliance bench it works only the manual-override and data-import residue — lines with a blank or short HSN, invoices whose place-of-supply contradicts the tax head charged, one HSN billed at inconsistent rates across the period, and a books-vs-return tie-out where GSTR-1/3B are generated through india_compliance. Read-only; ranks the residue by rupees. Never edits an invoice, amends or files a return, and asserts no filing-correctness verdict.",
       "tools_required": [
@@ -978,6 +1048,8 @@
         "hsn_digit_thresholds",
         "notified_rcm_categories"
       ],
+      "writes": null,
+      "rule_pack": "india-compliance-workbench",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext",
@@ -1031,6 +1103,8 @@
         "lh-shm-8a73",
         "lh-sla-5c40"
       ],
+      "writes": null,
+      "rule_pack": "revops-hygiene",
       "timeout_s": 900,
       "min_apps": [
         "crm"
@@ -1082,6 +1156,8 @@
         "ls-sign-9c14",
         "ls-susp-3d7a"
       ],
+      "writes": null,
+      "rule_pack": "finance-close-control",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -1098,7 +1174,7 @@
       "domain": "india-compliance",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "For suppliers you have already classified as Micro/Small MSME, this overlays each open payable's elapsed days against its 15/45-day window and projects whether it will still be unpaid on 31-March, when s.43B(h) defers the deduction. Ships a pay-before-year-end worklist on top of ERPNext's native AP Ageing report. Read-only; never records a payment, edits a voucher, classifies a supplier, or decides what you may deduct.",
       "tools_required": [
@@ -1131,6 +1207,8 @@
         "msmed_s15_windows",
         "s43bh_yearend_test"
       ],
+      "writes": null,
+      "rule_pack": "india-compliance-workbench",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext",
@@ -1188,6 +1266,8 @@
         "nsv-spike-4b1c",
         "nsv-tieout-7d92"
       ],
+      "writes": null,
+      "rule_pack": "inventory-health",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -1246,6 +1326,8 @@
         "pp-pbo-3d71",
         "pp-swg-2ed8"
       ],
+      "writes": null,
+      "rule_pack": "payroll-integrity",
       "timeout_s": 1800,
       "min_apps": [
         "hrms"
@@ -1297,6 +1379,17 @@
         "Purchase Order Item"
       ],
       "rule_tokens": [],
+      "writes": [
+        {
+          "doctype": "Jarvis Approval Request",
+          "mode": "approval-request"
+        },
+        {
+          "doctype": "Material Request",
+          "mode": "draft"
+        }
+      ],
+      "rule_pack": "inventory-health",
       "timeout_s": 600,
       "min_apps": [
         "erpnext"
@@ -1345,6 +1438,8 @@
         "sb-stat-4d81",
         "sb-win-1e4a"
       ],
+      "writes": null,
+      "rule_pack": "helpdesk-queue",
       "timeout_s": 1800,
       "min_apps": [
         "helpdesk"
@@ -1361,7 +1456,7 @@
       "domain": "hrms-payroll",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Reads your computed Salary Slips each month before the PF/ESI/PT deposit and surfaces the employees whose statutory deduction lines don't reconcile with their reconstructed wage bases — PF against the ceiling, ESI at the eligibility boundary and its mid-period continuity, PT against the state slab, LWF presence, and bonus/gratuity eligibility transitions. UAN/ESI identity and challan/portal deposit evidence come only from sources you declare at install; checks needing them stay not-evaluable until then. Read-only; never edits a slip or files a return; a named reviewer owns every decision.",
       "tools_required": [
@@ -1399,6 +1494,8 @@
         "pt_slabs_karnataka",
         "pt_slabs_maharashtra"
       ],
+      "writes": null,
+      "rule_pack": "payroll-integrity",
       "timeout_s": 1800,
       "min_apps": [
         "hrms"
@@ -1415,7 +1512,7 @@
       "domain": "hrms-payroll",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Extends the Statutory Payroll auditor onto your own recorded PF/ESI deposit bookings: it reads the Journal Entry or Payment Entry you post against your PF/ESI liability account and reports whether that booking is dated on or before the effective-dated deposit due date. Installable only where ERPNext and HRMS are present. Read-only; reports a booked-liability date only, never that a deposit reached EPFO/ESIC, and never books, edits, or deposits. Custom challan doctypes and portal receipts are not read here; they enter as a declared import artifact.",
       "tools_required": [
@@ -1443,6 +1540,8 @@
         "s14b_damages_table",
         "s7q_interest_table"
       ],
+      "writes": null,
+      "rule_pack": "payroll-integrity",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext",
@@ -1489,6 +1588,8 @@
       "rule_tokens": [
         "sv-vtol-7b2c"
       ],
+      "writes": null,
+      "rule_pack": "inventory-health",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
@@ -1505,7 +1606,7 @@
       "domain": "tds-compliance",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Prepares your monthly TDS/TCS data before each deposit due date and before each 26Q/24Q quarter: reconciles the TDS booked in your ledger against the challan payments recorded in your books, tracks each supplier's running total against the section thresholds, checks the rate deducted against the effective section rate, and lists the deductee fields your return is missing. Read-only worklist; never edits a voucher, books TDS, deposits a challan, files a return, or decides what is legally deductible.",
       "tools_required": [
@@ -1543,6 +1644,8 @@
         "section_rates",
         "section_thresholds"
       ],
+      "writes": null,
+      "rule_pack": "india-compliance-workbench",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext",
@@ -1591,6 +1694,13 @@
         "HD Agent"
       ],
       "rule_tokens": [],
+      "writes": [
+        {
+          "doctype": "Jarvis Approval Request",
+          "mode": "approval-request"
+        }
+      ],
+      "rule_pack": "helpdesk-queue",
       "timeout_s": 300,
       "min_apps": [
         "helpdesk"
@@ -1607,7 +1717,7 @@
       "domain": "ap",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "status": "Published",
       "description": "Ranks the vendor sub-ledger exceptions worth a human look at AP close: suppliers sitting in a debit balance, advances left unlinked to an invoice, goods received but not yet billed, and any gap between the supplier-wise balances and the creditors control account. A book-to-book self-consistency check with per-finding provenance and a saved worklist. Read-only; never books an entry, clears a balance, or releases a payment.",
       "tools_required": [
@@ -1648,6 +1758,8 @@
         "vl-stale-ageing-5f17",
         "vl-tieout-tol-a9e3"
       ],
+      "writes": null,
+      "rule_pack": "finance-close-control",
       "timeout_s": 1800,
       "min_apps": [
         "erpnext"
