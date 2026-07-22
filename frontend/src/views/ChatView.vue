@@ -2075,9 +2075,37 @@
 					background: var(--surface);
 				"
 			>
+				<!-- Billing lifecycle: before expiry, during grace, and after.
+					 Replaces (not stacks with) the suspended banner - its copy is
+					 the admin wording, which is wrong for a member who cannot
+					 renew. -->
+				<Banner
+					v-if="billingAlert"
+					:type="billingAlert.type"
+					:title="billingAlert.title"
+					:message="billingAlert.message"
+					style="margin-bottom: 10px"
+				>
+					<template #action>
+						<button
+							v-if="billingAlert.showRenew"
+							class="jv-btn jv-btn--sm"
+							@click="goRenew"
+						>
+							Renew
+						</button>
+						<button
+							v-if="billingAlert.dismissible"
+							class="jv-btn jv-btn--sm jv-btn--ghost"
+							@click="dismissBillingAlert"
+						>
+							Dismiss
+						</button>
+					</template>
+				</Banner>
 				<!-- Lapsed sub: container stopped, so every send would fail. -->
 				<Banner
-					v-if="suspendedNotice"
+					v-else-if="suspendedNotice"
 					type="warning"
 					title="Chat is paused"
 					:message="suspendedNotice"
@@ -3470,6 +3498,8 @@ import PendingCard from "@/components/PendingCard.vue";
 import ReceiptChip from "@/components/ReceiptChip.vue";
 import { checkReady } from "@/onboarding/readiness.js";
 import { suspensionNotice, SUSPENDED_FALLBACK } from "@/onboarding/steps.js";
+import { billingBanner } from "@/account/format.js";
+import { billingNoticeOf } from "@/onboarding/readiness.js";
 import { useShellStore } from "@/stores/shell";
 import { useJarvisTheme } from "@/theme";
 import { displayName } from "@/lib/user";
@@ -3524,6 +3554,22 @@ const ui = ref({});
 // Renew-banner copy when the subscription has lapsed; null while entitled.
 // The composer is disabled alongside it (no send can succeed while stopped).
 const suspendedNotice = ref(null);
+// Billing lifecycle banner. Dismissal is session-only (a ref, not storage): the
+// pre-expiry nudge should return on the next visit, since the deadline has not.
+const billingNotice = ref({});
+const billingDismissedPhase = ref("");
+// Renewing is gated on require_jarvis_admin(), which accepts Jarvis Admin OR
+// System Manager - match it, or a System Manager who CAN renew is told to ask
+// their admin.
+const canRenewPlan = !!(window.is_jarvis_admin || window.is_system_manager);
+const billingAlert = computed(() => {
+	const b = billingBanner(billingNotice.value, canRenewPlan);
+	if (!b || billingDismissedPhase.value === b.phase) return null;
+	return b;
+});
+function dismissBillingAlert() {
+	billingDismissedPhase.value = (billingAlert.value && billingAlert.value.phase) || "";
+}
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
 // THIS chat. autoApplyNote surfaces the admin-only-enable message.
@@ -7334,6 +7380,13 @@ onMounted(async () => {
 	// legacy #hash deep-links moved to the router, §9.)
 	const uiP = api.getChatUiSettings().catch(() => null);
 	const convsP = store.loadConversations().catch(() => {});
+	// Billing banner rides the memoized readiness verdict already fetched for
+	// this page load - no extra round-trip. Never blocks the mount.
+	billingNoticeOf()
+		.then((n) => {
+			billingNotice.value = n || {};
+		})
+		.catch(() => {});
 	socket?.on("jarvis:event", onEvent);
 	socket?.on("connect", onResync);
 	document.addEventListener("visibilitychange", onVisibility);

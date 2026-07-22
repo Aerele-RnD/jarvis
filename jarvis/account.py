@@ -47,26 +47,35 @@ def _admin_chat_gate() -> dict:
 	  error clears on the very next load rather than sticking for the TTL.
 	"""
 	cache = frappe.cache()
-	if cache.get_value(_CHAT_GATE_CACHE_KEY):
-		return {"ready": True, "reason": None}
+	cached = cache.get_value(_CHAT_GATE_CACHE_KEY)
+	if cached:
+		# The billing banner rides the cached verdict. Caching a bare flag would
+		# hide an expiring/grace notice for the whole TTL on every ready load.
+		# Tolerate the pre-upgrade shape (a bare 1) rather than re-asking admin.
+		notice = cached.get("notice") if isinstance(cached, dict) else {}
+		return {"ready": True, "reason": None, "billing_notice": notice or {}}
 	try:
 		conn = admin_client.get_connection(timeout_s=8) or {}
 	except Exception:
 		# Fail open on ANY admin error; deliberately no negative cache.
-		return {"ready": True, "reason": None}
+		return {"ready": True, "reason": None, "billing_notice": {}}
+	notice = conn.get("billing_notice") or {}
 	if "chat_readiness" in conn and conn["chat_readiness"] != "Ready":
 		suspended = conn["chat_readiness"] == "Suspended"
 		return {
 			"ready": False,
 			"reason": "subscription_suspended" if suspended else "container_provisioning",
+			# Carried even when blocked: "detail" is the ADMIN wording, and a
+			# member who cannot renew needs a different call to action.
+			"billing_notice": notice,
 			# Admin owns the wording (jarvis_admin_v2.billing.entitlement) so the
 			# two sides can't drift into different explanations. A v1/older admin
 			# sends no reason; the SPA falls back to its own copy.
 			"detail": conn.get("chat_readiness_reason") or "",
 		}
 	# Reachable + (Ready, or v1-absent) → allow and cache the positive verdict.
-	cache.set_value(_CHAT_GATE_CACHE_KEY, 1, expires_in_sec=_CHAT_GATE_CACHE_TTL_S)
-	return {"ready": True, "reason": None}
+	cache.set_value(_CHAT_GATE_CACHE_KEY, {"notice": notice}, expires_in_sec=_CHAT_GATE_CACHE_TTL_S)
+	return {"ready": True, "reason": None, "billing_notice": notice}
 
 
 @frappe.whitelist()

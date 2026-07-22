@@ -97,3 +97,31 @@ export function renewalLabel(currentPeriodEnd, daysRemaining) {
 	if (d <= 0) return `Expired ${date}`;
 	return `Renews ${date} · ${d} day${d === 1 ? "" : "s"} left`;
 }
+
+// Billing lifecycle banner, or null when there is nothing to say. The server
+// sends BOTH audiences' wording because it authenticates the customer, not the
+// individual - only the bench knows who is looking, so the pick happens here.
+const BILLING_TONE = { expiring: "info", grace: "warning", expired: "warning" };
+const BILLING_TITLE = {
+	expiring: "Plan ending soon",
+	grace: "Payment overdue",
+	expired: "Chat is paused",
+};
+
+export function billingBanner(notice, canRenew) {
+	const phase = (notice && notice.phase) || "";
+	if (!BILLING_TONE[phase]) return null;
+	const message = (canRenew ? notice.admin_message : notice.member_message) || "";
+	if (!message) return null;
+	return {
+		phase,
+		type: BILLING_TONE[phase],
+		title: BILLING_TITLE[phase],
+		message,
+		// Renewing is the admin's action; a member has nothing to click.
+		showRenew: !!canRenew,
+		// Only the pre-expiry nudge is dismissible. Grace is the last window in
+		// which paying still helps, and expired already blocks chat.
+		dismissible: phase === "expiring",
+	};
+}
