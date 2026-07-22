@@ -585,9 +585,47 @@ class TestConfirmEmptyConversationToken(FrappeTestCase):
 		self.assertEqual(self._roles(other), [])  # nothing injected
 
 
+def _purge_pending_confirmations(owner: str) -> None:
+	"""Drop every live pending-confirmation token for ``owner`` from Redis.
+
+	Uses pending_confirm's key helpers directly on purpose. Its own public
+	clear_for_conversation() leaves conversation-less tokens alone by design, and
+	those are exactly the ones that leak across test files.
+	"""
+	from jarvis.chat import pending_confirm
+
+	cache = frappe.cache()
+	try:
+		members = cache.smembers(pending_confirm._owner_key(owner)) or set()
+	except Exception:
+		# A cache blip here must not fail the test before it has run.
+		return
+	for m in members:
+		token = m.decode() if isinstance(m, bytes) else m
+		cache.delete_value(pending_confirm._key(token))
+	cache.delete_value(pending_confirm._owner_key(owner))
+
+
 class TestListPendingConfirmations(FrappeTestCase):
 	"""F2/F3: resync returns the park-time preview verbatim (no side-effecting
 	dry-run recompute) and one bad record cannot 500 the whole endpoint."""
+
+	def setUp(self):
+		super().setUp()
+		# Pending confirmations live in REDIS (jarvis.chat.pending_confirm), not
+		# the DB, so FrappeTestCase's transaction rollback does NOT clear them.
+		# Anything an earlier test FILE minted for Administrator is still live for
+		# the full 900s TTL, and these tests assert exact list lengths.
+		#
+		# Filtering the assertions by conversation would not fix it: list_for_owner
+		# deliberately surfaces conversation-less records ("") under ANY
+		# conversation filter (see its F1 note), and that is exactly the shape
+		# test_action_pending leaves behind.
+		#
+		# This was latent until CI began sharding. The serial runner groups tests
+		# by category, the parallel runner walks files alphabetically, and only the
+		# alphabetical order happens to run test_action_pending.py first.
+		_purge_pending_confirmations("Administrator")
 
 	def _conv(self) -> str:
 		conv = _make_conversation()
