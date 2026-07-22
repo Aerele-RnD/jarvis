@@ -144,3 +144,22 @@ class TestSupportBenchEndpoints(FrappeTestCase):
 			out = smedia.upload(ticket="T1")
 			self.assertTrue(out["ok"])
 			self.assertEqual(up.call_args.kwargs["content_b64"], base64.b64encode(b"hi").decode())
+
+
+class TestSupportBoot(FrappeTestCase):
+	def setUp(self):
+		frappe.cache().delete_value("jarvis:support_available")
+
+	def test_support_available_false_on_error_and_cached(self):
+		from jarvis.www import jarvis as jw
+
+		with patch("jarvis.admin_client.support_status", side_effect=Exception("down")) as ss:
+			self.assertFalse(jw._support_available())
+			self.assertFalse(jw._support_available())  # cached, not re-called
+			self.assertEqual(ss.call_count, 1)
+
+	def test_support_available_true_when_status_available(self):
+		from jarvis.www import jarvis as jw
+
+		with patch("jarvis.admin_client.support_status", return_value={"available": True}):
+			self.assertTrue(jw._support_available())
