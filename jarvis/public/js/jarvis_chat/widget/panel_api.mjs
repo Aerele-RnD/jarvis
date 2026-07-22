@@ -22,12 +22,68 @@ export const getConversation = (conversation) => call(CHAT + "get_conversation",
 //
 // `context` is the object from desk_context.contextFromRoute. Send it only when
 // there is one, so a non-record page behaves as a plain chat.
-export const sendMessage = (conversation, message, context) =>
+export const sendMessage = (conversation, message, context, attachments) =>
   call(CHAT + "send_message", {
     conversation: conversation || "",
     message,
     ...(context ? { context: JSON.stringify(context) } : {}),
+    ...(attachments && attachments.length
+      ? { attachments: JSON.stringify(attachments) }
+      : {}),
   });
+
+// Mic gating: stt_enabled is false when voice/STT is not configured, and the
+// button must not appear at all in that case.
+export const getChatUiSettings = () => call(CHAT + "get_chat_ui_settings");
+
+// Multipart endpoints cannot go through frappe.call, so these two use fetch
+// with the Desk's CSRF token, the same way the SPA's uploadFile does.
+export async function uploadFile(file) {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  fd.append("is_private", "1");
+  const r = await fetch("/api/method/upload_file", {
+    method: "POST",
+    headers: { "X-Frappe-CSRF-Token": window.csrf_token || "" },
+    body: fd,
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error(`upload failed (${r.status})`);
+  const data = await r.json();
+  const f = data.message || data;
+  return { file_url: f.file_url, file_name: f.file_name || file.name };
+}
+
+function audioName(blob) {
+  const t = (blob && blob.type) || "";
+  if (t.includes("ogg")) return "audio.ogg";
+  if (t.includes("mp4")) return "audio.m4a";
+  if (t.includes("wav")) return "audio.wav";
+  return "audio.webm";
+}
+
+// Recorded blob -> verbatim transcript. Returns {ok, text, ...}.
+export async function transcribeAudio(blob, durationS) {
+  const fd = new FormData();
+  fd.append("audio", blob, audioName(blob));
+  fd.append("duration_s", String(Math.round(durationS || 0)));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25000);
+  try {
+    const r = await fetch("/api/method/jarvis.chat.voice.transcribe_audio", {
+      method: "POST",
+      headers: { "X-Frappe-CSRF-Token": window.csrf_token || "" },
+      body: fd,
+      credentials: "include",
+      signal: ctrl.signal,
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`transcription failed (${r.status})`);
+    return data.message || data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export const stopRun = (conversation, runId) =>
   call(CHAT + "stop_run", { conversation, run_id: runId || "" });

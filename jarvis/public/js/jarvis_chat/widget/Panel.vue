@@ -150,7 +150,35 @@
 			</div>
 
 			<div class="jvp-foot">
-				<div class="jvp-comp" :class="{ 'jvp-comp--focus': composerFocused }">
+				<!-- attached files, above the input -->
+				<div v-if="attachments.length" class="jvp-atts">
+					<span v-for="a in attachments" :key="a.file_url" class="jvp-att">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
+						</svg>
+						<span class="jvp-att-n">{{ a.file_name }}</span>
+						<button class="jvp-att-x" type="button" :aria-label="`Remove ${a.file_name}`" @click="removeAttachment(a.file_url)">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M18 6 6 18M6 6l12 12" />
+							</svg>
+						</button>
+					</span>
+				</div>
+
+				<input ref="fileEl" type="file" multiple hidden @change="onFilePicked" />
+
+				<div class="jvp-comp" :class="{ 'jvp-comp--focus': composerFocused, 'jvp-comp--rec': recording }">
+					<button
+						class="jvp-cib"
+						type="button"
+						aria-label="Attach a file"
+						:disabled="uploading"
+						@click="pickFile"
+					>
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+							<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.9l8.5-8.5" />
+						</svg>
+					</button>
 					<textarea
 						class="jvp-comp-text"
 						ref="textareaEl"
@@ -162,6 +190,20 @@
 						@input="autoGrow"
 						@keydown.enter.exact.prevent="send"
 					></textarea>
+					<button
+						v-if="sttEnabled"
+						class="jvp-cib"
+						:class="{ 'jvp-cib--rec': recording }"
+						type="button"
+						:aria-label="recording ? 'Stop recording' : 'Dictate a message'"
+						:disabled="transcribing"
+						@click="toggleVoice"
+					>
+						<svg v-if="!recording" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="9" y="2" width="6" height="11" rx="3" /><path d="M19 10a7 7 0 0 1-14 0M12 17v5" />
+						</svg>
+						<span v-else class="jvp-wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+					</button>
 					<button v-if="stream.live" class="jvp-send jvp-send--stop" type="button" aria-label="Stop generating" @click="stop">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
 							<rect x="7" y="7" width="10" height="10" rx="2" />
@@ -190,6 +232,9 @@ import {
 	sendMessage,
 	stopRun,
 	confirmTool,
+	uploadFile,
+	transcribeAudio,
+	getChatUiSettings,
 } from "./panel_api.mjs";
 
 const props = defineProps({
@@ -215,6 +260,15 @@ const sending = ref(false);
 const composerFocused = ref(false);
 const resolving = ref("");
 const lastSent = ref("");
+const fileEl = ref(null);
+const attachments = ref([]);
+const uploading = ref(false);
+const sttEnabled = ref(false);
+const recording = ref(false);
+const transcribing = ref(false);
+let recorder = null;
+let recChunks = [];
+let recStartedAt = 0;
 
 const contextText = computed(() => contextLabel(props.context));
 
@@ -261,8 +315,17 @@ function useSuggestion(prompt) {
 }
 
 const thinking = computed(() => sending.value || (stream.value.busy && !stream.value.live));
-const canSend = computed(() => draft.value.trim().length > 0 && !sending.value && !stream.value.live);
+const canSend = computed(
+	() =>
+		(draft.value.trim().length > 0 || attachments.value.length > 0) &&
+		!sending.value &&
+		!uploading.value &&
+		!stream.value.live
+);
 const hint = computed(() => {
+	if (recording.value) return "Listening… click the mic to stop";
+	if (transcribing.value) return "Transcribing…";
+	if (uploading.value) return "Uploading…";
 	if (stream.value.live) return "Jarvis is replying…";
 	if (sending.value) return "Sending…";
 	return "Enter to send";
@@ -314,9 +377,84 @@ function startNewChat() {
 	nextTick(() => textareaEl.value?.focus());
 }
 
+function pickFile() {
+	fileEl.value?.click();
+}
+
+async function onFilePicked(e) {
+	const files = Array.from(e.target.files || []);
+	e.target.value = ""; // let the same file be picked again
+	if (!files.length) return;
+	uploading.value = true;
+	loadError.value = "";
+	try {
+		for (const f of files) {
+			attachments.value.push(await uploadFile(f));
+		}
+	} catch (err) {
+		loadError.value = "That file could not be attached.";
+	} finally {
+		uploading.value = false;
+	}
+}
+
+function removeAttachment(url) {
+	attachments.value = attachments.value.filter((a) => a.file_url !== url);
+}
+
+// Hold-free toggle: click to start, click to stop. The transcript lands in the
+// composer rather than sending, so a misheard word can be fixed first.
+async function toggleVoice() {
+	if (transcribing.value) return;
+	if (recording.value) {
+		recorder?.stop();
+		return;
+	}
+	if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+		loadError.value = "Recording is not supported in this browser.";
+		return;
+	}
+	try {
+		const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		recChunks = [];
+		recStartedAt = Date.now();
+		recorder = new MediaRecorder(stream);
+		recorder.ondataavailable = (ev) => {
+			if (ev.data && ev.data.size) recChunks.push(ev.data);
+		};
+		recorder.onstop = async () => {
+			recording.value = false;
+			stream.getTracks().forEach((t) => t.stop());
+			const blob = new Blob(recChunks, { type: recorder.mimeType || "audio/webm" });
+			recChunks = [];
+			if (!blob.size) return;
+			transcribing.value = true;
+			try {
+				const res = await transcribeAudio(blob, (Date.now() - recStartedAt) / 1000);
+				const text = (res && res.text) || "";
+				if (text) {
+					draft.value = draft.value ? `${draft.value} ${text}` : text;
+					await nextTick();
+					autoGrow();
+					textareaEl.value?.focus();
+				}
+			} catch (err) {
+				loadError.value = "Could not transcribe that recording.";
+			} finally {
+				transcribing.value = false;
+			}
+		};
+		recorder.start();
+		recording.value = true;
+	} catch (err) {
+		loadError.value = "Microphone permission was refused.";
+	}
+}
+
 async function send() {
 	const text = draft.value.trim();
-	if (!text || sending.value || stream.value.live) return;
+	const atts = attachments.value.slice();
+	if ((!text && !atts.length) || sending.value || stream.value.live) return;
 	sending.value = true;
 	loadError.value = "";
 	lastSent.value = text;
@@ -325,6 +463,7 @@ async function send() {
 	// durable record, which replaces this.
 	messages.value.push({ name: `local-${Date.now()}`, role: "user", content: text });
 	draft.value = "";
+	attachments.value = [];
 	await nextTick();
 	autoGrow();
 	await scrollToBottom();
@@ -333,9 +472,11 @@ async function send() {
 		// Context is read at SEND time, not at open time: a conversation outlives
 		// the page it started on, and pinning it would leave the agent silently
 		// answering about the wrong record after a navigation.
-		const res = await sendMessage(convId.value, text, props.context);
+		const res = await sendMessage(convId.value, text, props.context, atts);
 		if (res?.conversation_id) convId.value = res.conversation_id;
 		stream.value = { ...stream.value, busy: true };
+		ensureRealtime();
+		startPolling();
 	} catch (e) {
 		sending.value = false;
 		loadError.value = "Could not send. Your message was not delivered.";
@@ -382,6 +523,7 @@ function onRealtime(payload) {
 
 	const next = applyEvent(stream.value, payload);
 
+	stopPolling();
 	if (next.reload) {
 		// Clear the flag before reloading so a second frame cannot double-fetch.
 		stream.value = { ...next, reload: false, error: "" };
@@ -414,12 +556,106 @@ watch(
 	}
 );
 
+// ---- delivery: realtime first, polling as the safety net ----
+//
+// frappe.realtime is not guaranteed to exist when this widget mounts (the FAB
+// boots on every Desk page, sometimes before the socket layer). A plain
+// optional-chained subscribe fails SILENTLY there and never retries, which
+// leaves the panel on "Working..." forever while the reply sits in the
+// database. So: retry the subscribe, and poll while a turn is in flight so the
+// answer arrives even if the socket never does.
+let rtBound = false;
+let rtTries = 0;
+let rtTimer = null;
+
+function bindRealtime() {
+	if (rtBound) return true;
+	const rt = window.frappe && window.frappe.realtime;
+	if (!rt || typeof rt.on !== "function") return false;
+	rt.on("jarvis:event", onRealtime);
+	rtBound = true;
+	return true;
+}
+
+function ensureRealtime() {
+	if (bindRealtime() || rtTimer) return;
+	rtTimer = window.setInterval(() => {
+		rtTries += 1;
+		if (bindRealtime() || rtTries > 20) {
+			window.clearInterval(rtTimer);
+			rtTimer = null;
+		}
+	}, 500);
+}
+
+let pollTimer = null;
+let pollTicks = 0;
+
+function stopPolling() {
+	if (pollTimer) {
+		window.clearInterval(pollTimer);
+		pollTimer = null;
+	}
+	pollTicks = 0;
+}
+
+// Ends the in-flight state once an answer is on screen, whichever path
+// delivered it.
+function settle() {
+	sending.value = false;
+	stream.value = { ...stream.value, live: null, busy: false, reload: false };
+	stopPolling();
+}
+
+function startPolling() {
+	stopPolling();
+	const before = shownMessages.value.length;
+	pollTimer = window.setInterval(async () => {
+		pollTicks += 1;
+		// ~2 minutes, then give up rather than hammer the site forever.
+		if (pollTicks > 48) {
+			stopPolling();
+			sending.value = false;
+			if (!stream.value.live) loadError.value = "Jarvis did not reply. Try again.";
+			return;
+		}
+		if (!convId.value) return;
+		try {
+			const conv = await getConversation(convId.value);
+			const msgs = Array.isArray(conv && conv.messages) ? conv.messages : [];
+			const next = visibleMessages(msgs);
+			// A new assistant turn landed: adopt it and stop.
+			const last = next[next.length - 1];
+			if (next.length > before && last && last.role === "assistant") {
+				messages.value = msgs;
+				settle();
+				scrollToBottom();
+			}
+		} catch (e) {
+			/* transient - keep polling */
+		}
+	}, 2500);
+}
+
 onMounted(() => {
-	window.frappe?.realtime?.on?.("jarvis:event", onRealtime);
+	ensureRealtime();
+	// The mic only exists when the site has STT configured.
+	getChatUiSettings()
+		.then((cfg) => {
+			sttEnabled.value = Boolean(cfg && cfg.stt_enabled);
+		})
+		.catch(() => {
+			sttEnabled.value = false;
+		});
 });
 
 onBeforeUnmount(() => {
-	window.frappe?.realtime?.off?.("jarvis:event", onRealtime);
+	if (rtTimer) {
+		window.clearInterval(rtTimer);
+		rtTimer = null;
+	}
+	stopPolling();
+	if (rtBound) window.frappe?.realtime?.off?.("jarvis:event", onRealtime);
 });
 
 defineExpose({ load, startNewChat, convId });
@@ -773,6 +1009,56 @@ defineExpose({ load, startNewChat, convId });
 .jvp-send[disabled] svg { stroke: var(--jv-ink-3); }
 .jvp-send--stop { background: var(--jv-chip-0); color: var(--jv-ink); }
 .jvp-send--stop svg { stroke: currentColor; }
+/* attachments + inline composer buttons */
+.jvp-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.jvp-att {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	border: 1px solid var(--jv-rule-2);
+	border-radius: 9px;
+	padding: 4px 6px 4px 8px;
+	font-size: 12px;
+	color: var(--jv-ink-2);
+	background: var(--jv-chip-0);
+}
+.jvp-att svg { width: 13px; height: 13px; flex: none; }
+.jvp-att-n { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jvp-att-x {
+	width: 18px; height: 18px; flex: none; border: none; background: transparent;
+	color: var(--jv-ink-2); cursor: pointer; display: grid; place-items: center; border-radius: 5px;
+}
+.jvp-att-x:hover { color: var(--jv-ink); }
+.jvp-att-x svg { width: 12px; height: 12px; }
+
+.jvp-cib {
+	width: 29px; height: 29px; flex: 0 0 auto; align-self: flex-end;
+	border: none; background: transparent; border-radius: 8px;
+	color: var(--jv-ink-2); cursor: pointer; display: grid; place-items: center;
+	transition: background-color 0.12s ease, color 0.12s ease;
+}
+.jvp-cib:hover:not([disabled]) { background: var(--jv-chip-0); color: var(--jv-ink); }
+.jvp-cib:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 1px; }
+.jvp-cib[disabled] { opacity: 0.5; cursor: not-allowed; }
+.jvp-cib svg { width: 17px; height: 17px; }
+.jvp-cib--rec { color: var(--jv-accent); }
+.jvp-comp--rec { border-color: var(--jv-accent); }
+
+/* live level bars while recording */
+.jvp-wave { display: inline-flex; align-items: center; gap: 2px; height: 15px; }
+.jvp-wave i { width: 2.5px; height: 100%; border-radius: 2px; background: var(--jv-accent); transform: scaleY(0.3); }
+@media (prefers-reduced-motion: no-preference) {
+	.jvp-wave i { animation: jvp-wave 0.9s infinite ease-in-out; }
+	.jvp-wave i:nth-child(2) { animation-delay: 0.15s; }
+	.jvp-wave i:nth-child(3) { animation-delay: 0.3s; }
+	.jvp-wave i:nth-child(4) { animation-delay: 0.45s; }
+}
+@keyframes jvp-wave {
+	0%, 100% { transform: scaleY(0.3); }
+	50% { transform: scaleY(1); }
+}
+
 .jvp-foot-note { text-align: center; font-size: 11px; color: var(--jv-ink-3); margin-top: 8px; }
 
 /* ---- buttons ---- */

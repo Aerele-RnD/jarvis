@@ -323,7 +323,10 @@ onBeforeUnmount(() => {
 <style scoped>
 /* Scoped tokens for the FAB (it lives in <body>). */
 .jvw-root {
-	--accent: #171717;
+	/* Brand gradient from the Jarvis Side Chat design board (a recorded
+	   divergence from design.md's near-black chrome, scoped to this widget). */
+	--accent: #6a56e8;
+	--accent-grad: linear-gradient(140deg, #8b7cf7, #6a56e8);
 	--jvw-safe-bottom: env(safe-area-inset-bottom, 0px);
 	font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
@@ -333,7 +336,8 @@ onBeforeUnmount(() => {
    the indigo brand blue (the SPA's theme.js DARK_VARS accent) so the FAB stays
    visible against dark surfaces. */
 :global([data-theme="dark"]) .jvw-root {
-	--accent: #6e8bff;
+	--accent: #8b7cf7;
+	--accent-grad: linear-gradient(140deg, #9d90ff, #7a68f0);
 }
 
 /* ---- launcher bubble ---- */
@@ -341,13 +345,13 @@ onBeforeUnmount(() => {
 	width: 54px;
 	height: 54px;
 	border-radius: 16px;
-	background: var(--accent);
+	background: var(--accent-grad);
 	border: none;
 	cursor: grab;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	box-shadow: 0 6px 20px rgba(23, 23, 23, 0.32);
+	box-shadow: 0 10px 26px -6px rgba(106, 86, 232, 0.55);
 	position: fixed;
 	left: 0;
 	top: 0;
