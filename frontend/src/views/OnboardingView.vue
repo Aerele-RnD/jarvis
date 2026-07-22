@@ -292,7 +292,7 @@
 						</section>
 
 						<!-- ===== Review & Pay (renderPay / renderVerifyEmail / startPay /
-							 openCheckout / devOnboard preserved verbatim in behavior) ===== -->
+							 openCheckout preserved verbatim in behavior) ===== -->
 						<section v-else-if="state.step === 'pay'" class="jv-ob-screen">
 							<template v-if="state.provisioning || state.provisionErr">
 								<div class="jv-ob-body">
@@ -836,7 +836,7 @@ const state = reactive({
 	planName: null,
 	plansLoading: false,
 	plansErr: "",
-	// pay (renderPay / renderVerifyEmail / startPay / openCheckout / devOnboard)
+	// pay (renderPay / renderVerifyEmail / startPay / openCheckout)
 	payPhase: "review", // "review" | "verify" - mirrors desk's step-3 vs "check your email" sub-screen
 	payErr: "",
 	payBusy: false,
@@ -1020,18 +1020,13 @@ function planFeatures(p) {
 // The price renders as a big amount with a small muted "/mo" suffix
 // (₹3,999 <span>/mo</span>) via the shared planAmount/planSuffix helpers
 // from account/format.js (same semantics as planPriceLabel there).
-// Cycle line under the price, per the approved preview copy ("Billed monthly"
-// on paid cards, "For trying Jarvis" on the free one). Copy-only, but keyed
+// Cycle line under the price ("Billed monthly" / "Billed annually"), keyed
 // off the shared suffix helper so the cycle rule can't drift.
 function planCycleLabel(p) {
 	const suffix = planSuffix(p && p.price_inr, p && p.billing_cycle);
 	const trial = Number(p && p.trial_days) || 0;
-	if (!suffix) {
-		// Free plan: finite free trial (lapses after N days) vs free forever.
-		return trial > 0 ? `${trial}-day free trial` : "For trying Jarvis";
-	}
 	const billed = suffix === "/yr" ? "Billed annually" : "Billed monthly";
-	// Paid plan with a trial window: auto-pay starts when the trial ends.
+	// Auto-pay trial: nothing charged until the trial ends, then auto-pay begins.
 	return trial > 0 ? `${trial}-day free trial, then ${billed.toLowerCase()}` : billed;
 }
 function onPlanContinue() {
