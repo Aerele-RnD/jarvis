@@ -972,7 +972,16 @@
 										padding: 2px 0;
 									"
 								>
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<svg
+										width="14"
+										height="14"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									>
 										<circle cx="12" cy="12" r="9" />
 										<path d="M15 9l-6 6M9 9l6 6" />
 									</svg>
@@ -2014,7 +2023,16 @@
 							padding-left: 40px;
 						"
 					>
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+						<svg
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.4"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<path d="M20 6 9 17l-5-5" />
 						</svg>
 						<span>Change saved</span>
