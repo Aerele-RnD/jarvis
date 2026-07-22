@@ -132,29 +132,19 @@ def _wipe_residue() -> None:
 # --------------------------------------------------------------------------- #
 class TestCleanAttestationPredicate(FrappeTestCase):
 	def test_clean_and_zero_findings_allows_sentence(self):
-		self.assertTrue(
-			agent_runs._clean_attestation_allowed("evaluated_clean", 0, shadow=False)
-		)
+		self.assertTrue(agent_runs._clean_attestation_allowed("evaluated_clean", 0, shadow=False))
 
 	def test_clean_but_findings_present_suppresses_sentence(self):
 		# THE R5-J1 gate: full coverage (evaluated_clean) but findings > 0 => no claim.
-		self.assertFalse(
-			agent_runs._clean_attestation_allowed("evaluated_clean", 4, shadow=False)
-		)
-		self.assertFalse(
-			agent_runs._clean_attestation_allowed("evaluated_clean", 1, shadow=False)
-		)
+		self.assertFalse(agent_runs._clean_attestation_allowed("evaluated_clean", 4, shadow=False))
+		self.assertFalse(agent_runs._clean_attestation_allowed("evaluated_clean", 1, shadow=False))
 
 	def test_non_clean_state_never_allows_sentence(self):
 		for state in ("partial", "not_evaluable", "failed"):
-			self.assertFalse(
-				agent_runs._clean_attestation_allowed(state, 0, shadow=False), state
-			)
+			self.assertFalse(agent_runs._clean_attestation_allowed(state, 0, shadow=False), state)
 
 	def test_shadow_never_allows_sentence(self):
-		self.assertFalse(
-			agent_runs._clean_attestation_allowed("evaluated_clean", 0, shadow=True)
-		)
+		self.assertFalse(agent_runs._clean_attestation_allowed("evaluated_clean", 0, shadow=True))
 
 
 # --------------------------------------------------------------------------- #
@@ -174,7 +164,10 @@ class TestFallbackDashboardRenderGate(FrappeTestCase):
 
 	def test_clean_state_zero_findings_renders_sentence(self):
 		html = agent_runs._fallback_dashboard_html(
-			"T", [], {"blocker": 0, "warning": 0, "note": 0}, "",
+			"T",
+			[],
+			{"blocker": 0, "warning": 0, "note": 0},
+			"",
 			result_state="evaluated_clean",
 		)
 		self.assertIn(CLEAN_SENTENCE, html)
@@ -185,7 +178,10 @@ class TestFallbackDashboardRenderGate(FrappeTestCase):
 		# coverage HEADING still renders (the coverage verdict is honest — R5-J1),
 		# but the "No exceptions were found" SENTENCE must NOT.
 		html = agent_runs._fallback_dashboard_html(
-			"T", [self._finding()], {"blocker": 1, "warning": 0, "note": 0}, "",
+			"T",
+			[self._finding()],
+			{"blocker": 1, "warning": 0, "note": 0},
+			"",
 			result_state="evaluated_clean",
 		)
 		self.assertNotIn(CLEAN_SENTENCE, html)
@@ -193,7 +189,10 @@ class TestFallbackDashboardRenderGate(FrappeTestCase):
 
 	def test_partial_zero_findings_never_clean_sentence(self):
 		html = agent_runs._fallback_dashboard_html(
-			"T", [], {"blocker": 0, "warning": 0, "note": 0}, "",
+			"T",
+			[],
+			{"blocker": 0, "warning": 0, "note": 0},
+			"",
 			result_state="partial",
 		)
 		self.assertNotIn(CLEAN_SENTENCE, html)

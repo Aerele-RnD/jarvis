@@ -126,11 +126,7 @@ def _clean_attestation_allowed(result_state: str, findings_count, *, shadow: boo
 	read "no exceptions", closing the false-clean render R4-P0-03/R5 targeted. The
 	sentence is also unconditionally suppressed while the installation is in
 	shadow/preview (PP-4 — a preview issues no outward attestation)."""
-	return (
-		not shadow
-		and result_state == cr.CLEAN_RUN_STATE
-		and int(findings_count or 0) == 0
-	)
+	return not shadow and result_state == cr.CLEAN_RUN_STATE and int(findings_count or 0) == 0
 
 
 def _fallback_dashboard_html(
@@ -220,9 +216,7 @@ def _fallback_dashboard_html(
 			# Not both conditions met: never the clean sentence. An evaluated_clean
 			# verdict with findings present (condition 2 failed) is downgraded to the
 			# non-clean partial-style sentence rather than the "no exceptions" claim.
-			state_for_sentence = (
-				result_state if result_state != cr.CLEAN_RUN_STATE else "partial"
-			)
+			state_for_sentence = result_state if result_state != cr.CLEAN_RUN_STATE else "partial"
 			sentence = _EMPTY_SENTENCE.get(state_for_sentence, _EMPTY_SENTENCE["partial"])
 		rows = (
 			'<tr><td colspan="5" style="padding:14px 10px;color:var(--jarvis-muted,#6b7280)">'

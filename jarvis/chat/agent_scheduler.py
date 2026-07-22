@@ -97,7 +97,9 @@ def run_due_agent_audits() -> None:
 		# disappeared after install (the row is kept, not deleted); its run has no
 		# data. Record why + consume the slot so the cadence does not busy-retry.
 		if not frappe.utils.cint(row.installable):
-			_record_failed(row, "scheduled audit skipped: capability not installable (app_absent_or_ineligible)")
+			_record_failed(
+				row, "scheduled audit skipped: capability not installable (app_absent_or_ineligible)"
+			)
 			_advance(row, now)
 			continue
 

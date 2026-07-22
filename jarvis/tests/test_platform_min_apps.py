@@ -111,7 +111,9 @@ def _install_as(owner: str, slug: str) -> str:
 
 def _wipe():
 	for dt in (RUN, INSTALLATION):
-		for n in frappe.get_all(dt, filters={"agent": ["in", _ALL_SLUGS]}, pluck="name", ignore_permissions=True):
+		for n in frappe.get_all(
+			dt, filters={"agent": ["in", _ALL_SLUGS]}, pluck="name", ignore_permissions=True
+		):
 			frappe.delete_doc(dt, n, force=True, ignore_permissions=True)
 	for slug in _ALL_SLUGS:
 		if frappe.db.exists(LISTING, slug):
@@ -174,9 +176,7 @@ class TestMinAppsGate(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			_install_as(self.owner, SLUG_MISS_APP)
 		# No install row is created for a non-installable capability.
-		self.assertFalse(
-			frappe.db.exists(INSTALLATION, {"owner": self.owner, "agent": SLUG_MISS_APP})
-		)
+		self.assertFalse(frappe.db.exists(INSTALLATION, {"owner": self.owner, "agent": SLUG_MISS_APP}))
 
 	def test_install_refused_when_required_doctype_absent(self):
 		"""Previously this installed (the absent DocType was filtered out); now it
@@ -184,9 +184,7 @@ class TestMinAppsGate(FrappeTestCase):
 		_mk_listing(SLUG_MISS_DT, doctypes_required=[PHANTOM_DOCTYPE])
 		with self.assertRaises(frappe.ValidationError):
 			_install_as(self.owner, SLUG_MISS_DT)
-		self.assertFalse(
-			frappe.db.exists(INSTALLATION, {"owner": self.owner, "agent": SLUG_MISS_DT})
-		)
+		self.assertFalse(frappe.db.exists(INSTALLATION, {"owner": self.owner, "agent": SLUG_MISS_DT}))
 
 	def test_controller_enforces_on_direct_insert(self):
 		"""The gate lives in validate(), so a Desk/import/direct insert is refused
@@ -218,9 +216,7 @@ class TestMinAppsGate(FrappeTestCase):
 		# The phantom app is "removed": reconcile against the real site (no phantom).
 		res = agent_installability.reconcile_installations()
 		self.assertGreaterEqual(res["changed"], 1)
-		row = frappe.db.get_value(
-			INSTALLATION, inst, ["installable", "not_installable_reason"], as_dict=True
-		)
+		row = frappe.db.get_value(INSTALLATION, inst, ["installable", "not_installable_reason"], as_dict=True)
 		self.assertEqual(row.installable, 0)
 		self.assertEqual(row.not_installable_reason, "app_absent_or_ineligible")
 		# NEVER deleted — the row survives so a reinstall can restore it.

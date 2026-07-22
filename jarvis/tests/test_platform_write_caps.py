@@ -258,7 +258,9 @@ class TestPackDerivedCeiling(FrappeTestCase):
 	def tearDown(self):
 		frappe.set_user("Administrator")
 		for slug in (self.A, self.B):
-			for n in frappe.get_all(INSTALLATION, filters={"agent": slug}, pluck="name", ignore_permissions=True):
+			for n in frappe.get_all(
+				INSTALLATION, filters={"agent": slug}, pluck="name", ignore_permissions=True
+			):
 				frappe.delete_doc(INSTALLATION, n, force=True, ignore_permissions=True)
 			if frappe.db.exists(LISTING, slug):
 				frappe.delete_doc(LISTING, slug, force=True, ignore_permissions=True)
