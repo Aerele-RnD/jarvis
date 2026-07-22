@@ -43,3 +43,8 @@ class TestSupportScope(FrappeTestCase):
 		self.assertIsNone(support_scope(u))
 		grant_default_support(u)
 		self.assertEqual(support_scope(u), "own")
+
+	def test_default_grant_skips_administrator_and_guest(self):
+		for u in ("Administrator", "Guest"):
+			grant_default_support(u)
+			self.assertFalse(frappe.db.exists("Has Role", {"parent": u, "role": JARVIS_SUPPORT_USER_ROLE}))
