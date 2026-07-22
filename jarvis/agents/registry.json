@@ -797,7 +797,7 @@
       "domain": "inventory",
       "nature": "auditor",
       "delivery": "delegate",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "status": "Published",
       "description": "For batch-tracked pharma/FMCG/food stock: replays each day's outward movements to catch FEFO violations — a dispatch that skipped an older-expiry batch that still had stock — and lists on-hand batches inside the near-expiry and past-expiry horizon, ranked by value. Read-only; hyperlinks every finding to its batch and dispatch. Never touches stock, holds a shipment, or writes off a batch.",
       "tools_required": [
