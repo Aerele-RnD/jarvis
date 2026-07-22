@@ -39,11 +39,13 @@
 <script setup>
 // Sidebar header (DESIGN-V3 §3.2.1): brand + session user, HD's UserMenu
 // pattern. Dropdown: Settings (D9) · Switch to Desk · Change theme · Log out.
-import { computed, inject } from "vue";
+import { computed, inject, ref, onMounted, onUnmounted } from "vue";
+import { useRouter } from "vue-router";
 import { Dropdown, FeatherIcon } from "frappe-ui";
 import JarvisMark from "@/components/JarvisMark.vue";
 import { useShellStore } from "@/stores/shell";
 import { useJarvisTheme } from "@/theme";
+import { supportAwaitingCount } from "@/api";
 
 defineProps({
 	isCollapsed: { type: Boolean, default: false },
@@ -52,6 +54,28 @@ defineProps({
 const store = useShellStore();
 const session = inject("$session");
 const { effectiveDark, toggleTheme } = useJarvisTheme();
+
+// Support panel (Plan 3 C3/C4): dual kill-switch + an SPA-driven awaiting-count badge.
+const router = useRouter();
+const supportOn = window.support_available && window.has_support_access;
+const awaiting = ref(0);
+let pollTimer = null;
+async function pollAwaiting() {
+	try {
+		const r = await supportAwaitingCount();
+		awaiting.value = (r.data && r.data.count) || 0;
+	} catch (e) {
+		/* support is best-effort — never surface a boot error */
+	}
+}
+onMounted(() => {
+	if (!supportOn) return;
+	pollAwaiting();
+	pollTimer = setInterval(pollAwaiting, 60000);
+});
+onUnmounted(() => {
+	if (pollTimer) clearInterval(pollTimer);
+});
 
 function cookie(name) {
 	// URLSearchParams already percent-decodes; decoding AGAIN throws URIError
@@ -67,6 +91,15 @@ const menuOptions = computed(() => [
 		hideLabel: true,
 		items: [
 			{ label: "Settings", icon: "settings", onClick: () => store.openSettings() },
+			...(supportOn
+				? [
+						{
+							label: awaiting.value ? `Support (${awaiting.value})` : "Support",
+							icon: "life-buoy",
+							onClick: () => router.push({ name: "Support" }),
+						},
+				  ]
+				: []),
 			{
 				label: "Switch to Desk",
 				icon: "grid",
