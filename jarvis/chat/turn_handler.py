@@ -431,6 +431,20 @@ def _advance_macro(conversation_id: str, *, errored: bool) -> None:
 		frappe.log_error(title="jarvis app-learning turn hook failed", message=frappe.get_traceback())
 
 
+def _admission_settle(run_id: str, state: str, error: str | None = None) -> None:
+	"""Phase-0 admission terminal hook: mark this turn's durable Turn row
+	terminal (CAS) and promote the next queued turn. Flag-gated + best-effort
+	inside admission.settle_turn, so flag-OFF is byte-identical and a Phase-0
+	failure never affects the legacy turn. Called ONLY at the legacy terminal
+	commit points and ALWAYS outside the brittle slice region (:996-:1022)."""
+	try:
+		from jarvis.chat import admission
+
+		admission.settle_turn(run_id, state, error=error)
+	except Exception:
+		frappe.log_error(title="admission settle hook", message=frappe.get_traceback())
+
+
 def handle_chat_send(payload: dict) -> None:
 	"""Drive one agent turn end to end.
 
@@ -806,6 +820,7 @@ def handle_chat_send(payload: dict) -> None:
 			except OpenclawUnreachableError as e:
 				_publish_run_error(str(e), changed_data=False, exc=e)
 				_advance_macro(conversation_id, errored=True)
+				_admission_settle(run_id, "errored", str(e))
 				return
 			finally:
 				selfhost.clear_active_turn(tool_user, run_id)
@@ -991,6 +1006,7 @@ def handle_chat_send(payload: dict) -> None:
 				# confined to the ghost-run-already-finished case.
 				_publish_run_error(str(e), changed_data=False, exc=e)
 				_advance_macro(conversation_id, errored=True)
+				_admission_settle(run_id, "errored", str(e))
 				return
 
 			if terminal["kind"] == "relay:error":
@@ -1049,9 +1065,11 @@ def handle_chat_send(payload: dict) -> None:
 						},
 					)
 					_advance_macro(conversation_id, errored=True)
+					_admission_settle(run_id, "cancelled")
 					return
 				_publish_run_error(err_text)
 				_advance_macro(conversation_id, errored=True)
+				_admission_settle(run_id, "errored", err_text)
 				return
 			if terminal["kind"] == "relay:interrupted":
 				# Deadline, transport drop, or exhausted stream after a
@@ -1136,14 +1154,19 @@ def handle_chat_send(payload: dict) -> None:
 			# original exception that RQ should see.
 			pass
 		_advance_macro(conversation_id, errored=True)
+		# Backstop terminal: settle the Turn row errored + promote before the
+		# re-raise so a queued turn never waits on a crashed worker. Best-effort
+		# inside _admission_settle - it never masks the re-raised exception.
+		_admission_settle(run_id, "errored", f"unexpected worker error: {type(e).__name__}")
 		raise
 	# A turn can end "cleanly" (no exception) yet be an LLM-level failure — an
 	# openclaw lifecycle:error frame (quota/cooldown/provider error) ends the
 	# stream normally after _mark_errored stamped the message. So the macro's
 	# errored signal is the assistant message's error field, not the code path.
+	_turn_errored = bool(frappe.db.get_value(MSG, assistant_msg.name, "error"))
 	_advance_macro(
 		conversation_id,
-		errored=bool(frappe.db.get_value(MSG, assistant_msg.name, "error")),
+		errored=_turn_errored,
 	)
 	_publish_to_user(
 		user,
@@ -1154,6 +1177,10 @@ def handle_chat_send(payload: dict) -> None:
 			"run_id": run_id,
 		},
 	)
+	# Phase-0 admission terminal hook for the clean-exit path: done on a real
+	# reply, errored when an lifecycle:error stamped the message (the same
+	# signal _advance_macro used above). Promotes the next queued turn.
+	_admission_settle(run_id, "errored" if _turn_errored else "done")
 
 	# Latency telemetry summary (plan Phase 0). first_delta_ms is the number
 	# users feel: worker start → first visible token. pre_reply_tool_calls

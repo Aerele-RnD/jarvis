@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import frappe
 
-from jarvis.chat import user_settings_api
+from jarvis.chat import admission, user_settings_api
 from jarvis.chat.usage import current_month_key as _usage_month_key
 from jarvis.permissions import (
 	has_jarvis_access,
@@ -929,7 +929,16 @@ def send_message(
 	# conversation (extra tab / double-send / a retry racing a live turn) -
 	# they would otherwise run in parallel on the same openclaw session. Placed
 	# after ownership so the reject is clean (no user row inserted yet).
-	if _conversation_busy(conversation):
+	#
+	# Phase-0 admission (flag ON): the busy case is no longer a reject - the
+	# second turn becomes a durable QUEUED turn with a visible position. So skip
+	# the legacy reject and let accept_or_queue serialize + queue it. We still
+	# reject up front on OVERLOAD (queue too deep) before inserting the user row,
+	# so an overloaded site never accretes orphaned messages.
+	if admission.admission_enabled():
+		if admission.shard_overloaded(conversation):
+			return {"ok": False, "reason": _("The site is busy — please try again in a moment.")}
+	elif _conversation_busy(conversation):
 		return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
 
 	# Apply model override BEFORE enqueueing so the worker sees the new value
@@ -1111,7 +1120,43 @@ def send_message(
 	# Dispatch the turn (see _dispatch_turn for the Node-RQ vs Python-pubsub
 	# routing rationale). `background` marks unattended turns (File Box
 	# drops) that must not jump ahead of a human's queued question.
-	_dispatch_turn(enqueue_kwargs, interactive=not int(background or 0))
+	#
+	# Phase-0 admission (flag ON): route the dispatch through the one
+	# accept_or_queue chokepoint. It inserts the durable Turn row under the
+	# shard+conversation locks and either dispatches now (a free credit) or
+	# leaves the turn QUEUED with a position. The seed Message is already
+	# committed above, so this is the OAR-3 "existing seed" branch.
+	_adm = None
+	_interactive = not int(background or 0)
+	if admission.admission_enabled():
+		_dispatch_payload = {}
+		if atts:
+			_dispatch_payload["attachments"] = atts
+		if enqueue_kwargs.get("context"):
+			_dispatch_payload["context"] = enqueue_kwargs["context"]
+		_adm = admission.accept_or_queue(
+			conversation=conversation,
+			run_id=run_id,
+			seed_message=msg_doc.name,
+			turn_class="interactive" if _interactive else "background",
+			dispatch=lambda: _dispatch_turn(enqueue_kwargs, interactive=_interactive),
+			dispatch_payload=_dispatch_payload or None,
+		)
+		if _adm.get("overloaded"):
+			# Rare race: the cheap pre-check passed but the locked check found the
+			# queue full. The user Message is already committed (a separate txn,
+			# untouched by admission's rollback), so it would otherwise reappear on
+			# reload as a permanently-unanswered orphan send (SUXI-5/OARI-7). Delete
+			# it so an overloaded site leaves no dangling user row, then surface the
+			# busy copy so the composer doesn't hang on a reply that will never come.
+			try:
+				frappe.delete_doc(MSG, msg_doc.name, ignore_permissions=True, force=True)
+				frappe.db.commit()
+			except Exception:
+				frappe.log_error(title="send_message overload seed cleanup", message=frappe.get_traceback())
+			return {"ok": False, "reason": _adm.get("reason")}
+	else:
+		_dispatch_turn(enqueue_kwargs, interactive=_interactive)
 
 	# Latency telemetry (plan Phase 0): one line per send so the web-request
 	# segments are measurable. total_ms should now sit in the tens of ms even
@@ -1125,12 +1170,20 @@ def send_message(
 		int((time.monotonic() - t0) * 1000),
 	)
 
-	return {
+	result = {
 		"ok": True,
 		"run_id": run_id,
 		"message_id": msg_doc.name,
 		"conversation_id": conversation,
 	}
+	# Phase-0 admission: tell the SPA when the turn is queued (not yet
+	# streaming) so it renders the "~N ahead" chip + cancel affordance instead
+	# of a spinner that would otherwise wait for a run:start that only arrives
+	# on promotion.
+	if _adm is not None and not _adm.get("dispatched", True):
+		result["queued"] = True
+		result["queued_position"] = _adm.get("queued_position")
+	return result
 
 
 @frappe.whitelist()
@@ -1552,7 +1605,12 @@ def retry_message(message: str) -> dict:
 	# inserted by the RQ worker under a different session user, so the
 	# conversation's owner is the authority, not the message row's owner.
 	_get_owned_conversation(doc.conversation)
-	if _conversation_busy(doc.conversation):
+	# Flag ON: a retry racing a live turn QUEUES (accept_or_queue) rather than
+	# rejecting; flag OFF keeps the legacy single-flight reject.
+	if admission.admission_enabled():
+		if admission.shard_overloaded(doc.conversation):
+			return {"ok": False, "reason": _("The site is busy — please try again in a moment.")}
+	elif _conversation_busy(doc.conversation):
 		return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
 	if doc.role != "assistant":
 		return {"ok": False, "reason": _("only assistant messages can be retried")}
@@ -1585,6 +1643,24 @@ def retry_message(message: str) -> dict:
 		"run_id": run_id,
 		"enqueued_at_ms": int(time.time() * 1000),
 	}
+	# Phase-0 admission (flag ON): retry reuses the EXISTING user message as the
+	# seed (OAR-3) - no new user row, no seq allocation - and routes through the
+	# admission chokepoint so a retry at cap queues fairly.
+	if admission.admission_enabled():
+		_adm = admission.accept_or_queue(
+			conversation=doc.conversation,
+			run_id=run_id,
+			seed_message=user_msg_id,
+			turn_class="interactive",
+			dispatch=lambda: _dispatch_turn(payload),
+		)
+		if _adm.get("overloaded"):
+			return {"ok": False, "reason": _adm.get("reason")}
+		out = {"ok": True, "run_id": run_id}
+		if not _adm.get("dispatched", True):
+			out["queued"] = True
+			out["queued_position"] = _adm.get("queued_position")
+		return out
 	_dispatch_turn(payload)
 	return {"ok": True, "run_id": run_id}
 
@@ -1599,6 +1675,12 @@ def stop_run(conversation: str, run_id: str | None = None) -> dict:
 	abort RPC) - the UI stop stands alone there."""
 	require_jarvis_access()
 	conv = _get_owned_conversation(conversation)
+	# Phase-0 admission (flag ON): record cancel intent on this conversation's
+	# dispatching Turn row (D2's dispatching->cancel-intent transition). This is
+	# NOT terminal - the legacy worker observes openclaw's aborted-terminal and
+	# settles the Turn (cancelled) + promotes the next queued turn there. Marking
+	# intent here just makes support/telemetry honest. Best-effort + flag-gated.
+	admission.mark_cancel_requested(conversation)
 	# F6: a stopped run's parked cards must not linger or resurface on resync.
 	# Sweep this owner's live confirmation tokens for the conversation (best-effort).
 	try:
@@ -1702,16 +1784,35 @@ def _redispatch_orphan(
 	``attachments``/``context`` are recovered from the dead job's kwargs
 	when it still exists - they ride only the enqueue payload, so dropping
 	them would resume the turn blind to its own file."""
+	run_id = uuid.uuid4().hex[:12]
 	payload = {
 		"conversation_id": conversation_id,
 		"message_id": message_id,
-		"run_id": uuid.uuid4().hex[:12],
+		"run_id": run_id,
 		"enqueued_at_ms": int(time.time() * 1000),
 	}
 	if attachments:
 		payload["attachments"] = attachments
 	if context:
 		payload["context"] = context
+	# Phase-0 admission (flag ON): the orphan re-dispatch reuses the EXISTING
+	# seed message (OAR-3) and goes through the admission gate at background
+	# class so a re-dispatch at cap queues instead of piling onto a full shard.
+	if admission.admission_enabled():
+		_dispatch_payload = {}
+		if attachments:
+			_dispatch_payload["attachments"] = attachments
+		if context:
+			_dispatch_payload["context"] = context
+		admission.accept_or_queue(
+			conversation=conversation_id,
+			run_id=run_id,
+			seed_message=message_id,
+			turn_class="background",
+			dispatch=lambda: _dispatch_turn(payload, interactive=False),
+			dispatch_payload=_dispatch_payload or None,
+		)
+		return
 	_dispatch_turn(payload, interactive=False)
 
 
@@ -1794,6 +1895,7 @@ def _enqueue_turn(
 	thinking_override: str | None = None,
 	hidden: bool = False,
 	interactive: bool = True,
+	exempt_overload: bool = False,
 ) -> dict:
 	"""Persist a user message + dispatch an agent turn for ``prompt`` (no
 	attachments / no auto-context). The macro engine (``jarvis.chat.macros``) uses
@@ -1840,15 +1942,35 @@ def _enqueue_turn(
 	frappe.db.commit()
 
 	run_id = uuid.uuid4().hex[:12]
-	_dispatch_turn(
-		{
-			"conversation_id": conversation,
-			"message_id": msg_doc.name,
-			"run_id": run_id,
-		},
-		interactive=interactive,
-	)
-	return {"run_id": run_id, "message_id": msg_doc.name}
+	_kwargs = {
+		"conversation_id": conversation,
+		"message_id": msg_doc.name,
+		"run_id": run_id,
+	}
+	# Phase-0 admission (flag ON): macro steps AND confirm continuations run
+	# through this path. R-7 closes the continuation bypass - they take a normal
+	# admission credit and single-flight like any send, so two rapid confirms
+	# run one continuation and QUEUE the second with a visible position. The seed
+	# user Message is inserted+committed above, so this is the OAR-3 existing-seed
+	# branch. The admission result (queued/queued_position) is RETURNED (SUXI-2)
+	# so the caller (apply_action / confirm_tool) can render the standard queued
+	# chip instead of leaving the card to vanish into silence.
+	out = {"run_id": run_id, "message_id": msg_doc.name}
+	if admission.admission_enabled():
+		_adm = admission.accept_or_queue(
+			conversation=conversation,
+			run_id=run_id,
+			seed_message=msg_doc.name,
+			turn_class="interactive" if interactive else "background",
+			dispatch=lambda: _dispatch_turn(_kwargs, interactive=interactive),
+			exempt_overload=exempt_overload,
+		)
+		if not _adm.get("dispatched", True):
+			out["queued"] = True
+			out["queued_position"] = _adm.get("queued_position")
+		return out
+	_dispatch_turn(_kwargs, interactive=interactive)
+	return out
 
 
 # The continuation prompt after a human Apply/Confirm. The scaffold is
@@ -1908,7 +2030,10 @@ def enqueue_continuation(conversation: str, receipt: str, *, failed: bool = Fals
 
 	safe = _safe_label_name(receipt)
 	scaffold = _CONTINUATION_PROMPT_FAILED if failed else _CONTINUATION_PROMPT
-	return _enqueue_turn(conversation, scaffold.format(receipt=safe), hidden=True)
+	# SUXI-2 ruling: a continuation of an already-committed write is EXEMPT from
+	# the accept-time overload rejection - it always queues (with a visible
+	# position), never silently drops. The front-door senders keep backpressure.
+	return _enqueue_turn(conversation, scaffold.format(receipt=safe), hidden=True, exempt_overload=True)
 
 
 def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
