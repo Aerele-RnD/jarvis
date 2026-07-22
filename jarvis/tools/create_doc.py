@@ -32,6 +32,7 @@ import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools._bulk import _MAX_BATCH, run_atomic_batch
+from jarvis.tools._delegate_write_caps import enforce_create
 
 # `name` is intentionally NOT in this list: DocTypes that use autoname=prompt
 # (or autoname=field:<x>) need it set in `values`. Frappe's autoname handling
@@ -63,6 +64,12 @@ def _validate_create_args(doctype: str, values: dict) -> None:
 	protected = sorted(set(values.keys()) & PROTECTED_FIELDS)
 	if protected:
 		raise InvalidArgumentError(f"refusing to write protected field(s): {', '.join(protected)}")
+
+	# R5-J9: bind a DELEGATE agent's create to its declared writes[] contract BEFORE
+	# the Frappe permission check below (a no-op for non-delegate callers). An auditor
+	# is refused outright; an operator may create only a doctype in its contract. The
+	# create is structurally a draft (docstatus is a refused protected field).
+	enforce_create(doctype)
 
 	if not frappe.has_permission(doctype, ptype="create"):
 		raise PermissionDeniedError(f"no create permission on {doctype}")
