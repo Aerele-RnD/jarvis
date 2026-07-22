@@ -70,9 +70,14 @@ currently predate the colours above. `manifest_icons.py` renders them from this
 same definition:
 
 ```bash
-python brand/manifest_icons.py             # compare the live icons and report
+python brand/manifest_icons.py             # compare the live icons and report, always exits 0
+python brand/manifest_icons.py --check     # same, but exits 1 on drift, for CI
 python brand/manifest_icons.py --write     # regenerate them
 ```
+
+A bare run reports without failing, because the live icons are known to have
+drifted and a red exit would block everyone. Use `--check` only once the icons
+have been regenerated and you want CI to hold them there.
 
 `--write` changes the tab icon and home-screen icon for every customer, so it
 is deliberately opt-in and is not part of the normal generate step. Bump the

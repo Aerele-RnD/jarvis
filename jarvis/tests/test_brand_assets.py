@@ -73,13 +73,8 @@ class TestBrandAssetsCommitted(unittest.TestCase):
 
 	def test_committed_assets_are_current(self):
 		brand = load_generate()
-		stale = [
-			name
-			for name, payload in brand.build_assets().items()
-			if not (brand.ROOT / name).exists() or (brand.ROOT / name).read_bytes() != payload
-		]
 		self.assertEqual(
-			stale,
+			brand.stale_assets(brand.build_assets()),
 			[],
 			"Committed brand assets are stale. Re-run `python brand/generate.py`.",
 		)

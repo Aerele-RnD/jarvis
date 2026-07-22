@@ -82,32 +82,63 @@ def build_assets() -> dict[str, bytes]:
 	for name, markup in svg.all_variants().items():
 		assets[f"svg/{name}.svg"] = markup.encode()
 
-	for name in VARIANTS:
+	for name in png.builders():
 		for size in PNG_SIZES:
 			assets[f"png/{name}-{size}.png"] = png.variant(name, size)
 
 	return assets
 
 
-def report_stale(assets: dict[str, bytes]) -> int:
-	"""Exit non-zero and name any committed asset that no longer matches."""
+def stale_assets(assets: dict[str, bytes], root: Path = None) -> list[str]:
+	"""Names of assets on disk that no longer match what we would emit.
+
+	The single definition of staleness. generate.py --check, manifest_icons.py,
+	and the brand drift test all call this so they cannot disagree about what
+	"current" means.
+	"""
+	root = ROOT if root is None else root
 	stale = []
 	for relative_path, payload in assets.items():
-		target = ROOT / relative_path
-		if not target.exists() or target.read_bytes() != payload:
+		target = root / relative_path
+		if not target.exists() or not _matches(target, payload):
 			stale.append(relative_path)
+	return sorted(stale)
 
+
+def _matches(target: Path, payload: bytes) -> bool:
+	"""Compare PNGs by decoded pixels and everything else by raw bytes.
+
+	Pillow is not version-pinned, and its PNG encoder can emit different
+	compressed bytes for an identical image across releases. Comparing encoded
+	bytes would turn a routine Pillow bump into a red CI run that a contributor
+	could only "fix" by regenerating from CI's environment. Pixels are what we
+	actually care about, and they are stable across encoder versions.
+	"""
+	on_disk = target.read_bytes()
+	if on_disk == payload:
+		return True
+	if target.suffix != ".png":
+		return False
+
+	from io import BytesIO
+
+	with Image.open(BytesIO(on_disk)) as before, Image.open(BytesIO(payload)) as after:
+		if before.size != after.size:
+			return False
+		return before.convert("RGBA").tobytes() == after.convert("RGBA").tobytes()
+
+
+def report_stale(assets: dict[str, bytes]) -> int:
+	"""Exit non-zero and name any committed asset that no longer matches."""
+	stale = stale_assets(assets)
 	if stale:
 		print("stale or missing assets, re-run python brand/generate.py:")
-		for relative_path in sorted(stale):
+		for relative_path in stale:
 			print(f"  {relative_path}")
 		return 1
 
 	print(f"all {len(assets)} assets current")
 	return 0
-
-
-VARIANTS = ["jarvis-mark-tile", "jarvis-mark", "jarvis-mark-mono-black", "jarvis-mark-mono-white"]
 
 
 class SvgRenderer:
@@ -164,18 +195,20 @@ class SvgRenderer:
 class PngRenderer:
 	"""Rasterises at SUPERSAMPLE times the target size, then downsamples."""
 
+	def builders(self) -> dict:
+		"""Variant name to the method that draws it. The only list of names."""
+		return {
+			"jarvis-mark-tile": self.tile,
+			"jarvis-mark": self.transparent,
+			"jarvis-mark-mono-black": lambda size: self.mono(size, (0, 0, 0)),
+			"jarvis-mark-mono-white": lambda size: self.mono(size, (255, 255, 255)),
+		}
+
 	def variant(self, name: str, size: int) -> bytes:
-		if name == "jarvis-mark-tile":
-			image = self.tile(size)
-		elif name == "jarvis-mark":
-			image = self.transparent(size)
-		elif name == "jarvis-mark-mono-black":
-			image = self.mono(size, (0, 0, 0))
-		elif name == "jarvis-mark-mono-white":
-			image = self.mono(size, (255, 255, 255))
-		else:
+		builders = self.builders()
+		if name not in builders:
 			raise ValueError(f"unknown variant {name}")
-		return _encode(image)
+		return _encode(builders[name](size))
 
 	def tile(self, size: int, bleed: bool = False) -> Image.Image:
 		"""White glyph on the gradient square. bleed skips the rounded corners,
