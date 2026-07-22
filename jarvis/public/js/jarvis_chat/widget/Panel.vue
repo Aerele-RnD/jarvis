@@ -107,7 +107,7 @@
 							<div class="jvp-m-avatar" aria-hidden="true">
 								<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 							</div>
-							<div class="jvp-m-bot">{{ m.content }}</div>
+							<div class="jvp-m-bot jv-md" v-html="renderReply(m.content)"></div>
 						</div>
 					</template>
 
@@ -115,7 +115,7 @@
 						<div class="jvp-m-avatar" aria-hidden="true">
 							<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 						</div>
-						<div class="jvp-m-bot">{{ stream.live.text }}</div>
+						<div class="jvp-m-bot jv-md" v-html="renderReply(stream.live.text)"></div>
 					</div>
 
 					<!-- Waiting for the first token: a labelled state, not a bare
@@ -224,6 +224,7 @@
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { contextLabel } from "./desk_context.mjs";
 import { isDarkNow, watchTheme } from "./desk_theme.mjs";
+import { renderReply } from "./panel_markdown.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { emptyStream, applyEvent, visibleMessages } from "./chat_stream.mjs";
 import {
@@ -349,7 +350,9 @@ function autoGrow() {
 // open resolves the newest conversation and restores it. A user with no history
 // gets the empty state, and an id is minted on first send.
 async function load() {
-	loading.value = true;
+	// Only blank the panel when there is nothing on screen yet; a refresh over
+	// an existing thread should be invisible.
+	loading.value = messages.value.length === 0;
 	loadError.value = "";
 	try {
 		if (!convId.value) {
@@ -357,7 +360,7 @@ async function load() {
 			convId.value = Array.isArray(list) && list.length ? list[0].name : "";
 		}
 		if (!convId.value) {
-			messages.value = [];
+			if (!messages.value.length) messages.value = [];
 			return;
 		}
 		const conv = await getConversation(convId.value);
@@ -545,15 +548,17 @@ function onRealtime(payload) {
 
 // Load lazily on first open, not at mount: the FAB is on every Desk page and
 // most page views never open the panel.
-let loadedOnce = false;
+// Refresh on EVERY open, not just the first. A reply can land while the panel
+// is closed, and the old first-open-only rule left the user staring at a stale
+// or empty thread until they reloaded the page. `load()` keeps the messages it
+// already has on screen while refetching, so this does not flash.
 watch(
 	() => props.open,
 	async (isOpen) => {
 		if (!isOpen) return;
 		await nextTick();
 		panelEl.value?.focus();
-		if (loadedOnce) return;
-		loadedOnce = true;
+		ensureRealtime();
 		load();
 	}
 );
@@ -943,8 +948,83 @@ defineExpose({ load, startNewChat, convId });
 	font-size: 14px;
 	line-height: 1.5;
 	color: var(--jv-ink);
-	white-space: pre-wrap;
 	overflow-wrap: anywhere;
+}
+
+/* ---- rendered markdown inside an assistant bubble ----
+   :deep because the HTML comes from v-html and carries no scope id. */
+.jv-md :deep(.jv-md-p) { margin: 0 0 8px; }
+.jv-md :deep(.jv-md-p:last-child) { margin-bottom: 0; }
+.jv-md :deep(.jv-md-h) {
+	margin: 12px 0 6px;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--jv-ink);
+}
+.jv-md :deep(.jv-md-h:first-child) { margin-top: 0; }
+.jv-md :deep(.jv-md-list) { margin: 0 0 8px; padding-left: 18px; }
+.jv-md :deep(.jv-md-list:last-child) { margin-bottom: 0; }
+.jv-md :deep(.jv-md-list li) { margin: 3px 0; }
+.jv-md :deep(.jv-md-list li::marker) { color: var(--jv-ink-3); }
+.jv-md :deep(strong) { font-weight: 600; color: var(--jv-ink); }
+.jv-md :deep(.jv-md-link) { color: var(--jv-accent); text-decoration: none; }
+.jv-md :deep(.jv-md-link:hover) { text-decoration: underline; }
+.jv-md :deep(.jv-md-code) {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	background: var(--jv-chip-0);
+	border-radius: 4px;
+	padding: 1px 4px;
+	overflow-wrap: anywhere;
+}
+.jv-md :deep(.jv-md-pre) {
+	margin: 8px 0;
+	padding: 9px 10px;
+	border-radius: 9px;
+	background: var(--jv-chip-0);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	line-height: 1.45;
+	overflow-x: auto; /* code scrolls inside its own box, never the panel */
+}
+.jv-md :deep(.jv-md-quote) {
+	margin: 8px 0;
+	padding-left: 10px;
+	border-left: 2px solid var(--jv-rule-2);
+	color: var(--jv-ink-2);
+}
+
+/* Tables are the reason 400px needs care: let the wrapper scroll rather than
+   the panel, and keep numeric columns aligned. */
+.jv-md :deep(.jv-md-tablewrap) {
+	margin: 9px 0;
+	overflow-x: auto;
+	border: 1px solid var(--jv-rule-2);
+	border-radius: 9px;
+}
+.jv-md :deep(.jv-md-table) {
+	border-collapse: collapse;
+	width: 100%;
+	font-size: 12.5px;
+	white-space: nowrap;
+}
+.jv-md :deep(.jv-md-table th),
+.jv-md :deep(.jv-md-table td) {
+	padding: 7px 10px;
+	border-bottom: 1px solid var(--jv-rule-2);
+	text-align: left;
+}
+.jv-md :deep(.jv-md-table th) {
+	font-weight: 600;
+	color: var(--jv-ink-2);
+	background: var(--jv-chip-0);
+	font-size: 11.5px;
+}
+.jv-md :deep(.jv-md-table tr:last-child td) { border-bottom: none; }
+.jv-md :deep(.jv-md-table td[align="right"]),
+.jv-md :deep(.jv-md-table th[align="right"]) {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
 }
 
 /* ---- waiting for a reply ---- */
