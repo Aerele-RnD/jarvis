@@ -8,6 +8,26 @@ export function emptyStream() {
   return { live: null, busy: false, error: "", pending: [], reload: false };
 }
 
+// A conversation's message list is not just user/assistant prose: `tool` rows
+// outnumber both (they carry tool_name/tool_status, and their content is either
+// null or a terse "get_doc -> completed"). The full SPA renders those as tool
+// cards; this panel is deliberately text-only, so rendering them would put raw
+// machine chatter in the transcript.
+//
+// Empty-content assistant rows are dropped for the same reason: they are the
+// shell of a turn whose payload lives in canvas items the panel does not show,
+// and they would otherwise paint as blank bubbles.
+export function visibleMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.filter(
+    (m) =>
+      m &&
+      (m.role === "user" || m.role === "assistant") &&
+      typeof m.content === "string" &&
+      m.content.trim() !== ""
+  );
+}
+
 // Returns a NEW state; never mutates the input. The caller assigns the result
 // to a Vue ref, so structural sharing is not worth the aliasing risk.
 export function applyEvent(state, payload) {

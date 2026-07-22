@@ -59,12 +59,12 @@
 			<div class="jvp-body" ref="bodyEl">
 				<div v-if="loading" class="jvp-center">Restoring your last conversation…</div>
 
-				<div v-else-if="loadError && !messages.length" class="jvp-center">
+				<div v-else-if="loadError && !shownMessages.length" class="jvp-center">
 					<div class="jvp-err">{{ loadError }}</div>
 					<button class="jvp-btn-subtle" type="button" @click="load">Retry</button>
 				</div>
 
-				<div v-else-if="!messages.length && !stream.live" class="jvp-center">
+				<div v-else-if="!shownMessages.length && !stream.live" class="jvp-center">
 					<svg class="jvp-empty-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
 					</svg>
@@ -80,12 +80,12 @@
 
 				<div v-else class="jvp-msgs">
 					<div
-						v-for="m in messages"
+						v-for="m in shownMessages"
 						:key="m.name"
 						:class="m.role === 'user' ? 'jvp-m-user' : 'jvp-m-bot'"
 					>{{ m.content }}</div>
 					<div v-if="stream.live" class="jvp-m-bot">{{ stream.live.text || "…" }}</div>
-					<div v-if="loadError && messages.length" class="jvp-inline-err">
+					<div v-if="loadError && shownMessages.length" class="jvp-inline-err">
 						<span class="jvp-err">{{ loadError }}</span>
 						<button class="jvp-btn-subtle" type="button" @click="retryLast">Retry</button>
 					</div>
@@ -159,7 +159,7 @@
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { contextLabel } from "./desk_context.mjs";
-import { emptyStream, applyEvent } from "./chat_stream.mjs";
+import { emptyStream, applyEvent, visibleMessages } from "./chat_stream.mjs";
 import {
 	listConversations,
 	getConversation,
@@ -191,6 +191,9 @@ const resolving = ref("");
 const lastSent = ref("");
 
 const contextText = computed(() => contextLabel(props.context));
+// Tool rows and empty shells are filtered out: this panel is text-only, and
+// the raw list is mostly machine chatter (see chat_stream.visibleMessages).
+const shownMessages = computed(() => visibleMessages(messages.value));
 const canSend = computed(() => draft.value.trim().length > 0 && !sending.value && !stream.value.live);
 const hint = computed(() => {
 	if (stream.value.live) return "Jarvis is replying…";

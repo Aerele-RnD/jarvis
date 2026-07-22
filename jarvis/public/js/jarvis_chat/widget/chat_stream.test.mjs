@@ -1,6 +1,49 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { emptyStream, applyEvent } from "./chat_stream.mjs";
+import { emptyStream, applyEvent, visibleMessages } from "./chat_stream.mjs";
+
+// `tool` rows are the MOST common role in a real conversation (508 of 1201 on
+// the dev site) and their content is null or "get_doc -> completed" — machine
+// chatter that must never reach a text-only panel.
+test("visibleMessages: drops tool rows", () => {
+  const out = visibleMessages([
+    { name: "1", role: "user", content: "hi" },
+    { name: "2", role: "tool", content: "get_doc → completed" },
+    { name: "3", role: "tool", content: null },
+    { name: "4", role: "assistant", content: "hello" },
+  ]);
+  assert.deepEqual(
+    out.map((m) => m.name),
+    ["1", "4"]
+  );
+});
+
+test("visibleMessages: drops empty and whitespace-only content", () => {
+  const out = visibleMessages([
+    { name: "1", role: "assistant", content: "" },
+    { name: "2", role: "assistant", content: "   " },
+    { name: "3", role: "assistant", content: null },
+    { name: "4", role: "user", content: "real" },
+  ]);
+  assert.deepEqual(
+    out.map((m) => m.name),
+    ["4"]
+  );
+});
+
+test("visibleMessages: preserves order and is safe on junk input", () => {
+  const rows = [
+    { name: "a", role: "user", content: "one" },
+    { name: "b", role: "assistant", content: "two" },
+  ];
+  assert.deepEqual(
+    visibleMessages(rows).map((m) => m.name),
+    ["a", "b"]
+  );
+  assert.deepEqual(visibleMessages(null), []);
+  assert.deepEqual(visibleMessages(undefined), []);
+  assert.deepEqual(visibleMessages([null, undefined]), []);
+});
 
 test("emptyStream: starts idle", () => {
   const s = emptyStream();
