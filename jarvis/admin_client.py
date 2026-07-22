@@ -328,6 +328,148 @@ def get_connection(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	return _post(path=_m("api.tenant.get_connection"), body={}, timeout_s=timeout_s)
 
 
+# --------------------------------------------------------------------------- #
+# Support panel proxies (Plan 3 B2). The customer bench forwards requesting_user +
+# scope to the control-plane support endpoints, which re-derive the customer from the
+# API key. JSON calls ride _post; only download needs raw bytes (see _authenticated_raw).
+# --------------------------------------------------------------------------- #
+
+_SUPPORT_TIMEOUT_S = 30
+
+
+def support_status(*, timeout_s: int = 8) -> dict:
+	return _post(path=_m("support.api.support_status"), body={}, timeout_s=timeout_s)
+
+
+def support_list_tickets(*, requesting_user: str, scope: str) -> dict:
+	return _post(
+		path=_m("support.api.list_tickets"),
+		body={"requesting_user": requesting_user, "scope": scope},
+		timeout_s=_SUPPORT_TIMEOUT_S,
+	)
+
+
+def support_create_ticket(
+	*, subject: str, body: str, requesting_user: str, scope: str, tenant_id=None
+) -> dict:
+	return _post(
+		path=_m("support.api.create_ticket"),
+		body={
+			"subject": subject,
+			"body": body,
+			"requesting_user": requesting_user,
+			"scope": scope,
+			"tenant_id": tenant_id,
+		},
+		timeout_s=_SUPPORT_TIMEOUT_S,
+	)
+
+
+def support_get_thread(*, ticket: str, requesting_user: str, scope: str) -> dict:
+	return _post(
+		path=_m("support.api.get_thread"),
+		body={"ticket": ticket, "requesting_user": requesting_user, "scope": scope},
+		timeout_s=_SUPPORT_TIMEOUT_S,
+	)
+
+
+def support_reply(*, ticket: str, body: str, requesting_user: str, scope: str) -> dict:
+	return _post(
+		path=_m("support.api.reply"),
+		body={"ticket": ticket, "body": body, "requesting_user": requesting_user, "scope": scope},
+		timeout_s=_SUPPORT_TIMEOUT_S,
+	)
+
+
+def support_close_ticket(*, ticket: str, requesting_user: str, scope: str) -> dict:
+	return _post(
+		path=_m("support.api.close_ticket"),
+		body={"ticket": ticket, "requesting_user": requesting_user, "scope": scope},
+		timeout_s=_SUPPORT_TIMEOUT_S,
+	)
+
+
+def support_awaiting_count(*, requesting_user: str, scope: str) -> dict:
+	return _post(
+		path=_m("support.api.awaiting_count"),
+		body={"requesting_user": requesting_user, "scope": scope},
+		timeout_s=_SUPPORT_TIMEOUT_S,
+	)
+
+
+def support_upload(*, ticket: str, filename: str, content_b64: str, requesting_user: str, scope: str) -> dict:
+	# Bytes ride b64-in-JSON (the CP media.upload decodes) -> plain _post, no binary helper.
+	return _post(
+		path=_m("support.media.upload"),
+		body={
+			"ticket": ticket,
+			"filename": filename,
+			"content_b64": content_b64,
+			"requesting_user": requesting_user,
+			"scope": scope,
+		},
+		timeout_s=DEFAULT_TIMEOUT_S,
+	)
+
+
+def support_download(*, ticket: str, file_url: str, requesting_user: str, scope: str):
+	"""Raw streamed fetch of a Helpdesk file via the CP proxy. Returns
+	(content_bytes, content_type, content_disposition)."""
+	resp = _authenticated_raw(
+		_m("support.media.download"),
+		{"ticket": ticket, "file_url": file_url, "requesting_user": requesting_user, "scope": scope},
+		timeout_s=DEFAULT_TIMEOUT_S,
+	)
+	return (
+		resp.content,
+		resp.headers.get("Content-Type", "application/octet-stream"),
+		resp.headers.get("Content-Disposition"),
+	)
+
+
+def _authenticated_raw(path: str, body: dict, *, timeout_s: int):
+	"""Auth ladder (bearer -> 401 re-mint -> legacy fallback) around a RAW POST, returning the
+	requests.Response so the caller can read bytes (P3 — _do_post is JSON-only, so it can't be
+	reused for streamed media; the ladder is replicated here rather than refactoring the critical
+	_post path). Verified against _post's ladder semantics."""
+	settings = frappe.get_single("Jarvis Settings")
+	admin_url = _admin_url(settings)
+	url = admin_url + path
+
+	def _send(headers):
+		try:
+			return requests.post(url, json=body, headers=headers, timeout=timeout_s, stream=True)
+		except (requests.ConnectionError, requests.Timeout) as e:
+			raise AdminUnreachableError("admin is unreachable; check network / service status") from e
+
+	access_token = _admin_access_token(settings, admin_url)
+	if access_token:
+		resp = _send({"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"})
+		if resp.status_code not in (401, 403):
+			return resp
+		if resp.status_code == 403:
+			raise AdminAuthError("admin returned 403", status_code=403)
+		access_token = _admin_access_token(settings, admin_url, force_refresh=True)
+		if access_token:
+			resp = _send({"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"})
+			if resp.status_code not in (401, 403):
+				return resp
+			if resp.status_code == 403:
+				raise AdminAuthError("admin returned 403", status_code=403)
+		frappe.cache().delete_value(_OAUTH_CACHE_KEY)
+
+	api_key = (settings.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip()
+	api_secret = (settings.get_password("jarvis_admin_api_secret", raise_exception=False) or "").strip()
+	if not api_key or not api_secret:
+		raise AdminAuthError("not onboarded (no OAuth password and no api_key/secret)")
+	resp = _send({"Authorization": f"token {api_key}:{api_secret}", "Content-Type": "application/json"})
+	if resp.status_code in (401, 403):
+		raise AdminAuthError(f"admin returned {resp.status_code}", status_code=resp.status_code)
+	if resp.status_code >= 400:
+		raise AdminUnreachableError(f"admin returned {resp.status_code}")
+	return resp
+
+
 def renew() -> dict:
 	"""Existing customer pays again to extend (manual one-shot). Returns admin's
 	data dict {razorpay_order_id, razorpay_key_id, amount_inr} for Checkout."""
