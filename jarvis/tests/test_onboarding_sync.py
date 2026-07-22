@@ -499,4 +499,3 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 			s.db_set("last_model_statuses", bad, update_modified=False)
 			frappe.db.commit()
 			self.assertEqual(onboarding.get_llm_sync_status()["model_statuses"], [])
-
