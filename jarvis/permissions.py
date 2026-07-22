@@ -81,9 +81,10 @@ def ensure_jarvis_user_role() -> None:
 	by the time the after_migrate seed calls this. Kept so the definition (and
 	``is_custom``) lives in exactly one place.
 
-	NOTE: no code grants this role. Onboarding grants ``Jarvis Admin`` instead
-	(:func:`grant_onboarding_admin`), which also passes the access gate; a
-	tenant's additional users are granted ``Jarvis User`` by hand in Desk."""
+	NOTE: :func:`grant_onboarding_admin` is the ONLY code path that grants this
+	role, and it grants it alongside ``Jarvis Admin`` (the admin role is additive
+	and owns no chat permission rows of its own). A tenant's additional users are
+	granted ``Jarvis User`` by hand in Desk."""
 	if not frappe.db.exists("Role", JARVIS_USER_ROLE):
 		frappe.get_doc(
 			{
@@ -206,6 +207,12 @@ def grant_onboarding_admin(user: str | None = None) -> None:
 	user = user or frappe.session.user
 	if not user or user in ("Administrator", "Guest"):
 		return
+	# Deliberately NOT User.add_roles(): that calls save(), running the whole
+	# User validation chain inside the signup / payment path, where an unrelated
+	# validation error would abort onboarding. The row insert is surgical, and
+	# set_system_user() (the reason add_roles is usually preferable) is moot here
+	# because every caller is already a System User — require_jarvis_admin gates
+	# all four call sites.
 	granted = False
 	for role in (JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE):
 		if frappe.db.exists("Has Role", {"parenttype": "User", "parent": user, "role": role}):
