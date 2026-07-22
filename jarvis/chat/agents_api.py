@@ -560,6 +560,13 @@ def install_agent(agent_slug: str) -> dict:
 		frappe.throw(_("This agent is not available to install."))
 	if frappe.db.exists(INSTALLATION, {"owner": me, "agent": listing.name}):
 		frappe.throw(_("You have already installed this agent."))
+	# R5-J8: refuse when the listing's min_apps are not all installed / a required
+	# DocType is absent (typed reason app_absent_or_ineligible). The controller
+	# validate() re-enforces this on every surface; catch it here for a clean,
+	# pre-insert message. A non-installable capability produces no install row.
+	from jarvis.chat.agent_installability import assert_installable
+
+	assert_installable(listing.name)
 
 	sched = {}
 	try:
@@ -613,6 +620,13 @@ def set_enabled(installation: str, enabled: int) -> dict:
 	bundle only reaches the container on the next Apply)."""
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3 owner-gate
+	# R5-J8: never enable a non-installable capability (a min_apps dependency
+	# absent at install, or one that vanished after install and was reconciled to
+	# installable=0). Disabling is always allowed.
+	if int(enabled or 0):
+		from jarvis.chat.agent_installability import assert_installable
+
+		assert_installable(doc.agent)
 	doc.enabled = int(enabled or 0)
 	doc.save()
 	_mark_catalog_dirty()
@@ -637,6 +651,12 @@ def set_schedule(
 	Recomputes ``next_run_at`` when the schedule is enabled."""
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3 owner-gate
+	# R5-J8: turning a schedule ON is a run commitment — refuse it for a
+	# non-installable capability (a scheduled run would only fail its preflight).
+	if int(schedule_enabled or 0):
+		from jarvis.chat.agent_installability import assert_installable
+
+		assert_installable(doc.agent)
 	if schedule_enabled is not None:
 		doc.schedule_enabled = int(schedule_enabled or 0)
 	if schedule_frequency is not None:
@@ -809,6 +829,12 @@ def run_agent_now(installation: str) -> dict:
 		)
 	if not doc.enabled:
 		frappe.throw(_("Enable the agent before running it."))
+	# R5-J8: refuse an on-demand run for a non-installable capability — a required
+	# app/DocType that was absent at install or vanished afterward means the run
+	# has no data to evaluate (typed reason app_absent_or_ineligible).
+	from jarvis.chat.agent_installability import assert_installable
+
+	assert_installable(doc.agent)
 	if frappe.db.get_value(LISTING, doc.agent, "nature") != "Auditor":
 		frappe.throw(_("Only auditor agents run on demand; operators draft through the Approval Board."))
 	from jarvis.chat.agent_scheduler import _launch_audit, _over_run_budget, _valid_owner
@@ -886,14 +912,22 @@ def _verify_reviewer_two_pack_capacity(customer: str) -> str:
 	module needs a named reviewer who can own it, so require this customer to have a
 	single named ``reviewer`` who is the reviewer-of-record across installations
 	spanning at least TWO DISTINCT packs. Returns that reviewer; throws if none
-	qualifies. Pack identity is the listing ``rule_pack`` (falling back to the agent
-	slug when a listing declares no pack), so two distinct agents count as two packs."""
+	qualifies.
+
+	R5-J11(c): pack identity is the listing's CANONICAL ``rule_pack`` (a curated
+	pack-membership name synced from the registry) and NOTHING ELSE — the former
+	agent-slug fallback is gone. Two agents in the SAME pack (or two agents whose
+	listings declare NO pack) therefore no longer masquerade as two packs: an empty/
+	missing pack id contributes nothing, so competency is never inferred from agent
+	count (codex R5-P1-02)."""
 	rows = frappe.get_all(INSTALLATION, filters={"owner": customer}, fields=["reviewer", "agent"])
 	packs_by_reviewer: dict[str, set] = {}
 	for r in rows:
 		if not r.reviewer:
 			continue
-		pack = frappe.db.get_value(LISTING, r.agent, "rule_pack") or r.agent
+		pack = (frappe.db.get_value(LISTING, r.agent, "rule_pack") or "").strip()
+		if not pack:
+			continue  # no canonical pack -> contributes nothing (never the slug)
 		packs_by_reviewer.setdefault(r.reviewer, set()).add(pack)
 	for reviewer, packs in packs_by_reviewer.items():
 		if len(packs) >= 2:

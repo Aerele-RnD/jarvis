@@ -80,13 +80,26 @@ STRONG_VERBS = (
 # PP-2 — coverage-verdict run states
 # --------------------------------------------------------------------------- #
 RUN_STATES = (
-	"evaluated_clean",  # every required rule evaluated AND no findings
+	# COVERAGE verdict, NOT a licence to say "clean": every required rule evaluated
+	# to completion. Findings MAY still be present under evaluated_clean (a completed
+	# close that surfaced exceptions) — the verdict is a coverage axis, so
+	# ``evaluated_clean`` does NOT imply zero findings (R5-J1). The old "AND no
+	# findings" gloss conflated the coverage verdict with the render gate below.
+	"evaluated_clean",  # coverage verdict: every required rule evaluated to completion
 	"partial",  # some required rules evaluated, result incomplete
 	"not_evaluable",  # no conclusion possible for the required checks
 	"failed",  # the run produced no result (exec failure)
 )
 
-#: The ONLY run state under which "no exceptions were found" may render.
+#: The coverage verdict that is a PRECONDITION for the "no exceptions were found"
+#: sentence (and any equivalent clean/compliant attestation) — but NOT on its own
+#: sufficient. R5-J1 TWO-CONDITION RENDER RULE: that sentence may render ONLY when
+#: ``run_state == evaluated_clean`` AND the run persisted ZERO findings. A run that
+#: evaluated every required check but DID persist findings is still
+#: ``evaluated_clean`` (the coverage verdict) yet must NEVER read "no exceptions" —
+#: the render layer (``agent_runs._clean_attestation_allowed``) enforces the second
+#: condition, so the coverage verdict and the absence-of-exceptions claim can never
+#: be conflated.
 CLEAN_RUN_STATE = "evaluated_clean"
 
 

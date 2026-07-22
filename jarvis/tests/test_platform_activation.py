@@ -76,8 +76,16 @@ def _mk_listing() -> str:
 				"title": "Platform Activation Test Agent",
 				"rule_tokens": json.dumps([TOKEN]),
 				"doctypes_required": json.dumps([]),
+				# R5-J11(c): a CANONICAL pack id. The reviewer two-pack ceiling gate now
+				# counts distinct non-empty rule_pack values (never the agent slug), so the
+				# activation-ceiling tests must give SLUG and SLUG-b DISTINCT canonical packs
+				# to legitimately reach a two-pack reviewer competency.
+				"rule_pack": "pack-activation-a",
 			}
 		).insert(ignore_permissions=True)
+	# The listing persists across runs (never wiped); ensure the canonical pack is set
+	# even on a row created by a pre-R5-J11(c) run so the two-pack gate can qualify.
+	frappe.db.set_value(LISTING, SLUG, "rule_pack", "pack-activation-a", update_modified=False)
 	return SLUG
 
 
@@ -402,8 +410,14 @@ class TestPP4PromotionAndPP6Budget(FrappeTestCase):
 					"title": "Platform Activation Test Agent B",
 					"rule_tokens": json.dumps([TOKEN]),
 					"doctypes_required": json.dumps([]),
+					# R5-J11(c): a DISTINCT canonical pack from SLUG so the reviewer covers
+					# two distinct non-empty packs (the two-pack ceiling gate no longer
+					# infers a pack from the agent slug).
+					"rule_pack": "pack-activation-b",
 				}
 			).insert(ignore_permissions=True)
+		# Ensure the canonical pack is set even on a listing left by a pre-R5-J11(c) run.
+		frappe.db.set_value(LISTING, slug2, "rule_pack", "pack-activation-b", update_modified=False)
 		doc = frappe.get_doc(
 			{
 				"doctype": INSTALLATION,

@@ -31,6 +31,7 @@ import frappe
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools import require_doctype_and_name
 from jarvis.tools._bulk import run_atomic_batch
+from jarvis.tools._delegate_write_caps import enforce_update
 
 # Fields Frappe maintains itself or that govern DocType identity. An LLM
 # rewriting these would corrupt the row.
@@ -61,6 +62,12 @@ def _update_one(doctype: str, name: str, changes: dict) -> "frappe.model.documen
 	protected = sorted(set(changes.keys()) & PROTECTED_FIELDS)
 	if protected:
 		raise InvalidArgumentError(f"refusing to write protected field(s): {', '.join(protected)}")
+
+	# R5-J9: bind a DELEGATE agent's update to its declared writes[] contract BEFORE
+	# the Frappe permission check below (a no-op for non-delegate callers). An auditor
+	# is refused outright; an operator may update only a declared doctype, only a draft
+	# (docstatus==0), and only a row owned by its run-as identity.
+	enforce_update(doctype, name)
 
 	if not frappe.has_permission(doctype, ptype="write", doc=name):
 		raise PermissionDeniedError(f"no write permission on {doctype} '{name}'")
