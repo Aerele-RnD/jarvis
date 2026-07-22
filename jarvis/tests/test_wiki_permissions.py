@@ -131,9 +131,9 @@ class WikiPermTestCase(FrappeTestCase):
 		_ensure_user(USER_ADMIN, roles=(JARVIS_ADMIN_ROLE, TEST_ROLE))
 		_ensure_user(USER_SM, roles=("System Manager",))
 		# USER_PLAIN stands for a user WITHOUT Jarvis app access. Fixtures persist
-		# across runs and the one-time grant patch may have granted "Jarvis User",
-		# so strip every Jarvis/curator role to exercise the no-access case
-		# (reads Org, writes nothing).
+		# across runs and an earlier case may have left "Jarvis User" on it, so
+		# strip every Jarvis/curator role to exercise the no-access case (reads
+		# Org, writes nothing).
 		frappe.db.delete(
 			"Has Role",
 			{

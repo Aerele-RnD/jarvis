@@ -21,8 +21,8 @@ import frappe
 
 # The role name + the access rule, everywhere: "Jarvis User" OR "System Manager"
 # (Administrator is implicitly allowed by has_jarvis_access / frappe perms).
-# One constant so the seed (learning/roles.py, the grant patch, tests) and the
-# gate can never drift.
+# One constant so the seed (learning/roles.py, tests) and the gate can never
+# drift.
 JARVIS_USER_ROLE = "Jarvis User"
 
 # The tenant-side admin role (design section 2): a customer power-user who can
@@ -74,9 +74,16 @@ def require_skill_reviewer(user: str | None = None) -> None:
 
 
 def ensure_jarvis_user_role() -> None:
-	"""Idempotently create the ``Jarvis User`` role (desk-access). Shared by the
-	after_migrate seed and the one-time grant patch so the role definition lives
-	in exactly one place."""
+	"""Idempotently create the ``Jarvis User`` role (desk-access).
+
+	Mostly belt-and-braces: 16 DocTypes name this role in a permission row and
+	DocType sync auto-creates any role it finds there, so the role already exists
+	by the time the after_migrate seed calls this. Kept so the definition (and
+	``is_custom``) lives in exactly one place.
+
+	NOTE: no code grants this role. Onboarding grants ``Jarvis Admin`` instead
+	(:func:`grant_onboarding_admin`), which also passes the access gate; a
+	tenant's additional users are granted ``Jarvis User`` by hand in Desk."""
 	if not frappe.db.exists("Role", JARVIS_USER_ROLE):
 		frappe.get_doc(
 			{
