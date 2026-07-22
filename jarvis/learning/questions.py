@@ -265,18 +265,20 @@ def _users_with_role(role: str) -> list[str]:
 
 	try:
 		found = set(get_users_with_role(role))
+		candidates = sorted(u for u in found if u and u not in _EXCLUDE_USERS)
+		if not candidates:
+			return []
+		# Indexed primary-key IN lookup, and the caller already runs a per-user
+		# db.exists in its own loop, so this is not a meaningful added cost.
+		system_users = set(
+			frappe.get_all(
+				"User",
+				filters={"name": ["in", candidates], "user_type": "System User"},
+				pluck="name",
+			)
+		)
 	except Exception:
 		return []
-	candidates = sorted(u for u in found if u and u not in _EXCLUDE_USERS)
-	if not candidates:
-		return []
-	system_users = set(
-		frappe.get_all(
-			"User",
-			filters={"name": ["in", candidates], "user_type": "System User"},
-			pluck="name",
-		)
-	)
 	return [u for u in candidates if u in system_users]
 
 
