@@ -64,17 +64,28 @@
 					<button class="jvp-btn-subtle" type="button" @click="load">Retry</button>
 				</div>
 
-				<div v-else-if="!shownMessages.length && !stream.live && !thinking" class="jvp-center">
-					<svg class="jvp-empty-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-					</svg>
-					<div class="jvp-empty-t">{{ contextText ? "Ask about this record" : "Ask Jarvis" }}</div>
-					<div class="jvp-empty-d">
+				<!-- Welcome: greeting + a few starting points, so an empty panel
+				     suggests what to do rather than showing a blank box. -->
+				<div v-else-if="!shownMessages.length && !stream.live && !thinking" class="jvp-welcome">
+					<div class="jvp-greet">{{ greeting }}</div>
+					<p class="jvp-greet-sub">
 						{{
 							contextText
 								? `Jarvis can see ${contextText} while you are on this page.`
-								: "Ask a question about your data."
+								: "Ask about your ERP data, run a workflow, or draft something."
 						}}
+					</p>
+					<div class="jvp-cards">
+						<button
+							v-for="s in suggestions"
+							:key="s.title"
+							class="jvp-card"
+							type="button"
+							@click="useSuggestion(s.prompt)"
+						>
+							<span class="jvp-card-t">{{ s.title }}</span>
+							<span class="jvp-card-p">{{ s.prompt }}</span>
+						</button>
 					</div>
 				</div>
 
@@ -165,6 +176,7 @@
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { contextLabel } from "./desk_context.mjs";
+import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { emptyStream, applyEvent, visibleMessages } from "./chat_stream.mjs";
 import {
 	listConversations,
@@ -217,6 +229,23 @@ const rootStyle = computed(() => {
 const shownMessages = computed(() => visibleMessages(messages.value));
 // A turn is in flight from the moment the POST is away until the first token
 // lands. Without this the panel looks inert for the whole worker round-trip.
+const greeting = computed(() => {
+	const who =
+		window.frappe?.boot?.user?.full_name || window.frappe?.session?.user_fullname || "";
+	return greetingLine(new Date().getHours(), who);
+});
+const suggestions = computed(() => suggestionsFor(props.context));
+
+// A suggestion is a starting point, not a command: it fills the composer so
+// the user can edit before sending.
+function useSuggestion(prompt) {
+	draft.value = prompt;
+	nextTick(() => {
+		autoGrow();
+		textareaEl.value?.focus();
+	});
+}
+
 const thinking = computed(() => sending.value || (stream.value.busy && !stream.value.live));
 const canSend = computed(() => draft.value.trim().length > 0 && !sending.value && !stream.value.live);
 const hint = computed(() => {
@@ -556,6 +585,65 @@ defineExpose({ load, startNewChat, convId });
 .jvp-err {
 	font-size: 13.5px;
 	color: var(--text-danger, #c0392b);
+}
+
+/* ---- welcome ---- */
+.jvp-welcome {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 6px 2px 2px;
+}
+.jvp-greet {
+	font-size: 19px;
+	font-weight: 600;
+	color: var(--text-color);
+	letter-spacing: -0.01em;
+}
+.jvp-greet-sub {
+	margin: 0;
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+.jvp-cards {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 12px;
+}
+/* Cards are bordered and flat: selection and hover are colour shifts, never a
+   lift (design.md 1.3, 5 row 2). */
+.jvp-card {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	text-align: left;
+	padding: 10px 12px;
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	background: transparent;
+	font: inherit;
+	letter-spacing: inherit;
+	cursor: pointer;
+	transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.jvp-card:hover {
+	background: var(--control-bg, #f3f3f3);
+}
+.jvp-card:focus-visible {
+	outline: 2px solid var(--border-primary, #999);
+	outline-offset: 1px;
+}
+.jvp-card-t {
+	font-size: 13.5px;
+	font-weight: 500;
+	color: var(--text-color);
+}
+.jvp-card-p {
+	font-size: 12.5px;
+	line-height: 1.45;
+	color: var(--text-muted);
 }
 .jvp-inline-err {
 	display: flex;
