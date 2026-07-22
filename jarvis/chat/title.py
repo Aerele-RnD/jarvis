@@ -229,6 +229,8 @@ def autotitle_job(conversation_id: str, user: str) -> None:
 		gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 		if not gateway_url:
 			return
+		if not frappe.db.exists(CONV, conversation_id):
+			return  # deleted between enqueue and run — benign race, not an error
 		conv = frappe.get_doc(CONV, conversation_id)
 		model, provider = _resolve_model_and_provider(conv)
 		maybe_autotitle(
