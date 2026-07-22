@@ -81,9 +81,10 @@ def ensure_jarvis_user_role() -> None:
 	by the time the after_migrate seed calls this. Kept so the definition (and
 	``is_custom``) lives in exactly one place.
 
-	NOTE: no code grants this role. Onboarding grants ``Jarvis Admin`` instead
-	(:func:`grant_onboarding_admin`), which also passes the access gate; a
-	tenant's additional users are granted ``Jarvis User`` by hand in Desk."""
+	NOTE: :func:`grant_onboarding_admin` is the ONLY code path that grants this
+	role, and it grants it alongside ``Jarvis Admin`` (the admin role is additive
+	and owns no chat permission rows of its own). A tenant's additional users are
+	granted ``Jarvis User`` by hand in Desk."""
 	if not frappe.db.exists("Role", JARVIS_USER_ROLE):
 		frappe.get_doc(
 			{
@@ -182,33 +183,54 @@ def require_jarvis_admin(user: str | None = None) -> None:
 
 
 def grant_onboarding_admin(user: str | None = None) -> None:
-	"""Grant ``Jarvis Admin`` to the onboarding/paying user (security review
-	PART 4 REVISED, TASK 44/48).
+	"""Grant ``Jarvis Admin`` AND ``Jarvis User`` to the onboarding/paying user
+	(security review PART 4 REVISED, TASK 44/48).
 
-	Grants ONLY ``Jarvis Admin`` — NOT ``Jarvis User`` — because
-	:data:`JARVIS_ACCESS_ROLES` already includes ``Jarvis Admin``, so a user
-	holding only ``Jarvis Admin`` still passes :func:`has_jarvis_access` and every
-	``@require_jarvis_user`` endpoint (they are not locked out of the chat surface
-	they administer).
+	``Jarvis Admin`` is ADDITIVE — it means "admin rights on top of a normal
+	user", never a standalone identity. An earlier revision granted it alone,
+	reasoning that :data:`JARVIS_ACCESS_ROLES` contains it so the holder still
+	passes :func:`has_jarvis_access` and every ``@require_jarvis_user`` endpoint.
+	That holds at the GATE layer and fails at the DOCTYPE layer: ``Jarvis Admin``
+	carries no permission row on ``Jarvis Conversation`` or ``Jarvis Chat
+	Message`` (nor on Approval Request, Custom Skill, Macro, Macro Run, Voice
+	Note or the three Agent doctypes), so such a user passed the gate, reached
+	``send_message`` and then failed on the message insert. Granting both roles
+	fixes all ten at once and keeps the two roles from having to be maintained in
+	lockstep.
 
-	The role name AND the target-user resolution are server-hardcoded (no
-	caller-supplied role), so the ``ignore_permissions`` insert carries NO
-	privilege-escalation vector. Idempotent — a no-op when the role is already
-	held; never grants to Administrator / Guest."""
+	The role names AND the target-user resolution are server-hardcoded (no
+	caller-supplied role), so the ``ignore_permissions`` inserts carry NO
+	privilege-escalation vector. Idempotent — already-held roles are skipped;
+	never grants to Administrator / Guest."""
 	ensure_jarvis_admin_role()
+	ensure_jarvis_user_role()
 	user = user or frappe.session.user
 	if not user or user in ("Administrator", "Guest"):
 		return
-	if not frappe.db.exists("Has Role", {"parenttype": "User", "parent": user, "role": JARVIS_ADMIN_ROLE}):
+	# Deliberately NOT User.add_roles(): that calls save(), running the whole
+	# User validation chain inside the signup / payment path, where an unrelated
+	# validation error would abort onboarding. The row insert is surgical, and
+	# set_system_user() (the reason add_roles is usually preferable) is moot here
+	# because every caller is already a System User — require_jarvis_admin gates
+	# all four call sites.
+	granted = False
+	for role in (JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE):
+		if frappe.db.exists("Has Role", {"parenttype": "User", "parent": user, "role": role}):
+			continue
 		frappe.get_doc(
 			{
 				"doctype": "Has Role",
 				"parenttype": "User",
 				"parentfield": "roles",
 				"parent": user,
-				"role": JARVIS_ADMIN_ROLE,
+				"role": role,
 			}
 		).insert(ignore_permissions=True)
+		granted = True
+	if granted:
+		# frappe.get_roles is cached per user; without this the caller can read a
+		# stale role list for the rest of the request (and beyond).
+		frappe.clear_cache(user=user)
 
 
 def require_jarvis_user(fn):

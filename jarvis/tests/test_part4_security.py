@@ -40,6 +40,7 @@ ADMIN = "p4-admin@example.com"  # Jarvis Admin, NOT System Manager
 SM = "p4-sm@example.com"  # System Manager (real, not Administrator)
 WEBSITE = "p4-website@example.com"  # Website (portal) user
 GRANTEE = "p4-grantee@example.com"  # Jarvis User with NO Jarvis Admin (grant target)
+BARE = "p4-bare@example.com"  # NEITHER Jarvis role — additive-grant target
 AGENT_SLUG = "p4-test-agent"
 PFX = "p4"
 
@@ -98,6 +99,10 @@ class Part4Base(FrappeTestCase):
 		_ensure_user(ADMIN, ["Jarvis Admin"])  # NOT System Manager
 		_ensure_user(SM, ["System Manager"])
 		_ensure_user(GRANTEE, ["Jarvis User"])  # no Jarvis Admin yet
+		# Holds NEITHER role, so the additive grant can be observed from zero.
+		# _ensure_user pins user_type, so it stays a System User despite no
+		# desk-access role.
+		_ensure_user(BARE, [])
 		_ensure_user(WEBSITE, [], user_type="Website User")
 		if not frappe.db.exists(LISTING, AGENT_SLUG):
 			frappe.get_doc(
@@ -158,23 +163,51 @@ class TestAdminTierGate(Part4Base):
 # TASK 44/48 — grant_onboarding_admin
 # --------------------------------------------------------------------------- #
 class TestOnboardingGrant(Part4Base):
-	def test_grant_is_idempotent_and_only_jarvis_admin(self):
+	def test_grant_is_idempotent_and_additive(self):
+		"""Both roles are granted. "Jarvis Admin" is admin rights ON TOP of a
+		normal user: alone it passes the access gate but owns no permission row
+		on Jarvis Conversation / Jarvis Chat Message, so the holder could reach
+		send_message and then fail on the insert."""
 		from jarvis.permissions import grant_onboarding_admin
 
-		def _rows():
+		def _rows(role):
 			return frappe.db.count(
 				"Has Role",
-				{"parenttype": "User", "parent": GRANTEE, "role": "Jarvis Admin"},
+				{"parenttype": "User", "parent": BARE, "role": role},
 			)
 
-		self.assertEqual(_rows(), 0)
+		# BARE holds neither role (GRANTEE is seeded WITH "Jarvis User", so it
+		# cannot show the additive grant from zero).
+		self.assertEqual(_rows("Jarvis Admin"), 0)
+		self.assertEqual(_rows("Jarvis User"), 0)
+		grant_onboarding_admin(BARE)
+		self.assertEqual(_rows("Jarvis Admin"), 1)
+		self.assertEqual(_rows("Jarvis User"), 1)
+		# The helper invalidates the role cache itself, so no clear_cache here.
+		roles = frappe.get_roles(BARE)
+		self.assertIn("Jarvis Admin", roles)
+		self.assertIn("Jarvis User", roles)
+		# Idempotent: a second call adds no duplicate rows.
+		grant_onboarding_admin(BARE)
+		self.assertEqual(_rows("Jarvis Admin"), 1)
+		self.assertEqual(_rows("Jarvis User"), 1)
+
+	def test_grant_tops_up_a_partially_granted_user(self):
+		"""GRANTEE already holds "Jarvis User" only. The grant must add the
+		missing "Jarvis Admin" without duplicating the role it already has."""
+		from jarvis.permissions import grant_onboarding_admin
+
+		def _rows(role):
+			return frappe.db.count(
+				"Has Role",
+				{"parenttype": "User", "parent": GRANTEE, "role": role},
+			)
+
+		self.assertEqual(_rows("Jarvis User"), 1)
+		self.assertEqual(_rows("Jarvis Admin"), 0)
 		grant_onboarding_admin(GRANTEE)
-		self.assertEqual(_rows(), 1)
-		frappe.clear_cache(user=GRANTEE)
-		self.assertIn("Jarvis Admin", frappe.get_roles(GRANTEE))
-		# Idempotent: a second call adds no duplicate row.
-		grant_onboarding_admin(GRANTEE)
-		self.assertEqual(_rows(), 1)
+		self.assertEqual(_rows("Jarvis User"), 1)
+		self.assertEqual(_rows("Jarvis Admin"), 1)
 
 	def test_grant_never_touches_administrator_or_guest(self):
 		from jarvis.permissions import grant_onboarding_admin
