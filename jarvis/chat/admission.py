@@ -714,9 +714,7 @@ def settle_turn(run_id: str, terminal_state: str, error: str | None = None) -> N
 		promote_next(target)
 
 
-def settle_conversation_dispatching(
-	conversation: str, terminal_state: str, error: str | None = None
-) -> None:
+def settle_conversation_dispatching(conversation: str, terminal_state: str, error: str | None = None) -> None:
 	"""Recovery-path settle: close the (single-flight) dispatching Turn on this
 	conversation. turn_recovery works off Message rows and has no run_id, so we
 	settle by conversation - per-conversation single-flight makes this
@@ -724,9 +722,7 @@ def settle_conversation_dispatching(
 	if not admission_enabled():
 		return
 	try:
-		run_id = frappe.db.get_value(
-			TURN, {"conversation": conversation, "state": "dispatching"}, "name"
-		)
+		run_id = frappe.db.get_value(TURN, {"conversation": conversation, "state": "dispatching"}, "name")
 	except Exception:
 		run_id = None
 	if run_id:
@@ -740,9 +736,7 @@ def mark_cancel_requested(conversation: str) -> None:
 	if not admission_enabled():
 		return
 	try:
-		run_id = frappe.db.get_value(
-			TURN, {"conversation": conversation, "state": "dispatching"}, "name"
-		)
+		run_id = frappe.db.get_value(TURN, {"conversation": conversation, "state": "dispatching"}, "name")
 		if run_id:
 			_run_cas(
 				f"""UPDATE `tab{TURN}` SET cancel_requested=1, version=version+1
@@ -816,13 +810,15 @@ def queue_position(run_id: str) -> dict:
 	"""Poll-on-focus fallback for the queued chip. Owner-checked. Returns the
 	current state and (when queued) the approximate position."""
 	require_jarvis_access()
-	row = frappe.db.get_value(
-		TURN, run_id, ["conversation", "state", "relay_target_id"], as_dict=True
-	)
+	row = frappe.db.get_value(TURN, run_id, ["conversation", "state", "relay_target_id"], as_dict=True)
 	if not row:
 		return {"ok": False, "reason": frappe._("This turn no longer exists.")}
 	_assert_owner(row["conversation"])
-	pos = _position_of(run_id, row["relay_target_id"] or DEFAULT_RELAY_TARGET) if row["state"] == "queued" else None
+	pos = (
+		_position_of(run_id, row["relay_target_id"] or DEFAULT_RELAY_TARGET)
+		if row["state"] == "queued"
+		else None
+	)
 	return {"ok": True, "run_id": run_id, "state": row["state"], "position": pos}
 
 
@@ -872,9 +868,9 @@ def _write_cancel_marker(conversation: str, reason: str) -> None:
 	try:
 		_lock_conversation(conversation)
 		seq = (
-			frappe.db.sql(
-				f"SELECT MAX(seq) FROM `tab{MSG}` WHERE conversation=%(c)s", {"c": conversation}
-			)[0][0]
+			frappe.db.sql(f"SELECT MAX(seq) FROM `tab{MSG}` WHERE conversation=%(c)s", {"c": conversation})[
+				0
+			][0]
 			or 0
 		) + 1
 		marker = frappe.get_doc(

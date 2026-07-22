@@ -243,8 +243,11 @@ class TestPromotionOnTerminal(_AdmissionTestCase):
 		sa = self._mk_msg(conv_a, 1)
 		sb = self._mk_msg(conv_b, 1)
 		dispatched = []
-		with patch.object(admission, "_max_inflight", return_value=1), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+		with (
+			patch.object(admission, "_max_inflight", return_value=1),
+			patch.object(
+				chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+			),
 		):
 			self._accept(conv_a, "A", sa)  # dispatches (cap 1)
 			res_b = self._accept(conv_b, "B", sb)  # queues (shard full)
@@ -287,8 +290,11 @@ class TestContinuationNoBypass(_AdmissionTestCase):
 		conv = self._mk_conv()
 		s1 = self._mk_msg(conv, 1)
 		dispatched = []
-		with patch.object(admission, "_max_inflight", return_value=1), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+		with (
+			patch.object(admission, "_max_inflight", return_value=1),
+			patch.object(
+				chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+			),
 		):
 			# Occupy the single credit with a live turn on this conversation.
 			self._accept(conv, "live", s1)
@@ -308,9 +314,7 @@ class TestFourCallersGated(_AdmissionTestCase):
 			res = chat_api.send_message(conversation=conv, message="hello there")
 		self.assertTrue(res["ok"])
 		self.assertTrue(frappe.db.exists(TURN, res["run_id"]))
-		self.assertEqual(
-			frappe.db.get_value(TURN, res["run_id"], "turn_class"), "interactive"
-		)
+		self.assertEqual(frappe.db.get_value(TURN, res["run_id"], "turn_class"), "interactive")
 
 	def test_retry_message_creates_turn_reusing_seed(self):
 		conv = self._mk_conv()
@@ -517,8 +521,11 @@ class TestBackgroundFloor(_AdmissionTestCase):
 		s_int = self._mk_msg(c_int, 1)
 		s_bg = self._mk_msg(c_bg, 1)
 		dispatched = []
-		with patch.object(admission, "_max_inflight", return_value=2), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+		with (
+			patch.object(admission, "_max_inflight", return_value=2),
+			patch.object(
+				chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+			),
 		):
 			self._accept(c_live, "live", s_live, turn_class="interactive")  # dispatches (1/2)
 			# Force both to queue by accepting while a credit is free but making
@@ -537,8 +544,11 @@ class TestFlagOffByteIdentical(_AdmissionTestCase):
 	def test_flag_off_creates_no_turn_rows_and_dispatches_legacy(self):
 		conv = self._mk_conv()
 		dispatched = []
-		with patch.dict(frappe.local.conf, {admission.FLAG: 0}), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+		with (
+			patch.dict(frappe.local.conf, {admission.FLAG: 0}),
+			patch.object(
+				chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+			),
 		):
 			self.assertFalse(admission.admission_enabled())
 			res = chat_api.send_message(conversation=conv, message="hi there")
@@ -592,14 +602,17 @@ class TestFlagOffDrainInertia(_AdmissionTestCase):
 		conv_a = self._mk_conv()
 		seed_a = self._mk_msg(conv_a, 1, role="user")
 		self._mk_msg(conv_a, 2, role="assistant", content="done", streaming=0)
-		self._insert_turn(conv_a, "resid", seed_a, "dispatching", reserved=1, dispatching_at=frappe.utils.now())
+		self._insert_turn(
+			conv_a, "resid", seed_a, "dispatching", reserved=1, dispatching_at=frappe.utils.now()
+		)
 		# A queued turn on another conversation -> must NOT be promoted/dispatched.
 		conv_b = self._mk_conv()
 		seed_b = self._mk_msg(conv_b, 1, role="user")
 		self._insert_turn(conv_b, "qidle", seed_b, "queued")
 		dispatched = []
-		with patch.dict(frappe.local.conf, {admission.FLAG: 0}), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(1)
+		with (
+			patch.dict(frappe.local.conf, {admission.FLAG: 0}),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(1)),
 		):
 			self.assertFalse(admission.admission_enabled())
 			summary = admission.sweep()
@@ -619,9 +632,11 @@ class TestOverloadSeedCleanup(_AdmissionTestCase):
 		conv_fill = self._mk_conv()
 		self._insert_turn(conv_fill, "fill", self._mk_msg(conv_fill, 1, role="user"), "queued")
 		conv = self._mk_conv()
-		with patch.object(admission, "MAX_QUEUE_DEPTH", 1), patch.object(
-			admission, "shard_overloaded", return_value=False
-		), patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None):
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 1),
+			patch.object(admission, "shard_overloaded", return_value=False),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
+		):
 			res = chat_api.send_message(conversation=conv, message="hello there")
 		self.assertFalse(res["ok"])
 		self.assertIn("busy", res["reason"].lower())
@@ -639,8 +654,9 @@ class TestCapOneFairness(_AdmissionTestCase):
 		c_bg = self._mk_conv()
 		self._insert_turn(c_int, "i1", self._mk_msg(c_int, 1), "queued", turn_class="interactive")
 		self._insert_turn(c_bg, "b1", self._mk_msg(c_bg, 1), "queued", turn_class="background")
-		with patch.object(admission, "_max_inflight", return_value=1), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None
+		with (
+			patch.object(admission, "_max_inflight", return_value=1),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
 		):
 			admission.promote_next(admission.DEFAULT_RELAY_TARGET)
 		self.assertEqual(self._state("i1"), "dispatching", "interactive wins the sole credit")
@@ -678,8 +694,9 @@ class TestContinuationChip(_AdmissionTestCase):
 		position so apply_action/confirm_tool can render the chip (not silence)."""
 		conv = self._mk_conv()
 		s1 = self._mk_msg(conv, 1)
-		with patch.object(admission, "_max_inflight", return_value=1), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None
+		with (
+			patch.object(admission, "_max_inflight", return_value=1),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
 		):
 			self._accept(conv, "live", s1)  # occupies the single credit
 			out = chat_api.enqueue_continuation(conv, "created ORD-001")
@@ -706,8 +723,9 @@ class TestContinuationChip(_AdmissionTestCase):
 			reserved=1,
 			dispatching_at=frappe.utils.now(),
 		)
-		with patch.object(admission, "MAX_QUEUE_DEPTH", 1), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 1),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
 		):
 			out = chat_api.enqueue_continuation(conv, "created ORD-002")
 		# Not rejected (a fresh send at this depth would be): a durable queued Turn
@@ -725,8 +743,9 @@ class TestCancelDurableMarker(_AdmissionTestCase):
 		conv = self._mk_conv()
 		s1 = self._mk_msg(conv, 1)
 		s2 = self._mk_msg(conv, 2)
-		with patch.object(admission, "_max_inflight", return_value=1), patch.object(
-			chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None
+		with (
+			patch.object(admission, "_max_inflight", return_value=1),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
 		):
 			self._accept(conv, "live", s1)
 			self._accept(conv, "q1", s2)
