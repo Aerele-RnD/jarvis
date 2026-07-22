@@ -13,6 +13,7 @@
 				'jvw-fab--dragging': dragging,
 				'jvw-fab--faded': faded && !dragging,
 				'jvw-fab--dock-left': side === 'left',
+				'jvw-fab--behind': panelOpen,
 			}"
 			:style="fabStyle"
 			:aria-label="panelOpen ? 'Close Jarvis' : 'Ask Jarvis'"
@@ -357,6 +358,14 @@ onBeforeUnmount(() => {
 }
 .jvw-fab--faded {
 	opacity: 0.4;
+}
+/* The panel docks to the same edge the FAB is snapped to, and the FAB outranks
+   it on z-index — so an open panel would wear the launcher on top of its header
+   or composer. Retire the FAB while the panel is open; the panel's own close
+   button and Esc bring it back. */
+.jvw-fab--behind {
+	opacity: 0;
+	pointer-events: none;
 }
 
 /* ---- drag affordance ----
