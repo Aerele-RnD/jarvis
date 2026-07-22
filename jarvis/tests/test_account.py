@@ -142,7 +142,7 @@ class TestAccountGatesFailClosed(FrappeTestCase):
 
 class TestAdminChatGate(FrappeTestCase):
 	"""jarvis.account._admin_chat_gate — the final managed ready-gate for
-	is_ready_for_chat. Fail-open, v1-tolerant, positive verdict cached ~30s.
+	is_ready_for_chat. Fail-open, v1-tolerant, positive verdict cached ~2 min.
 	admin_client.get_connection is mocked."""
 
 	def setUp(self):
@@ -157,10 +157,40 @@ class TestAdminChatGate(FrappeTestCase):
 		) as gc:
 			self.assertEqual(
 				account._admin_chat_gate(),
-				{"ready": False, "reason": "container_provisioning"},
+				{"ready": False, "reason": "container_provisioning", "detail": ""},
 			)
 		# Uses the short 8s budget so a slow admin can't stall the SPA/boot path.
 		gc.assert_called_once_with(timeout_s=8)
+
+	def test_suspended_is_distinct_from_provisioning(self):
+		"""A revoked subscription must NOT read as "still starting up": that
+		tells the customer to wait for a container that is never coming back
+		instead of renewing."""
+		with patch.object(
+			admin_client,
+			"get_connection",
+			return_value={
+				"chat_readiness": "Suspended",
+				"chat_readiness_reason": "Your subscription has expired.",
+			},
+		):
+			self.assertEqual(
+				account._admin_chat_gate(),
+				{
+					"ready": False,
+					"reason": "subscription_suspended",
+					"detail": "Your subscription has expired.",
+				},
+			)
+
+	def test_suspended_without_reason_still_classifies(self):
+		"""Older admin sends the state with no sentence — the code must still be
+		the billing one; the SPA supplies its own fallback copy."""
+		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Suspended"}):
+			self.assertEqual(
+				account._admin_chat_gate(),
+				{"ready": False, "reason": "subscription_suspended", "detail": ""},
+			)
 
 	def test_allows_when_admin_ready(self):
 		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}):
@@ -188,7 +218,7 @@ class TestAdminChatGate(FrappeTestCase):
 		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}) as gc:
 			account._admin_chat_gate()
 			account._admin_chat_gate()
-		# Second call served from the ~30s positive cache → one admin round-trip.
+		# Second call served from the positive cache → one admin round-trip.
 		gc.assert_called_once()
 
 	def test_not_ready_verdict_is_not_cached(self):

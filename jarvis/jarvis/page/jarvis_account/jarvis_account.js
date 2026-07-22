@@ -2060,6 +2060,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 						  }">${esc(ctaSecondary.label)}</button>`
 						: ""
 				}
+				${
+					// Autopay is off and re-armable. Without this the customer is
+					// told to "set up payment again" with nothing to click:
+					// releasing a mandate is terminal at Razorpay, so cancel->resume
+					// (and one-shot renew) can never restore auto-renewal by itself.
+					account.can_reauthorize
+						? `<button class="ja-btn ja-btn-ghost" id="ja-cta-reauth" data-action="reauth">Set up auto-renewal</button>`
+						: ""
+				}
 			</div>
 			<div class="ja-err" id="ja-billing-err"></div>
 		</div>`;
@@ -2117,11 +2126,33 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function bindBilling() {
-		$body.find("#ja-cta-primary, #ja-cta-secondary").on("click", function () {
+		$body.find("#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth").on("click", function () {
 			const action = $(this).data("action");
 			if (action === "upgrade") return openUpgradeModal();
 			if (action === "renew") return startRenew();
+			if (action === "reauth") return startReauthorize();
 		});
+	}
+
+	// ---- re-authorize autopay ---------------------------------------------
+	function startReauthorize() {
+		setBusy("#ja-cta-reauth", true);
+		frappe
+			.call({ method: "jarvis.account.reauthorize_autopay" })
+			.then((r) => {
+				setBusy("#ja-cta-reauth", false);
+				const data = (r.message && r.message.data) || r.message || {};
+				// Mandate-only Checkout: nothing is charged now (the period is
+				// already paid for), so this always takes the subscription_id
+				// branch and never an amount.
+				openCheckout(data, /*upgrade=*/ false);
+			})
+			.catch((e) => {
+				setBusy("#ja-cta-reauth", false);
+				$body
+					.find("#ja-billing-err")
+					.text(e.message || "Couldn't start auto-renewal setup.");
+			});
 	}
 
 	// ---- renew flow -------------------------------------------------------
@@ -2223,19 +2254,28 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	function openCheckout(handles, isUpgrade) {
 		const opts = {
 			key: handles.razorpay_key_id,
-			amount: Math.round((handles.amount_inr || 0) * 100),
-			currency: "INR",
-			order_id: handles.razorpay_order_id,
 			name: "Jarvis",
 			description: isUpgrade ? "Plan upgrade" : "Subscription payment",
 			handler: function (res) {
 				confirmAndRefresh({
 					razorpay_payment_id: res.razorpay_payment_id,
-					razorpay_order_id: res.razorpay_order_id,
+					razorpay_order_id: res.razorpay_order_id || null,
+					razorpay_subscription_id: res.razorpay_subscription_id || null,
 					razorpay_signature: res.razorpay_signature,
 				});
 			},
 		};
+		if (handles.razorpay_subscription_id) {
+			// Recurring (Monthly) upgrade: subscription-mode Checkout collects the
+			// mandate; the prorated amount rides on the Subscription as an upfront
+			// add-on, so amount/order_id must NOT be set here (an order_id of
+			// undefined made Checkout charge a stray standalone payment).
+			opts.subscription_id = handles.razorpay_subscription_id;
+		} else {
+			opts.order_id = handles.razorpay_order_id;
+			opts.amount = Math.round((handles.amount_inr || 0) * 100);
+			opts.currency = "INR";
+		}
 		new Razorpay(opts).open();
 	}
 

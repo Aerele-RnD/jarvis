@@ -251,6 +251,12 @@ export const disconnectSubscription = () => call("jarvis.oauth.api.disconnect");
 export const getLlmUsage = () => call("jarvis.account.get_llm_usage");
 export const getLlmConnectionStatus = () => call("jarvis.account.get_llm_connection_status");
 export const getAccount = () => call("jarvis.account.get_account");
+// BILLING plan lifecycle. Not to be confused with disconnectSubscription
+// above, which drops the LLM PROVIDER subscription (ChatGPT/Claude OAuth).
+// These end / restore the paid Jarvis plan itself.
+export const cancelPlanAtPeriodEnd = () => call("jarvis.account.cancel_plan_at_period_end");
+export const resumePlan = () => call("jarvis.account.resume_plan");
+export const reauthorizeAutopay = () => call("jarvis.account.reauthorize_autopay");
 
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {

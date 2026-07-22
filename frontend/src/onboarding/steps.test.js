@@ -8,6 +8,8 @@ import {
 	stepIndex,
 	isOnboardComplete,
 	verifyPollAction,
+	suspensionNotice,
+	SUSPENDED_FALLBACK,
 } from "./steps.js";
 
 test("managed step order", () => {
@@ -96,4 +98,35 @@ test("verifyPollAction: terminal statuses surface as halted", () => {
 test("verifyPollAction: unknown shape asks for a refresh", () => {
 	assert.deepEqual(verifyPollAction({ pending_verification: false }), { kind: "stale" });
 	assert.deepEqual(verifyPollAction({}), { kind: "stale" });
+});
+
+test("suspensionNotice: only fires for a suspended workspace", () => {
+	// Entitled / ready / absent → no banner.
+	assert.equal(suspensionNotice({ ready: true }), null);
+	assert.equal(suspensionNotice(null), null);
+	assert.equal(suspensionNotice(undefined), null);
+	// A different not-ready reason must NOT raise the billing banner — that
+	// would tell a customer mid-provisioning to go pay again.
+	assert.equal(suspensionNotice({ ready: false, reason: "container_provisioning" }), null);
+	assert.equal(suspensionNotice({ ready: false, reason: "llm_credentials" }), null);
+});
+
+test("suspensionNotice: prefers admin's sentence, falls back when absent", () => {
+	assert.equal(
+		suspensionNotice({
+			ready: false,
+			reason: "subscription_suspended",
+			detail: "Your subscription has expired. Renew to restore access to Jarvis.",
+		}),
+		"Your subscription has expired. Renew to restore access to Jarvis."
+	);
+	// Older admin sends the state with no reason string.
+	assert.equal(
+		suspensionNotice({ ready: false, reason: "subscription_suspended" }),
+		SUSPENDED_FALLBACK
+	);
+	assert.equal(
+		suspensionNotice({ ready: false, reason: "subscription_suspended", detail: "" }),
+		SUSPENDED_FALLBACK
+	);
 });

@@ -1541,6 +1541,12 @@ def retry_message(message: str) -> dict:
 	the parent conversation.
 	"""
 	require_jarvis_access()
+	# Same entitlement gate as send_message: a retry re-runs a full turn, so a
+	# suspended sub must reject here, not grind the WS-open loop on a stopped
+	# container (the Retry button sits on the very error that loop produces).
+	ok, reason = validate_can_send(frappe.session.user)
+	if not ok:
+		return {"ok": False, "reason": reason}
 	doc = frappe.get_doc(MSG, message)
 	# Ownership is enforced on the PARENT conversation: message rows can be
 	# inserted by the RQ worker under a different session user, so the

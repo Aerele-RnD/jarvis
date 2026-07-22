@@ -8,7 +8,8 @@ this module's contract.
 
 Returns (True, None) on success or (False, reason: str) on rejection. The
 reason is a machine code the SPA maps to a human toast; the enforcement
-rejection uses reason ``"usage_limit"``.
+rejection uses reason ``"usage_limit"`` and the billing one
+``"subscription_suspended"``.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ def validate_can_send(user: str, model: str | None = None) -> tuple[bool, str | 
 	# Aggregate monthly cap is the OUTER gate — checked first (fleet spec §7).
 	if _over_monthly_limit(user):
 		return False, "usage_limit"
+	if _subscription_suspended():
+		return False, "subscription_suspended"
 	# Per-model cap: only when a concrete model is known. ``model`` is resolved
 	# in chat.api (which knows the conversation) and passed in as a plain string,
 	# so policy never imports turn_handler (no import cycle). Pool "Auto" resolves
@@ -31,6 +34,22 @@ def validate_can_send(user: str, model: str | None = None) -> tuple[bool, str | 
 	if model and _over_model_limit(user, model):
 		return False, "usage_limit"
 	return True, None
+
+
+def _subscription_suspended() -> bool:
+	"""True iff admin reports the subscription no longer entitles chat. Reuses
+	_admin_chat_gate's cache; fails OPEN (a control-plane hiccup must never block
+	a paying customer, and self-host has no admin)."""
+	try:
+		from jarvis.account import _admin_chat_gate
+
+		return _admin_chat_gate().get("reason") == "subscription_suspended"
+	except Exception:
+		frappe.log_error(
+			title="jarvis policy: entitlement check failed (allowing send)",
+			message=frappe.get_traceback(),
+		)
+		return False
 
 
 def _over_model_limit(user: str, model: str) -> bool:
