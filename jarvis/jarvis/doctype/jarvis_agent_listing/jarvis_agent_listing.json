@@ -20,6 +20,7 @@
   "rule_tokens",
   "min_apps",
   "rule_pack",
+  "writes",
   "skill_bundle",
   "default_schedule",
   "validated_for_fy",
@@ -117,7 +118,13 @@
    "fieldname": "rule_pack",
    "fieldtype": "Data",
    "label": "Rule Pack",
-   "description": "Legacy rule-pack identifier. Unused by delegate agents (their evaluation logic lives in the private admin bundle store)."
+   "description": "R5-J11(c) canonical pack membership id for this agent (curated pack map: the 14 domains map onto the 7 packs + measurement). Declarative, non-IP — it is a pack NAME only, never the as-coded predicate. Synced from registry.rule_pack. The reviewer two-pack activation-ceiling gate counts DISTINCT non-empty rule_pack values (never the agent slug), so an empty pack id contributes nothing to the count."
+  },
+  {
+   "fieldname": "writes",
+   "fieldtype": "Small Text",
+   "label": "Writes (JSON)",
+   "description": "R5-J9 declarative operator write contract: JSON array of {doctype, mode} (mode: draft|approval-request; an optional operation/operations key narrows to create|update) the operator is permitted to write. Non-IP metadata mirrored from the bundle-store manifest.writes[]. NULL/empty for auditors (which are refused any write). create_doc/update_doc bind a delegate call to this contract BEFORE Frappe permission checks: a delegate may only create/update a declared doctype, only docstatus==0, and updates only on rows it owns."
   },
   {
    "fieldname": "skill_bundle",

@@ -98,6 +98,18 @@ def sync_agent_listings() -> dict:
 			# legacy agents. Mirrors the bundle store's rules.ids.json.
 			"rule_tokens": frappe.as_json(a.get("rule_tokens") or []),
 			"min_apps": frappe.as_json(a.get("min_apps") or []),
+			# R5-J9: the declarative operator write contract (manifest.writes[] —
+			# non-IP {doctype, mode} metadata the exporter emits). create_doc/
+			# update_doc bind a delegate call to it. Tolerant of an OLD registry
+			# that predates the field (``.get`` -> empty list): an operator whose
+			# registry carries no writes stays refused every write (fail-closed),
+			# an auditor's is always empty. NEVER a rule body/threshold.
+			"writes": frappe.as_json(a.get("writes") or []),
+			# R5-J11(c): the canonical pack-membership id (a NAME, never the as-coded
+			# predicate) the reviewer two-pack activation gate counts DISTINCT non-empty
+			# values of. Tolerant of an old registry that predates it (``.get`` -> "");
+			# an empty pack id contributes nothing to the distinct-pack count.
+			"rule_pack": (a.get("rule_pack") or "").strip(),
 			# A2: NEVER write a SKILL body into the customer DB — the proprietary
 			# playbook lives only in the private admin bundle store. Every listing
 			# is a body-free stub.

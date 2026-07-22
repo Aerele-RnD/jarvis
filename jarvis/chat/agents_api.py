@@ -912,14 +912,22 @@ def _verify_reviewer_two_pack_capacity(customer: str) -> str:
 	module needs a named reviewer who can own it, so require this customer to have a
 	single named ``reviewer`` who is the reviewer-of-record across installations
 	spanning at least TWO DISTINCT packs. Returns that reviewer; throws if none
-	qualifies. Pack identity is the listing ``rule_pack`` (falling back to the agent
-	slug when a listing declares no pack), so two distinct agents count as two packs."""
+	qualifies.
+
+	R5-J11(c): pack identity is the listing's CANONICAL ``rule_pack`` (a curated
+	pack-membership name synced from the registry) and NOTHING ELSE — the former
+	agent-slug fallback is gone. Two agents in the SAME pack (or two agents whose
+	listings declare NO pack) therefore no longer masquerade as two packs: an empty/
+	missing pack id contributes nothing, so competency is never inferred from agent
+	count (codex R5-P1-02)."""
 	rows = frappe.get_all(INSTALLATION, filters={"owner": customer}, fields=["reviewer", "agent"])
 	packs_by_reviewer: dict[str, set] = {}
 	for r in rows:
 		if not r.reviewer:
 			continue
-		pack = frappe.db.get_value(LISTING, r.agent, "rule_pack") or r.agent
+		pack = (frappe.db.get_value(LISTING, r.agent, "rule_pack") or "").strip()
+		if not pack:
+			continue  # no canonical pack -> contributes nothing (never the slug)
 		packs_by_reviewer.setdefault(r.reviewer, set()).add(pack)
 	for reviewer, packs in packs_by_reviewer.items():
 		if len(packs) >= 2:
