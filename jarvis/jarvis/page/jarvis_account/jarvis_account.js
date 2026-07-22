@@ -2047,7 +2047,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			<p class="ja-sub">${esc(ctaPrimary.subtitle)}</p>
 			<div class="ja-actions">
 				${
-					ctaPrimary
+					ctaPrimary && ctaPrimary.action
 						? `<button class="ja-btn ja-btn-primary" id="ja-cta-primary" data-action="${
 								ctaPrimary.action
 						  }">${esc(ctaPrimary.label)}</button>`
@@ -2074,6 +2074,13 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		</div>`;
 	}
 
+	// Only suppress renewal when the server explicitly refuses it. An older
+	// admin that does not send can_renew keeps the previous behaviour, so a
+	// bench deployed ahead of admin never hides a CTA that would have worked.
+	function canRenew() {
+		return account.can_renew !== false;
+	}
+
 	function primaryCta(sub) {
 		const upgrade = (account.upgrade_plans || []).length > 0;
 		switch (sub) {
@@ -2086,11 +2093,21 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 							subtitle:
 								"Move to a higher plan - you only pay the prorated difference for the remaining period.",
 					  }
-					: {
+					: canRenew()
+					? {
 							action: "renew",
 							label: "Renew now",
 							heading: "Renew early",
 							subtitle: "Add another billing cycle to your current plan.",
+					  }
+					: {
+							// renew() refuses a manual order alongside a live mandate
+							// (double charge). Nothing to sell here.
+							action: "",
+							label: "",
+							heading: "Auto-renewal is on",
+							subtitle:
+								"Your plan renews automatically - there is nothing to pay right now.",
 					  };
 			case "Cancelled":
 				return {
@@ -2120,7 +2137,8 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function secondaryCta(sub, hasUpgrade) {
-		if (sub === "Active" && hasUpgrade) return { action: "renew", label: "Renew now" };
+		if (sub === "Active" && hasUpgrade && canRenew())
+			return { action: "renew", label: "Renew now" };
 		if (sub === "Cancelled" && hasUpgrade) return { action: "upgrade", label: "Upgrade plan" };
 		return null;
 	}
@@ -2170,7 +2188,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			.catch((e) => {
 				setBusy("#ja-cta-primary", false);
 				setBusy("#ja-cta-secondary", false);
-				$body.find("#ja-billing-err").text(e.message || "Couldn't start payment.");
+				// Frappe already surfaces server messages in its own dialog; adding a
+				// generic line here just gave one failure two surfaces.
+				$body.find("#ja-billing-err").text((e && e.message) || "");
 			});
 	}
 
