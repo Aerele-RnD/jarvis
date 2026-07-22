@@ -560,6 +560,13 @@ def install_agent(agent_slug: str) -> dict:
 		frappe.throw(_("This agent is not available to install."))
 	if frappe.db.exists(INSTALLATION, {"owner": me, "agent": listing.name}):
 		frappe.throw(_("You have already installed this agent."))
+	# R5-J8: refuse when the listing's min_apps are not all installed / a required
+	# DocType is absent (typed reason app_absent_or_ineligible). The controller
+	# validate() re-enforces this on every surface; catch it here for a clean,
+	# pre-insert message. A non-installable capability produces no install row.
+	from jarvis.chat.agent_installability import assert_installable
+
+	assert_installable(listing.name)
 
 	sched = {}
 	try:
@@ -613,6 +620,13 @@ def set_enabled(installation: str, enabled: int) -> dict:
 	bundle only reaches the container on the next Apply)."""
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3 owner-gate
+	# R5-J8: never enable a non-installable capability (a min_apps dependency
+	# absent at install, or one that vanished after install and was reconciled to
+	# installable=0). Disabling is always allowed.
+	if int(enabled or 0):
+		from jarvis.chat.agent_installability import assert_installable
+
+		assert_installable(doc.agent)
 	doc.enabled = int(enabled or 0)
 	doc.save()
 	_mark_catalog_dirty()
@@ -637,6 +651,12 @@ def set_schedule(
 	Recomputes ``next_run_at`` when the schedule is enabled."""
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3 owner-gate
+	# R5-J8: turning a schedule ON is a run commitment — refuse it for a
+	# non-installable capability (a scheduled run would only fail its preflight).
+	if int(schedule_enabled or 0):
+		from jarvis.chat.agent_installability import assert_installable
+
+		assert_installable(doc.agent)
 	if schedule_enabled is not None:
 		doc.schedule_enabled = int(schedule_enabled or 0)
 	if schedule_frequency is not None:
@@ -809,6 +829,12 @@ def run_agent_now(installation: str) -> dict:
 		)
 	if not doc.enabled:
 		frappe.throw(_("Enable the agent before running it."))
+	# R5-J8: refuse an on-demand run for a non-installable capability — a required
+	# app/DocType that was absent at install or vanished afterward means the run
+	# has no data to evaluate (typed reason app_absent_or_ineligible).
+	from jarvis.chat.agent_installability import assert_installable
+
+	assert_installable(doc.agent)
 	if frappe.db.get_value(LISTING, doc.agent, "nature") != "Auditor":
 		frappe.throw(_("Only auditor agents run on demand; operators draft through the Approval Board."))
 	from jarvis.chat.agent_scheduler import _launch_audit, _over_run_budget, _valid_owner

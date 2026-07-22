@@ -24,6 +24,8 @@ import os
 
 import frappe
 
+from jarvis.chat.agent_installability import reconcile_installations
+
 LISTING = "Jarvis Agent Listing"
 
 _AGENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agents")
@@ -177,11 +179,17 @@ def build_agent_push_payload(owner: str | None = None) -> list[dict]:
 	installs = frappe.get_all(
 		"Jarvis Agent Installation",
 		filters=filters,
-		fields=["agent", "owner"],
+		fields=["agent", "owner", "installable"],
 		order_by="agent asc",
 	)
 	payload = []
 	for row in installs:
+		# R5-J8: a reconcile marks an install ``installable=0`` (never deletes) when
+		# a min_apps dependency vanished AFTER install while it was still enabled.
+		# Its enablement signal must not reach the container — the run gates already
+		# refuse it, and pushing it would install a bundle whose data is absent.
+		if not frappe.utils.cint(row.installable):
+			continue
 		listing = frappe.db.get_value(
 			LISTING,
 			row.agent,
@@ -241,5 +249,17 @@ def after_migrate() -> None:
 	except Exception:
 		frappe.log_error(
 			title="jarvis agent catalog: after_migrate sync failed",
+			message=frappe.get_traceback(),
+		)
+	# R5-J8: an app install/uninstall runs a migrate, so this is the reconcile
+	# point — re-mark every installation installable/not against the current site.
+	# Independent try/except: a reconcile hiccup must never fail a migration and
+	# must run even if the catalog sync above raised.
+	try:
+		rec = reconcile_installations()
+		frappe.logger("jarvis").info(f"agent installability reconciled: {rec}")
+	except Exception:
+		frappe.log_error(
+			title="jarvis agent catalog: after_migrate installability reconcile failed",
 			message=frappe.get_traceback(),
 		)

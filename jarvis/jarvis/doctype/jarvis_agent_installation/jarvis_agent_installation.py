@@ -42,6 +42,7 @@ _GL_SCOPED_DIMENSIONS = (
 class JarvisAgentInstallation(Document):
 	def validate(self):
 		self._default_reviewer()
+		self._guard_installability()
 		self._validate_unique_per_owner()
 		self._validate_owner_cap()
 		self._validate_run_as_user()
@@ -62,6 +63,43 @@ class JarvisAgentInstallation(Document):
 		Frappe's mandatory check, so it satisfies ``reqd`` on every surface."""
 		if not (self.reviewer or "").strip():
 			self.reviewer = self.run_as_user or self.owner or frappe.session.user
+
+	def _guard_installability(self):
+		"""PP-3 / R5-J8: a capability is INSTALLABLE only when its listing's
+		``min_apps`` are all installed AND its required DocTypes all exist. This is
+		the authoritative install-time gate — it runs on EVERY insert/save regardless
+		of surface (SPA / Desk / import / test), so an absent dependency can never
+		enter through a path ``install_agent`` does not own.
+
+		On a FRESH install an unmet dependency is refused (typed reason
+		``app_absent_or_ineligible``) and the row is never created. For an EXISTING
+		row the reconcile hook owns the ``installable`` flag (it marks a row 0 when an
+		app disappears AFTER install, without deleting it); here we only refuse
+		flipping such a row to ``enabled`` — the run/push gates cover the rest. A
+		save that neither installs nor enables (e.g. a config edit on an already
+		non-installable row) is left alone so it can still be repaired/uninstalled."""
+		from jarvis.chat.agent_installability import evaluate_installability
+
+		ok, reason, detail = evaluate_installability(self.agent)
+		if self.is_new():
+			if not ok:
+				self.installable = 0
+				self.not_installable_reason = reason
+				frappe.throw(
+					_("This agent requires {0}; it cannot be installed here.").format(detail),
+					title=_("Agent not installable"),
+				)
+			self.installable = 1
+			self.not_installable_reason = ""
+			return
+		# Existing row: never re-throw merely for being non-installable (reconcile
+		# stamped it; the row must stay editable/uninstallable). But forbid ENABLING
+		# a non-installable capability on ANY surface.
+		if frappe.utils.cint(self.get("enabled")) and not ok:
+			frappe.throw(
+				_("This agent requires {0}; enable it once the dependency is present.").format(detail),
+				title=_("Agent not installable"),
+			)
 
 	def _guard_activation_transition(self):
 		"""PP-4 / PP-6: ``activation_state`` is THE flag. A fresh install is always
@@ -233,6 +271,17 @@ class JarvisAgentInstallation(Document):
 		(fail-closed on a missing read); detect a GL-dimension User Permission and
 		stamp ``scoped_visibility`` (a flag + message for now, not a hard refuse)."""
 		for dt in self._required_doctypes():
+			# R5-J8: an ABSENT required DocType is no longer silently skipped — a
+			# missing app takes its DocTypes with it, and skipping them let a
+			# capability install/run without its data. An absent required DocType
+			# fails the preflight with the SAME typed reason as min_apps
+			# (``app_absent_or_ineligible``), and guards has_permission from a bogus
+			# doctype name.
+			if not frappe.db.exists("DocType", dt):
+				frappe.throw(
+					_("This agent requires DocType {0}, which is not present on this site.").format(dt),
+					title=_("Agent not installable"),
+				)
 			if not frappe.has_permission(dt, "read", user=target):
 				frappe.throw(
 					_("Run-as user {0} lacks read access to {1}, which this agent requires.").format(
@@ -242,16 +291,17 @@ class JarvisAgentInstallation(Document):
 		self.scoped_visibility = 1 if self._detect_scoped_visibility(target) else 0
 
 	def _required_doctypes(self) -> list[str]:
+		# R5-J8: return the FULL declared set (trimmed, non-empty strings) — no
+		# longer silently drop DocTypes that do not exist. Absence is a gate signal
+		# the preflight above acts on, not something to hide.
 		raw = frappe.db.get_value(LISTING, self.agent, "doctypes_required")
 		try:
 			vals = frappe.parse_json(raw) if raw else []
 		except Exception:
 			vals = []
-		# Guard has_permission against a bogus catalog entry; a non-existent
-		# required doctype is a bundle-authoring bug, not a user-perm failure.
-		return [
-			d for d in vals if isinstance(d, str) and d.strip() and frappe.db.exists("DocType", d.strip())
-		]
+		if not isinstance(vals, list):
+			return []
+		return [d.strip() for d in vals if isinstance(d, str) and d.strip()]
 
 	def _detect_scoped_visibility(self, target: str) -> bool:
 		from frappe.permissions import get_user_permissions
