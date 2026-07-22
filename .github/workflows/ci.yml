@@ -89,7 +89,12 @@ jobs:
         # leg pays again) also stops paying for itself: 6 shards costs 4 more runner-minutes
         # per run to save a further ~20s of wall clock.
         #
-        # If you change this list, change --total-builds in the test step to match.
+        # If you change this list, THREE things have to move together, not two:
+        #   1. this list
+        #   2. --total-builds in the test step below
+        #   3. the shard-count guard in the `coverage` job at the bottom of this file
+        # Miss (3) and every run fails with "expected N shard files" long after the change
+        # looks correct.
         shard: [1, 2, 3, 4]
 
     container:
@@ -280,7 +285,16 @@ jobs:
           python-version: "3.11"
 
       - name: Install coverage
-        run: pip install coverage
+        run: |
+          # Pinned to match frappe's own constraint (apps/frappe/pyproject.toml:
+          # "coverage~=7.10.0"), which is what the ci-base image's venv resolves and
+          # therefore what WROTE these data files.
+          #
+          # Unpinned, this job installs the newest 7.x (7.13 at the time of writing) and
+          # reads files written by 7.10. That happens to work because coverage's sqlite
+          # schema is stable across 7.x, but a version that cannot read them would NOT fail
+          # this job loudly. See the combine step for why.
+          pip install 'coverage~=7.10.0'
 
       - name: Download every shard's coverage
         uses: actions/download-artifact@v4
@@ -301,13 +315,30 @@ jobs:
           cd covdata
           echo "shard data files:"; ls -l
 
-          # Guard against a silently-partial combine. Four shards must contribute four
-          # files; anything less means an upload was dropped and the resulting percentage
-          # would be meaningless but still plausible-looking.
+          # Guard 1: every shard must have UPLOADED. Keep this count in step with the
+          # matrix list at the top of this file (see the note there: three places move
+          # together).
           found=$(ls coverage-data-* 2>/dev/null | wc -l)
           [ "${found}" -eq 4 ] || { echo "expected 4 shard files, got ${found}"; exit 1; }
 
-          coverage combine coverage-data-*
+          # Guard 2: every shard must have been READ. These are different failures, and
+          # guard 1 cannot catch this one, because the file downloads fine and fails later
+          # at read time.
+          #
+          # `coverage combine` is not all-or-nothing. Per file it catches CoverageException,
+          # calls data._warn(...), and carries on; it only raises when NOTHING combined
+          # ("if strict and not combined_any: raise NoDataError"). So one unreadable shard
+          # silently drops a quarter of the data, and --fail-under then passes judgement on
+          # a partial dataset. That is precisely the silent under-report this job exists to
+          # prevent, so treat any warning as fatal rather than advisory.
+          out=$(coverage combine coverage-data-* 2>&1); rc=$?
+          echo "${out}"
+          [ "${rc}" -eq 0 ] || exit "${rc}"
+          if printf '%s' "${out}" | grep -qiE "warning|couldn't use"; then
+            echo "::error::coverage combine could not read every shard; refusing to gate a partial dataset"
+            exit 1
+          fi
+
           # Enforced coverage floor. Baseline on 2026-07-02 was 87% (incl. test files, with
           # the 9 quarantined tests skipped). Ratchet UP over time; never down.
           coverage report --fail-under=85
