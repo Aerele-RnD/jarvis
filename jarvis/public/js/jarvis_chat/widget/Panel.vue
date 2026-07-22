@@ -12,7 +12,7 @@
 		aria-label="Jarvis chat"
 		@keydown.esc.stop="$emit('close')"
 	>
-		<div class="jvp-panel" ref="panelEl" tabindex="-1">
+		<div class="jvp-panel" :class="{ 'jvp-panel--dark': isDark }" ref="panelEl" tabindex="-1">
 			<div class="jvp-head">
 				<div class="jvp-avatar">
 					<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
@@ -124,9 +124,8 @@
 						<div class="jvp-m-avatar" aria-hidden="true">
 							<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 						</div>
-						<div class="jvp-think" role="status" aria-live="polite">
+						<div class="jvp-think" role="status" aria-live="polite" aria-label="Jarvis is typing">
 							<span class="jvp-think-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-							<span class="jvp-think-txt">Working…</span>
 						</div>
 					</div>
 
@@ -215,7 +214,7 @@
 						</svg>
 					</button>
 				</div>
-				<div class="jvp-foot-note">{{ hint }}</div>
+				<div v-if="hint" class="jvp-foot-note">{{ hint }}</div>
 			</div>
 		</div>
 	</div>
@@ -224,6 +223,7 @@
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { contextLabel } from "./desk_context.mjs";
+import { isDarkNow, watchTheme } from "./desk_theme.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { emptyStream, applyEvent, visibleMessages } from "./chat_stream.mjs";
 import {
@@ -260,6 +260,8 @@ const sending = ref(false);
 const composerFocused = ref(false);
 const resolving = ref("");
 const lastSent = ref("");
+const isDark = ref(false);
+let unwatchTheme = null;
 const fileEl = ref(null);
 const attachments = ref([]);
 const uploading = ref(false);
@@ -328,7 +330,7 @@ const hint = computed(() => {
 	if (uploading.value) return "Uploading…";
 	if (stream.value.live) return "Jarvis is replying…";
 	if (sending.value) return "Sending…";
-	return "Enter to send";
+	return ""; // idle needs no caption
 });
 
 async function scrollToBottom() {
@@ -638,6 +640,10 @@ function startPolling() {
 }
 
 onMounted(() => {
+	isDark.value = isDarkNow();
+	unwatchTheme = watchTheme((d) => {
+		isDark.value = d;
+	});
 	ensureRealtime();
 	// The mic only exists when the site has STT configured.
 	getChatUiSettings()
@@ -650,6 +656,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+	unwatchTheme?.();
 	if (rtTimer) {
 		window.clearInterval(rtTimer);
 		rtTimer = null;
@@ -683,7 +690,7 @@ defineExpose({ load, startNewChat, convId });
 	--jv-chip-3: #eae7fb;
 	--jv-danger: #c0392b;
 }
-:global([data-theme="dark"]) .jvp-panel {
+.jvp-panel--dark {
 	--jv-surface: #1e1d23;
 	--jv-rule: #2a2833;
 	--jv-rule-2: #2e2c36;
@@ -712,6 +719,7 @@ defineExpose({ load, startNewChat, convId });
 }
 .jvp-panel {
 	pointer-events: auto;
+	max-width: 100%;
 	display: flex;
 	flex-direction: column;
 	flex: 1;
@@ -808,7 +816,14 @@ defineExpose({ load, startNewChat, convId });
 .jvp-ctx-txt b { font-weight: 600; color: var(--jv-ink); }
 
 /* ---- body ---- */
-.jvp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 15px; }
+.jvp-body {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	overflow-y: auto;
+	overflow-x: hidden; /* long tokens wrap; the panel never scrolls sideways */
+	padding: 16px 15px;
+}
 .jvp-center {
 	height: 100%;
 	display: flex;
@@ -825,6 +840,7 @@ defineExpose({ load, startNewChat, convId });
 
 /* ---- welcome ---- */
 .jvp-welcome {
+	min-width: 0;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -886,13 +902,13 @@ defineExpose({ load, startNewChat, convId });
 .jvp-card-ic--1 { background: var(--jv-chip-1); }
 .jvp-card-ic--2 { background: var(--jv-chip-2); }
 .jvp-card-ic--3 { background: var(--jv-chip-3); }
-.jvp-card-txt { min-width: 0; }
+.jvp-card-txt { min-width: 0; overflow-wrap: anywhere; }
 .jvp-card-t { display: block; font-size: 13.5px; font-weight: 600; color: var(--jv-ink); }
 .jvp-card-p { display: block; font-size: 12.5px; color: var(--jv-ink-2); margin-top: 2px; line-height: 1.4; }
 
 /* ---- messages ---- */
-.jvp-msgs { display: flex; flex-direction: column; gap: 14px; }
-.jvp-row { display: flex; gap: 9px; align-items: flex-start; }
+.jvp-msgs { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.jvp-row { display: flex; gap: 9px; align-items: flex-start; min-width: 0; }
 .jvp-row--user { justify-content: flex-end; }
 .jvp-m-avatar {
 	width: 27px;
@@ -918,6 +934,8 @@ defineExpose({ load, startNewChat, convId });
 	box-shadow: 0 8px 18px -10px rgba(106, 86, 232, 0.7);
 }
 .jvp-m-bot {
+	min-width: 0;
+	max-width: calc(100% - 36px);
 	background: var(--jv-bot-bg);
 	border: 1px solid var(--jv-bot-bd);
 	border-radius: 5px 15px 15px 15px;
@@ -939,7 +957,6 @@ defineExpose({ load, startNewChat, convId });
 	border-radius: 5px 15px 15px 15px;
 	padding: 11px 13px;
 	color: var(--jv-ink-2);
-	font-size: 13.5px;
 }
 .jvp-think-dots { display: inline-flex; align-items: flex-end; gap: 3px; height: 10px; }
 .jvp-think-dots i { width: 5px; height: 5px; border-radius: 999px; background: var(--jv-accent); opacity: 0.35; }

@@ -3,7 +3,7 @@
 	     page. Tapping it opens the side chat panel in place; on a narrow
 	     viewport (where a 400px panel would be most of the screen) it falls
 	     back to navigating to the chat SPA. -->
-	<div class="jvw-root">
+	<div class="jvw-root" :class="{ 'jvw-root--dark': isDark }">
 		<button
 			type="button"
 			ref="fabEl"
@@ -50,6 +50,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { FULL_CHAT_URL, conversationUrl, PANEL_MIN_VIEWPORT_PX } from "./config.mjs";
 import { contextFromRoute } from "./desk_context.mjs";
 import { panelLayout } from "./panel_anchor.mjs";
+import { isDarkNow, watchTheme } from "./desk_theme.mjs";
 import * as fabPos from "./fab_position.mjs";
 import Panel from "./Panel.vue";
 
@@ -74,6 +75,8 @@ const hasAccess = Boolean(window.frappe?.boot?.jarvis_has_access);
 
 // ---- Side chat panel: open state and the Desk record it is looking at. ----
 const panelRef = ref(null);
+const isDark = ref(false);
+let unwatchTheme = null;
 const panelOpen = ref(false);
 const deskContext = ref(null);
 const contextDismissed = ref(false);
@@ -281,6 +284,16 @@ function onResize() {
 }
 
 onMounted(() => {
+	// The Desk's dark flag is read in JS, not CSS: this component's
+	// `:global([data-theme=dark]) .jvw-root` compiled to a bare
+	// `[data-theme=dark]` rule, so its custom properties landed on <html> and
+	// were overridden by .jvw-root's own light values. The accent never
+	// changed in dark mode.
+	isDark.value = isDarkNow();
+	unwatchTheme = watchTheme((d) => {
+		isDark.value = d;
+	});
+
 	// Setup-time applyPosition() ran before fabEl was live, so getViewport()
 	// couldn't read the real --jvw-safe-bottom off it and fell back to 0. Now
 	// that the DOM ref exists, correct the position so notched devices don't
@@ -307,6 +320,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+	unwatchTheme?.();
 	window.removeEventListener("resize", onResize);
 	window.removeEventListener("orientationchange", onResize);
 	document.removeEventListener("mousemove", onDocumentActivity);
@@ -335,7 +349,7 @@ onBeforeUnmount(() => {
    <html>, which is an ancestor of this body-mounted widget: the accent becomes
    the indigo brand blue (the SPA's theme.js DARK_VARS accent) so the FAB stays
    visible against dark surfaces. */
-:global([data-theme="dark"]) .jvw-root {
+.jvw-root--dark {
 	--accent: #8b7cf7;
 	--accent-grad: linear-gradient(140deg, #9d90ff, #7a68f0);
 }
