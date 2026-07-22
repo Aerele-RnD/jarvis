@@ -21,8 +21,8 @@ import frappe
 
 # The role name + the access rule, everywhere: "Jarvis User" OR "System Manager"
 # (Administrator is implicitly allowed by has_jarvis_access / frappe perms).
-# One constant so the seed (learning/roles.py, the grant patch, tests) and the
-# gate can never drift.
+# One constant so the seed (learning/roles.py, tests) and the gate can never
+# drift.
 JARVIS_USER_ROLE = "Jarvis User"
 
 # The tenant-side admin role (design section 2): a customer power-user who can

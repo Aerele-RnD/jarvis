@@ -97,9 +97,9 @@ class _WikiScopeFixture(FrappeTestCase):
 		_ensure_user(KW_USER, "Wkscope KWU", ["Desk User", JARVIS_USER_ROLE])
 		_ensure_user(KW_MANAGER, "Wkscope KWM", ["Desk User", KW_MANAGER_ROLE, TEST_ROLE])
 		# PLAIN_USER stands for a user WITHOUT Jarvis app access. Fixtures persist
-		# and the one-time grant patch may have granted "Jarvis User", so strip it
-		# to exercise the no-access cases (creates nothing; personal writes
-		# refused).
+		# across runs and an earlier case may have left "Jarvis User" on it, so
+		# strip it to exercise the no-access cases (creates nothing; personal
+		# writes refused).
 		frappe.db.delete(
 			"Has Role",
 			{
