@@ -15,8 +15,7 @@ test("statusLabel: maps known states, passes through unknown", () => {
 	assert.equal(statusLabel(""), "Unknown");
 	assert.equal(statusLabel(null), "Unknown");
 });
-test("planPriceLabel: free, monthly, annual", () => {
-	assert.equal(planPriceLabel(0, "Monthly"), "Free");
+test("planPriceLabel: monthly, annual", () => {
 	assert.equal(planPriceLabel(100, "Monthly"), "₹100 / mo");
 	assert.equal(planPriceLabel(1000, "Annual"), "₹1,000 / yr");
 });
@@ -27,16 +26,13 @@ test("inr: localizes amounts, coerces junk to 0", () => {
 	assert.equal(inr(null), "₹0");
 	assert.equal(inr("abc"), "₹0");
 });
-test("planAmount: Free for zero/negative, INR amount otherwise", () => {
-	assert.equal(planAmount(0), "Free");
-	assert.equal(planAmount(-5), "Free");
-	assert.equal(planAmount(null), "Free");
+test("planAmount: INR amount, zero/junk coerces to ₹0", () => {
+	assert.equal(planAmount(0), "₹0");
+	assert.equal(planAmount(null), "₹0");
 	assert.equal(planAmount(100), "₹100");
 	assert.equal(planAmount(3999), "₹3,999");
 });
-test("planSuffix: empty for free, /yr for annual, /mo otherwise", () => {
-	assert.equal(planSuffix(0, "Monthly"), "");
-	assert.equal(planSuffix(0, "Annual"), "");
+test("planSuffix: /yr for annual, /mo otherwise", () => {
 	assert.equal(planSuffix(100, "Monthly"), "/mo");
 	assert.equal(planSuffix(100, ""), "/mo");
 	assert.equal(planSuffix(1000, "Annual"), "/yr");

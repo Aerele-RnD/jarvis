@@ -166,7 +166,10 @@ def _admin_url(settings) -> str:
 def signup(email: str, company_name: str, plan: str, coupon: str | None = None) -> dict:
 	"""Guest signup against admin. Returns admin's data dict
 	{api_key, api_secret, razorpay_key_id, razorpay_order_id, amount_inr}.
-	Both annual and monthly are one-shot orders (manual renew - no Razorpay subscription).
+	Annual stays a one-shot order (manual renew). Monthly plans with a
+	trial can instead come back as a Razorpay subscription (mandate)
+	depending on the plan; this docstring previously and incorrectly
+	claimed every plan was one-shot.
 
 	When the admin's ``Jarvis Admin Settings.require_email_verification``
 	flag is ON, the response shape is:
@@ -204,19 +207,6 @@ def get_signup_payment_state() -> dict:
 	return _post(
 		path=_m("billing.signup.get_signup_payment_state"),
 		body={},
-	)
-
-
-def dev_signup(email: str, company_name: str, plan: str) -> dict:
-	"""Razorpay-free dev signup. Returns admin's flat dict incl. api_key + api_secret + connection."""
-	return _post_guest(
-		path=_m("billing.signup.dev_force_signup"),
-		body={
-			"email": email,
-			"company_name": company_name,
-			"plan": plan,
-			"frappe_site_url": frappe.utils.get_url(),
-		},
 	)
 
 

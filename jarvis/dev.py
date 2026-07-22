@@ -1,12 +1,17 @@
 """Dev-only helpers for the customer bench.
 
-Gated by sandbox mode (Jarvis Settings.sandbox_mode) + the System
-Manager role. Used by the Jarvis Settings form to wipe local state so
-the operator can run the onboarding wizard fresh without manual DB
-surgery.
+Gated by the System Manager role. Used by the Jarvis Settings form to wipe
+local state so the operator can run the onboarding wizard fresh without
+manual DB surgery.
 
-Companion to ``jarvis_admin.api.dev.purge_customer`` on the admin side -
+Companion to ``jarvis_admin_v2.api.dev.purge_customer`` on the admin side -
 the admin button wipes admin-side records; this clears the customer bench.
+
+Sandbox mode (the former ``Jarvis Settings.sandbox_mode`` toggle that used
+to gate this module) was removed as a dead feature: System Manager was
+always the real security boundary (sandbox mode was documented as
+self-attested UX, not hardening), so ``reset_onboarding`` now gates on
+System Manager alone via ``frappe.only_for``.
 """
 
 import frappe
@@ -26,53 +31,6 @@ _PASSWORD_FIELDS = {
 	"chat_device_token",
 	"llm_api_key",
 }
-
-
-def is_sandbox_mode() -> bool:
-	"""Return True iff ``Jarvis Settings.sandbox_mode`` is enabled.
-
-	Opens the dev surface (dev_onboard, reset_onboarding, the DEV-only
-	reset button in Jarvis Settings). Customer responsibility: flip this
-	only on dev/test benches. The trust model is self-attested - this is
-	a UX improvement (discoverable in the settings form, doesn't bleed
-	across apps, doesn't require a bench restart), not a security
-	hardening.
-
-	The legacy ``frappe.conf.developer_mode`` fallback was dropped in
-	this batch (2026-06-16 punch-list "scheduled for removal" item).
-	Operators on benches that previously relied on developer_mode in
-	site_config need to flip ``Jarvis Settings -> Enable Sandbox Mode``
-	once after migration."""
-	try:
-		return bool(frappe.get_single_value(SETTINGS, "sandbox_mode"))
-	except Exception:
-		# DocType may not be migrated yet on a fresh install.
-		return False
-
-
-def _dev_guard():
-	"""Reject unless sandbox mode is enabled AND the caller is a System
-	Manager. Sets HTTP 403 + throws so the form action surfaces the standard
-	red dialog."""
-	if not is_sandbox_mode():
-		frappe.local.response.http_status_code = 403
-		frappe.throw("Sandbox mode is not enabled. Set Jarvis Settings -> Enable Sandbox Mode.")
-	if "System Manager" not in frappe.get_roles():
-		frappe.local.response.http_status_code = 403
-		frappe.throw("System Manager role required")
-
-
-@frappe.whitelist()
-def is_dev_mode_active() -> dict:
-	"""Cheap probe so the Jarvis Settings form JS can decide whether to
-	surface the reset button. Returns ``{active: True}`` iff both gates
-	(sandbox mode + System Manager) pass for the current user."""
-	try:
-		_dev_guard()
-		return {"ok": True, "data": {"active": True}}
-	except frappe.ValidationError:
-		frappe.local.response.http_status_code = 200
-		return {"ok": True, "data": {"active": False}}
 
 
 # Fields cleared by reset_onboarding(). Grouped here so tests can iterate
@@ -112,11 +70,11 @@ def reset_onboarding() -> dict:
 	    stays valid - it's a Select field, can't be blank)
 
 	Does NOT call the admin-side purge - use
-	``jarvis_admin.api.dev.purge_customer`` on admin for that. Both buttons
+	``jarvis_admin_v2.api.dev.purge_customer`` on admin for that. Both buttons
 	together give a clean two-step reset; this one alone is enough when the
 	admin record was already removed or never created.
 	"""
-	_dev_guard()
+	frappe.only_for("System Manager")
 	s = frappe.get_single(SETTINGS)
 
 	# Tear down the container's OAuth auth-profile FIRST — before the field loop

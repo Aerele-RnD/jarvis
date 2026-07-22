@@ -201,8 +201,6 @@ export const startSignup = (email, company, plan) =>
 	call("jarvis.onboarding.start_signup", { email, company, plan });
 export const checkSignupPaymentState = () => call("jarvis.onboarding.check_signup_payment_state");
 export const finishPayment = (payload) => call("jarvis.onboarding.finish_payment", { payload });
-export const devOnboard = (email, company, plan) =>
-	call("jarvis.onboarding.dev_onboard", { email, company, plan });
 export const isOnboarded = () => call("jarvis.account.is_onboarded");
 // args: {provider, model, api_key, base_url, auth_mode, force}
 export const saveLlmCreds = (args) => call("jarvis.onboarding.save_llm_creds", args);
