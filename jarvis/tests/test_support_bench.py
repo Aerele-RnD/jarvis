@@ -88,3 +88,59 @@ class TestAdminClientSupport(FrappeTestCase):
 			resp = admin_client._authenticated_raw("/p", {}, timeout_s=10)
 			self.assertIs(resp, r200)
 			self.assertIn("token k:s", rq.post.call_args.kwargs["headers"]["Authorization"])
+
+
+class TestSupportBenchEndpoints(FrappeTestCase):
+	def test_list_refused_without_scope(self):
+		from jarvis.support import api as sapi
+
+		with patch("jarvis.support.api.support_scope", return_value=None):
+			with self.assertRaises(frappe.PermissionError):
+				sapi.list_tickets()
+
+	def test_list_forwards_user_and_scope(self):
+		from jarvis.support import api as sapi
+
+		with (
+			patch("jarvis.support.api.support_scope", return_value="own"),
+			patch.object(sapi.admin_client, "support_list_tickets", return_value={"tickets": []}) as f,
+		):
+			out = sapi.list_tickets()
+			self.assertTrue(out["ok"])
+			self.assertEqual(f.call_args.kwargs["scope"], "own")
+			self.assertEqual(f.call_args.kwargs["requesting_user"], frappe.session.user)
+
+	def test_download_returns_response(self):
+		from jarvis.support import media as smedia
+
+		with (
+			patch("jarvis.support.media.support_scope", return_value="own"),
+			patch.object(
+				smedia.admin_client,
+				"support_download",
+				return_value=(b"png", "image/png", "inline; filename=x"),
+			),
+		):
+			out = smedia.download(ticket="T1", file_url="/f/x.png")
+			self.assertEqual(out.headers["Content-Type"], "image/png")
+			self.assertEqual(out.get_data(), b"png")
+
+	def test_upload_forwards_b64(self):
+		import base64
+
+		from jarvis.support import media as smedia
+
+		req = MagicMock()
+		f = MagicMock()
+		f.filename = "x.png"
+		f.read.return_value = b"hi"
+		req.files.get.return_value = f
+		frappe.local.request = req
+		self.addCleanup(lambda: setattr(frappe.local, "request", None))
+		with (
+			patch("jarvis.support.media.support_scope", return_value="own"),
+			patch.object(smedia.admin_client, "support_upload", return_value={"file_url": "/f/x"}) as up,
+		):
+			out = smedia.upload(ticket="T1")
+			self.assertTrue(out["ok"])
+			self.assertEqual(up.call_args.kwargs["content_b64"], base64.b64encode(b"hi").decode())
