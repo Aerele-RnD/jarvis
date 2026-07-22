@@ -7,11 +7,6 @@ blob. This file is that function for jarvis.
 
 Keys we set:
 
-- ``jarvis_sandbox_mode`` - replacing the previous JS-side check on
-  ``frappe.boot.developer_mode``. Sandbox mode controls whether the
-  developer-onboarding shortcut + the Jarvis Settings DEV-only reset
-  button are surfaced; see ``jarvis.dev.is_sandbox_mode`` for the
-  resolution rules.
 - ``jarvis_onboarded`` - whether the customer has finished the Jarvis
   setup wizard, used by the desk's not-onboarded banner
   (``jarvis_onboarding_banner.bundle.js``) to decide whether to nag a
@@ -28,15 +23,6 @@ import frappe
 def set_jarvis_boot(bootinfo):
 	"""Run once per session at page load. Adds jarvis-specific keys to the
 	bootinfo blob so JS can branch on them without an extra round trip."""
-	from jarvis.dev import is_sandbox_mode
-
-	try:
-		bootinfo.jarvis_sandbox_mode = bool(is_sandbox_mode())
-	except Exception:
-		# Don't let a misconfigured doctype or missing migration break the
-		# session boot. JS treats the missing key as false (default off).
-		bootinfo.jarvis_sandbox_mode = False
-
 	# Drives the desk's not-onboarded banner (jarvis_onboarding_banner.bundle.js).
 	# Uses is_ready_for_chat rather than the lighter is_onboarded because the
 	# SPA wizard now covers both signup AND the LLM-connect step (Phase 2

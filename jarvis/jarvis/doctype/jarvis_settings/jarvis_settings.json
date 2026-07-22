@@ -106,9 +106,7 @@
   "run_query_doctype_allowlist",
   "auto_apply_changes",
   "core_apps_override",
-  "enable_customizations_clause",
-  "developer_section",
-  "sandbox_mode"
+  "enable_customizations_clause"
  ],
  "fields": [
   {
@@ -784,19 +782,6 @@
    "label": "Enable Customizations Context Clause",
    "default": "1",
    "description": "Adds a one-line, counts-only summary of this site's customizations (custom apps, doctype/field/workflow counts) to every chat turn's context, pointing the agent at jarvis__describe_customizations. Readers treat an unset value as ON."
-  },
-  {
-   "fieldname": "developer_section",
-   "fieldtype": "Section Break",
-   "label": "Developer / Sandbox"
-  },
-  {
-   "fieldname": "sandbox_mode",
-   "fieldtype": "Check",
-   "permlevel": 1,
-   "label": "Enable Sandbox Mode",
-   "default": "0",
-   "description": "When enabled, skip payment + allow the developer-onboarding shortcut (jarvis.onboarding.dev_onboard) on this site. Customer's responsibility: only flip this on a dev/test bench. Replaces the legacy <code>frappe.conf.developer_mode</code> check; that flag still works as a backwards-compat fallback for one release."
   }
  ],
  "permissions": [

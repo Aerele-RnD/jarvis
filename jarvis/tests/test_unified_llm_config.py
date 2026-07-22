@@ -3590,8 +3590,8 @@ class TestConvergenceReconcile(_RT3SettingsTestCase):
 # ---------------------------------------------------------------------------
 # Pool-sync change detection: the pool analog of _classify_llm_change.
 #
-# Before this gate, EVERY save of Jarvis Settings while proxy_active - sandbox
-# toggles, pattern-learning windows, any unrelated field - re-POSTed the full
+# Before this gate, EVERY save of Jarvis Settings while proxy_active - pattern-
+# learning windows, any unrelated field - re-POSTed the full
 # pool spec + secrets to admin. on_update now skips _enqueue_pool_sync only
 # when (a) a doc_before_save exists, (b) the pool-relevant snapshot
 # (_pool_state_snapshot) is identical, and (c) last_sync_status starts with

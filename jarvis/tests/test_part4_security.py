@@ -195,7 +195,6 @@ class TestSettingsPermlevelFence(Part4Base):
 		"agent_url",
 		"agent_token",
 		"selfhost_tool_user",
-		"sandbox_mode",
 		"run_query_doctype_allowlist",
 	)
 
@@ -488,7 +487,6 @@ _GUARD_SUBSTRS = (
 	"has_jarvis_access",
 	"has_jarvis_admin_access",
 	"is_system_user",
-	"_dev_guard",
 	"_require_system_user",
 	"_require_admin",
 )

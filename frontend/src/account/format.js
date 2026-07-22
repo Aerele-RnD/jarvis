@@ -13,21 +13,17 @@ export function statusLabel(status) {
 export function inr(n) {
 	return `₹${(Number(n) || 0).toLocaleString("en-IN")}`;
 }
-// Big price line on a plan card: "₹3,999" for paid plans, "Free" otherwise.
+// Big price line on a plan card: "₹3,999".
 export function planAmount(priceInr) {
-	const n = Number(priceInr) || 0;
-	return n > 0 ? inr(n) : "Free";
+	return inr(Number(priceInr) || 0);
 }
 // Small muted per-cycle suffix next to the amount: "/yr" for annual, "/mo"
-// for everything else, "" for free plans.
+// for everything else. Every plan is paid, so this is never blank.
 export function planSuffix(priceInr, billingCycle) {
-	const n = Number(priceInr) || 0;
-	if (n <= 0) return "";
 	return (billingCycle || "").toLowerCase() === "annual" ? "/yr" : "/mo";
 }
 export function planPriceLabel(priceInr, billingCycle) {
 	const suffix = planSuffix(priceInr, billingCycle);
-	if (!suffix) return "Free";
 	return `${planAmount(priceInr)} / ${suffix.slice(1)}`;
 }
 export function renewalLabel(currentPeriodEnd, daysRemaining) {

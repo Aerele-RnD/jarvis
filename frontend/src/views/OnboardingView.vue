@@ -292,7 +292,7 @@
 						</section>
 
 						<!-- ===== Review & Pay (renderPay / renderVerifyEmail / startPay /
-							 openCheckout / devOnboard preserved verbatim in behavior) ===== -->
+							 openCheckout preserved verbatim in behavior) ===== -->
 						<section v-else-if="state.step === 'pay'" class="jv-ob-screen">
 							<template v-if="state.provisioning || state.provisionErr">
 								<div class="jv-ob-body">
@@ -300,9 +300,7 @@
 										<h1>Setting up your workspace</h1>
 										<p v-if="state.provisioning">
 											{{
-												isFreePlan
-													? "You're signed up."
-													: isTrialPlan
+												isTrialPlan
 													? "Auto-pay authorized — nothing charged until your trial ends."
 													: "Payment received."
 											}}
@@ -339,12 +337,8 @@
 											We sent a confirmation link to
 											<b>{{ state.email || "your email" }}</b
 											>. Click the link to verify your address, then come
-											back here and click the button below
-											{{
-												isFreePlan
-													? "to finish setting up your workspace."
-													: "to continue to payment."
-											}}
+											back here and click the button below to continue to
+											payment.
 										</p>
 									</div>
 									<p class="jv-ob-hint">
@@ -372,9 +366,7 @@
 									<div class="jv-ob-head">
 										<h1>
 											{{
-												isFreePlan
-													? "You're signed up"
-													: isTrialPlan
+												isTrialPlan
 													? "Free trial started"
 													: "Payment complete"
 											}}
@@ -394,9 +386,7 @@
 										<h1>Review &amp; pay</h1>
 										<p>
 											{{
-												isFreePlan
-													? "Confirm the details below."
-													: isTrialPlan
+												isTrialPlan
 													? "Confirm the details below. You'll authorize auto-pay securely via Razorpay — nothing is charged until your trial ends."
 													: "Confirm the details below. You'll complete payment securely via Razorpay."
 											}}
@@ -416,7 +406,7 @@
 											<span>Due today</span><b>{{ dueTodayLabel }}</b>
 										</div>
 									</div>
-									<div v-if="!isFreePlan" class="jv-ob-rev-note">
+									<div class="jv-ob-rev-note">
 										<svg
 											width="14"
 											height="14"
@@ -431,39 +421,6 @@
 											<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 										</svg>
 										Secured by Razorpay · cards, UPI &amp; netbanking
-									</div>
-									<div v-if="state.devActive" class="jv-ob-devnote">
-										Developer mode: payment is skipped (dev signup).
-									</div>
-									<div
-										v-if="state.devBlocked"
-										class="jv-ob-devblock"
-										role="alert"
-									>
-										<p class="jv-ob-devblock-title">
-											Dev signup runs from the bench, not the browser
-										</p>
-										<p class="jv-ob-devblock-body">
-											This admin has turned off browser dev signup on
-											purpose. An operator finishes it in two bench commands,
-											then reload this page.
-										</p>
-										<ol class="jv-ob-devblock-steps">
-											<li>
-												<span
-													>On the admin bench, print the
-													connection:</span
-												>
-												<code>{{ devAdminCmd }}</code>
-											</li>
-											<li>
-												<span
-													>On this bench, apply the JSON it
-													printed:</span
-												>
-												<code>{{ devApplyCmd }}</code>
-											</li>
-										</ol>
 									</div>
 									<Banner
 										v-if="state.payErr"
@@ -794,7 +751,6 @@
 
 <script setup>
 import { reactive, ref, computed, onMounted, watch } from "vue";
-import { call } from "frappe-ui";
 import { useJarvisTheme } from "@/theme";
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue";
 import JvCombo from "@/components/JvCombo.vue";
@@ -817,7 +773,6 @@ import {
 	listPlans,
 	startSignup,
 	finishPayment,
-	devOnboard,
 	saveSelfHosted,
 	testSelfHostConnection,
 	getAccountDefaults,
@@ -881,7 +836,7 @@ const state = reactive({
 	planName: null,
 	plansLoading: false,
 	plansErr: "",
-	// pay (renderPay / renderVerifyEmail / startPay / openCheckout / devOnboard)
+	// pay (renderPay / renderVerifyEmail / startPay / openCheckout)
 	payPhase: "review", // "review" | "verify" - mirrors desk's step-3 vs "check your email" sub-screen
 	payErr: "",
 	payBusy: false,
@@ -890,11 +845,6 @@ const state = reactive({
 	// context, so Back to Review & Pay is hidden (it would re-run start_signup
 	// with empty args).
 	reconciledConnect: false,
-	devActive: null, // UX-only mirror of desk's boot-time `dev`; null until probed on entering "pay"
-	// True when dev signup failed because the admin has un-whitelisted
-	// dev_force_signup (the deliberate free-container backdoor close). We then
-	// render the bench operator flow instead of the generic red error banner.
-	devBlocked: false,
 	successData: null,
 	// provisioning gate: after pay, the openclaw container is still spinning up.
 	// We block entry to the Connect step until it's running (else save_llm_pool
@@ -930,43 +880,17 @@ const frameSub = computed(() => FRAME_SUBS[state.step] || "Set up your workspace
 // mislabel whatever plan happens to sit there. Reintroduce only if the
 // catalog grows a real flag.
 
-// Free-plan detection drives the Review & Pay copy: no Razorpay promise, no
-// lock note, "Free" in the total row.
-const isFreePlan = computed(() => (Number(selectedPlan.value.price_inr) || 0) <= 0);
-
-// Auto-pay trial: a PAID plan with a trial window (admin: Jarvis Plan
-// trial_days on is_free=0). Checkout collects the autopay mandate now; the
-// first charge fires when the trial ends. Distinct from a FREE plan with
-// trial_days (finite free trial - no payment instrument at all).
+// Auto-pay trial: a paid plan with a trial window. Checkout collects the
+// autopay mandate now; the first charge fires when the trial ends.
 const trialDays = computed(() => Number(selectedPlan.value.trial_days) || 0);
-const isTrialPlan = computed(() => !isFreePlan.value && trialDays.value > 0);
+const isTrialPlan = computed(() => trialDays.value > 0);
 
-// Pay CTA copy: dev signup in sandbox; "Start free trial" for an autopay
-// trial (nothing due today); "Pay ₹X" for a plain paid plan; plain sign-up
-// for a free one.
+// Pay CTA copy: "Start free trial" for an autopay trial (nothing due
+// today); "Pay ₹X" for a plain paid plan.
 const payCta = computed(() => {
-	if (state.devActive) return "Dev signup & connect";
 	if (isTrialPlan.value) return "Start free trial";
-	return isFreePlan.value ? "Sign up" : `Pay ${inr(selectedPlan.value.price_inr)}`;
+	return `Pay ${inr(selectedPlan.value.price_inr)}`;
 });
-
-// Bench commands shown when the admin has un-whitelisted dev_force_signup
-// (state.devBlocked). Bound as text (Vue escapes it), so the literal angle
-// brackets render as-is. The admin command is prefilled with the details the
-// customer already entered; the apply command's data object is the JSON the
-// admin command prints.
-const devAdminCmd = computed(
-	() =>
-		"bench --site <admin-site> execute jarvis_admin_v2.billing.signup.dev_force_signup --kwargs '" +
-		JSON.stringify({
-			email: state.email || "...",
-			company_name: state.company || "...",
-			plan: state.planName || "...",
-		}) +
-		"'"
-);
-const devApplyCmd =
-	"bench --site <this-site> execute jarvis.onboarding.apply_dev_connection --kwargs '{\"data\": { ...paste the JSON from step 1... }}'";
 
 // Review-card labels (preview .rev): "Pro · Monthly" plan row and a plain
 // amount in the emphasized total row.
@@ -1096,18 +1020,13 @@ function planFeatures(p) {
 // The price renders as a big amount with a small muted "/mo" suffix
 // (₹3,999 <span>/mo</span>) via the shared planAmount/planSuffix helpers
 // from account/format.js (same semantics as planPriceLabel there).
-// Cycle line under the price, per the approved preview copy ("Billed monthly"
-// on paid cards, "For trying Jarvis" on the free one). Copy-only, but keyed
+// Cycle line under the price ("Billed monthly" / "Billed annually"), keyed
 // off the shared suffix helper so the cycle rule can't drift.
 function planCycleLabel(p) {
 	const suffix = planSuffix(p && p.price_inr, p && p.billing_cycle);
 	const trial = Number(p && p.trial_days) || 0;
-	if (!suffix) {
-		// Free plan: finite free trial (lapses after N days) vs free forever.
-		return trial > 0 ? `${trial}-day free trial` : "For trying Jarvis";
-	}
 	const billed = suffix === "/yr" ? "Billed annually" : "Billed monthly";
-	// Paid plan with a trial window: auto-pay starts when the trial ends.
+	// Auto-pay trial: nothing charged until the trial ends, then auto-pay begins.
 	return trial > 0 ? `${trial}-day free trial, then ${billed.toLowerCase()}` : billed;
 }
 function onPlanContinue() {
@@ -1168,13 +1087,13 @@ function onDetailsSubmit() {
 	goNext();
 }
 
-// ---- Pay (renderPay / renderVerifyEmail / startPay / openCheckout /
-// devOnboard, jarvis_onboarding.js ~515 & ~1575-1682) ------------------------
+// ---- Pay (renderPay / renderVerifyEmail / startPay / openCheckout,
+// jarvis_onboarding.js ~515 & ~1575-1682) ------------------------------------
 // Signup fires at the Details → Pay boundary via this step's single CTA:
-// the customer reviews, clicks once, and that click runs the dev-mode check →
-// devOnboard | startSignup → verify-email/checkout branches EXACTLY as the
-// desk flow does. start_signup is deliberately NOT fired on step entry: it is
-// not idempotent-tested, and Back-then-Continue would re-call it.
+// the customer reviews, clicks once, and that click runs startSignup →
+// verify-email/checkout branches EXACTLY as the desk flow does. start_signup
+// is deliberately NOT fired on step entry: it is not idempotent-tested, and
+// Back-then-Continue would re-call it.
 
 // Lazy-load the Razorpay Checkout script (mirrors desk's page-load
 // `frappe.require("https://checkout.razorpay.com/v1/checkout.js")`, ~line 18)
@@ -1196,33 +1115,16 @@ function ensureRazorpayLoaded() {
 	return razorpayLoadPromise;
 }
 
-// Probe `jarvis.dev.is_dev_mode_active` once on entering the Pay step, purely
-// for the heading/button copy - the SPA's boot payload (jarvis/www/jarvis.py)
-// doesn't carry an equivalent of desk's boot-time `frappe.boot.jarvis_sandbox_mode`,
-// so this RPC stands in for that cosmetic read. Preload the checkout script
-// unconditionally (harmless if unused) rather than gating it on this same
-// value, to avoid a load-race against a slow/failed probe.
+// Preload the checkout script on entering the Pay step (harmless if unused).
 async function enterPayStep() {
 	ensureRazorpayLoaded().catch(() => {
 		/* surfaced later if actually needed */
 	});
-	try {
-		const r = await call("jarvis.dev.is_dev_mode_active");
-		state.devActive = !!(r && r.data && r.data.active);
-	} catch (e) {
-		state.devActive = false;
-	}
 }
 
-// Click handler for the single Pay/Dev-signup button. Server-authoritative
-// branch: re-query is_dev_mode_active at CLICK time, not the cached
-// state.devActive - mirrors desk's explicit anti-staleness comment
-// (jarvis_onboarding.js ~532-554): a stale "false" must never let this
-// silently skip payment when sandbox mode was actually flipped on, and a
-// stale cached "true" must never skip a real charge either.
+// Click handler for the Pay button.
 async function onPayClick() {
 	state.payErr = "";
-	state.devBlocked = false;
 	// Guard against a signup with empty args: on a reconciled resume (or any
 	// state loss) there is no local plan/email/company, and startSignup(email,
 	// company, null) would create a broken signup upstream.
@@ -1232,36 +1134,7 @@ async function onPayClick() {
 		return;
 	}
 	state.payBusy = true;
-	let isDev = !!state.devActive;
-	try {
-		const r = await call("jarvis.dev.is_dev_mode_active");
-		isDev = !!(r && r.data && r.data.active);
-	} catch (e) {
-		// Server unreachable - fall back to the best-effort cosmetic value,
-		// same as desk's catch branch.
-	}
-	if (isDev) await runDevOnboard();
-	else await runStartPay();
-}
-
-async function runDevOnboard() {
-	try {
-		state.successData = await devOnboard(state.email, state.company, state.planName);
-		state.payBusy = false;
-		await proceedAfterPay(); // gate on provisioning before → "connect"
-	} catch (e) {
-		state.payBusy = false;
-		const msg = errMsg(e);
-		// Admin has un-whitelisted dev_force_signup (deliberate backdoor close).
-		// The backend now points at the bench operator flow and names
-		// apply_dev_connection in the message; detect that stable token and show
-		// the two-command instructions instead of the generic red error.
-		if (/apply_dev_connection/.test(msg)) {
-			state.devBlocked = true;
-		} else {
-			state.payErr = msg;
-		}
-	}
+	await runStartPay();
 }
 
 function _sleep(ms) {
@@ -2185,59 +2058,6 @@ onMounted(async () => {
 	justify-content: center;
 	gap: 7px;
 }
-.jv-ob-devnote {
-	font-size: 12.5px;
-	color: var(--amber);
-	background: var(--amber-bg);
-	border: 1px solid var(--amber-bd);
-	border-radius: 8px;
-	padding: 8px 12px;
-	margin: 14px auto 0;
-	max-width: 560px;
-}
-.jv-ob-devblock {
-	font-size: 12.5px;
-	color: var(--text-2);
-	background: var(--amber-bg);
-	border: 1px solid var(--amber-bd);
-	border-radius: 8px;
-	padding: 12px 14px;
-	margin: 14px auto 0;
-	max-width: 560px;
-	text-align: left;
-}
-.jv-ob-devblock-title {
-	margin: 0 0 6px;
-	font-weight: 560;
-	color: var(--amber);
-}
-.jv-ob-devblock-body {
-	margin: 0 0 10px;
-}
-.jv-ob-devblock-steps {
-	margin: 0;
-	padding-left: 18px;
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-}
-.jv-ob-devblock-steps li {
-	line-height: 1.5;
-}
-.jv-ob-devblock-steps code {
-	display: block;
-	margin-top: 5px;
-	padding: 7px 9px;
-	background: var(--surface-2);
-	border: 1px solid var(--border);
-	border-radius: 6px;
-	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 11.5px;
-	color: var(--text);
-	white-space: pre-wrap;
-	word-break: break-all;
-}
-
 /* ---- Connect ---- */
 .jv-ob-connect {
 	max-width: 640px;

@@ -381,8 +381,8 @@ class JarvisSettings(Document):
 
 		For the legacy path, an unconfigured/pre-onboarding Settings (no model,
 		no base_url, no connected oauth account) is skipped so unrelated saves
-		(e.g. enabling sandbox mode during onboarding) aren't blocked - even
-		though ``llm_auth_mode`` DEFAULTS to ``api_key`` before anything is
+		(e.g. an early onboarding step touching an unrelated field) aren't
+		blocked - even though ``llm_auth_mode`` DEFAULTS to ``api_key`` before anything is
 		chosen. ``reset_onboarding`` leaves ``llm_provider`` at a default but
 		clears model/base_url/key, so it correctly reads as unconfigured.
 		"""
@@ -520,8 +520,8 @@ class JarvisSettings(Document):
 			#
 			# Diff gate (pool analog of _classify_llm_change): every save of
 			# this Single lands here when proxy_active - including saves that
-			# touch nothing pool-related (sandbox toggles, pattern-learning
-			# windows, chat-device writes through save()) - and each one
+			# touch nothing pool-related (pattern-learning windows, chat-device
+			# writes through save()) - and each one
 			# re-POSTed the FULL pool spec + secrets to admin. Skip the
 			# enqueue only when all three hold: a before-doc exists, the
 			# pool-relevant snapshot is identical, and the last sync ended

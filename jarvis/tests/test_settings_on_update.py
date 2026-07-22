@@ -325,9 +325,10 @@ class TestValidateAuthMode(_SettingsSingletonTestCase):
 		llm_auth_mode DEFAULTS to 'api_key' with no key set.
 
 		Regression for the fresh-start save deadlock: on a brand-new site the
-		customer must save Jarvis Settings (e.g. to enable sandbox mode) BEFORE
-		onboarding configures an LLM. The credential is enforced the moment LLM
-		is actually configured (see the api_key/oauth tests above)."""
+		customer must be able to save Jarvis Settings (e.g. to set an unrelated
+		field) BEFORE onboarding configures an LLM. The credential is enforced
+		the moment LLM is actually configured (see the api_key/oauth tests
+		above)."""
 		settings = frappe.get_single("Jarvis Settings")
 		settings.set("models", [])
 		settings.preset = ""

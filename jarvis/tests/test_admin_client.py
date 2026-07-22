@@ -345,7 +345,7 @@ class TestAdminErrorResponses(FrappeTestCase):
 
 	def test_frappe_validation_error_surfaces_clean_message(self):
 		"""When admin raises frappe.ValidationError inside a whitelisted endpoint
-		(e.g. dev_force_signup → _reject_duplicate_email), the response body has
+		(e.g. signup → _reject_duplicate_email), the response body has
 		Frappe's exc_type/_server_messages envelope, not the {ok, error} shape.
 		We extract the user-facing message and raise AdminValidationError."""
 		mock_post = MagicMock(
@@ -638,28 +638,6 @@ class TestOnboardingClient(FrappeTestCase):
 			),
 		):
 			out = admin_client.get_connection()
-		self.assertEqual(out["agent_url"], "ws://localhost:19000")
-
-	def test_dev_signup_returns_flat_dict(self):
-		_settings_for_admin()
-		with patch(
-			"requests.post",
-			return_value=_mock_response(
-				200,
-				json_body={
-					"message": {
-						"customer": "C1",
-						"api_key": "k",
-						"api_secret": "s",
-						"agent_url": "ws://localhost:19000",
-						"agent_token": "k",
-					}
-				},
-			),
-		):
-			out = admin_client.dev_signup("e@x.com", "Co", "Annual Plan")
-		self.assertEqual(out["api_key"], "k")
-		self.assertEqual(out["api_secret"], "s")
 		self.assertEqual(out["agent_url"], "ws://localhost:19000")
 
 	def test_renew_posts_to_renew_and_unwraps_order(self):
