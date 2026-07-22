@@ -214,8 +214,12 @@ after_migrate = [
 	# Voice & Wiki: seed the Settings Check defaults (row-existence probe;
 	# an unset Check reads 0 on v16, so defaults must be materialized).
 	"jarvis.learning.voice_facts.after_migrate",
-	# Wiki v2: seed the Knowledge Wiki Manager role (idempotent; best-effort).
-	# Migrate follows a fresh install, so this covers both.
+	# Wiki v2 + Skills-area roles and the Personalisation Settings defaults
+	# (idempotent; best-effort). NOT reached by a fresh install: install_app
+	# runs after_install, never after_migrate. The Jarvis* roles survive that
+	# anyway because DocType sync auto-creates any role named in a permission
+	# row, but "Knowledge Wiki Manager" is named in no DocType, so it appears
+	# only once a migrate has run.
 	"jarvis.learning.roles.after_migrate",
 	# Customizations clause: installed apps only change via migrate.
 	"jarvis.chat.customizations_clause.after_migrate",

@@ -211,7 +211,8 @@ def after_migrate() -> None:
 			).insert(ignore_permissions=True)
 			created = True
 		# The app-access role — definition lives in jarvis/permissions.py (single
-		# source of truth), seeded here so it exists before the grant patch runs.
+		# source of truth). Normally already created by DocType sync (16 DocTypes
+		# name it in a permission row); this is the fallback.
 		if not frappe.db.exists("Role", JARVIS_USER_ROLE):
 			ensure_jarvis_user_role()
 			created = True
