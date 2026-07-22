@@ -10,7 +10,7 @@
 // Normal mini-chat proportions (Intercom/Crisp class), not a full-height dock:
 // the panel is a window over the page, not a second column of it.
 export const PANEL_W = 400;
-export const PANEL_MAX_H = 600;
+export const PANEL_MAX_H = 624; // matches the design board
 export const GAP = 12; // between the FAB and the panel
 export const MARGIN = 12; // minimum clearance from every viewport edge
 

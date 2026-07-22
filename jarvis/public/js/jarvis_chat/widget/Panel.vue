@@ -1,6 +1,9 @@
 <template>
-	<!-- Docked side chat. Kept mounted and toggled with v-show so the
-	     conversation, scroll position and draft survive a close/reopen. -->
+	<!-- Jarvis mini chat. Visual language follows the "Jarvis Side Chat" design
+	     board (gradient brand mark, tinted starter cards, pill composer) rather
+	     than design.md's gray chrome — a deliberate, recorded divergence for this
+	     surface. Kept mounted and toggled with v-show so the conversation,
+	     scroll position and draft survive a close/reopen. -->
 	<div
 		v-show="open"
 		class="jvp-root"
@@ -11,46 +14,40 @@
 	>
 		<div class="jvp-panel" ref="panelEl" tabindex="-1">
 			<div class="jvp-head">
-				<div class="jvp-title">
-					<svg class="jvp-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+				<div class="jvp-avatar">
+					<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
 						<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
 					</svg>
-					Jarvis
+					<i class="jvp-online" aria-hidden="true"></i>
 				</div>
+				<div class="jvp-title">Jarvis</div>
 				<div class="jvp-actions">
 					<button class="jvp-ib" type="button" aria-label="New chat" @click="startNewChat">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 5v14M5 12h14" />
 						</svg>
 					</button>
 					<button class="jvp-ib" type="button" aria-label="Open full chat" @click="$emit('open-full')">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M15 3h6v6M21 3l-7 7M10 21H4v-6M4 21l7-7" />
 						</svg>
 					</button>
 					<button class="jvp-ib" type="button" aria-label="Close" @click="$emit('close')">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M18 6 6 18M6 6l12 12" />
 						</svg>
 					</button>
 				</div>
 			</div>
 
-			<!-- Quiet bordered note (design.md 3.7): ambient state, not an alert,
-			     so no colored fill. -->
 			<div v-if="contextText" class="jvp-ctx">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 					<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
 					<path d="M14 2v6h6" />
 				</svg>
 				<div class="jvp-ctx-txt">Viewing <b>{{ contextText }}</b></div>
-				<button
-					class="jvp-ib jvp-ib--sm"
-					type="button"
-					aria-label="Stop using this page as context"
-					@click="$emit('dismiss-context')"
-				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+				<button class="jvp-ib jvp-ib--sm" type="button" aria-label="Stop using this page as context" @click="$emit('dismiss-context')">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
 						<path d="M18 6 6 18M6 6l12 12" />
 					</svg>
 				</button>
@@ -64,44 +61,75 @@
 					<button class="jvp-btn-subtle" type="button" @click="load">Retry</button>
 				</div>
 
-				<!-- Welcome: greeting + a few starting points, so an empty panel
-				     suggests what to do rather than showing a blank box. -->
+				<!-- Welcome: brand mark, greeting, and starting points. -->
 				<div v-else-if="!shownMessages.length && !stream.live && !thinking" class="jvp-welcome">
+					<div class="jvp-hero">
+						<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+							<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
+						</svg>
+					</div>
 					<div class="jvp-greet">{{ greeting }}</div>
 					<p class="jvp-greet-sub">
-						{{
-							contextText
-								? `Jarvis can see ${contextText} while you are on this page.`
-								: "Ask about your ERP data, run a workflow, or draft something."
-						}}
+						<template v-if="contextText">
+							Jarvis can see <b>{{ contextText }}</b> while you are on this page.
+						</template>
+						<template v-else>
+							Ask about your ERP data, run a workflow, or draft something.
+						</template>
 					</p>
 					<div class="jvp-cards">
 						<button
-							v-for="s in suggestions"
+							v-for="(s, i) in suggestions"
 							:key="s.title"
 							class="jvp-card"
 							type="button"
 							@click="useSuggestion(s.prompt)"
 						>
-							<span class="jvp-card-t">{{ s.title }}</span>
-							<span class="jvp-card-p">{{ s.prompt }}</span>
+							<span class="jvp-card-ic" :class="`jvp-card-ic--${i % 4}`" aria-hidden="true">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+									<path :d="CARD_ICONS[i % CARD_ICONS.length]" />
+								</svg>
+							</span>
+							<span class="jvp-card-txt">
+								<span class="jvp-card-t">{{ s.title }}</span>
+								<span class="jvp-card-p">{{ s.prompt }}</span>
+							</span>
 						</button>
 					</div>
 				</div>
 
 				<div v-else class="jvp-msgs">
-					<div
-						v-for="m in shownMessages"
-						:key="m.name"
-						:class="m.role === 'user' ? 'jvp-m-user' : 'jvp-m-bot'"
-					>{{ m.content }}</div>
-					<div v-if="stream.live && stream.live.text" class="jvp-m-bot">{{ stream.live.text }}</div>
+					<template v-for="m in shownMessages" :key="m.name">
+						<div v-if="m.role === 'user'" class="jvp-row jvp-row--user">
+							<div class="jvp-m-user">{{ m.content }}</div>
+						</div>
+						<div v-else class="jvp-row">
+							<div class="jvp-m-avatar" aria-hidden="true">
+								<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+							</div>
+							<div class="jvp-m-bot">{{ m.content }}</div>
+						</div>
+					</template>
+
+					<div v-if="stream.live && stream.live.text" class="jvp-row">
+						<div class="jvp-m-avatar" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+						</div>
+						<div class="jvp-m-bot">{{ stream.live.text }}</div>
+					</div>
+
 					<!-- Waiting for the first token: a labelled state, not a bare
 					     spinner, so the user knows the turn was accepted. -->
-					<div v-else-if="thinking" class="jvp-think" role="status" aria-live="polite">
-						<span class="jvp-think-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-						<span class="jvp-think-txt">Working…</span>
+					<div v-else-if="thinking" class="jvp-row">
+						<div class="jvp-m-avatar" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+						</div>
+						<div class="jvp-think" role="status" aria-live="polite">
+							<span class="jvp-think-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+							<span class="jvp-think-txt">Working…</span>
+						</div>
 					</div>
+
 					<div v-if="loadError && shownMessages.length" class="jvp-inline-err">
 						<span class="jvp-err">{{ loadError }}</span>
 						<button class="jvp-btn-subtle" type="button" @click="retryLast">Retry</button>
@@ -109,21 +137,14 @@
 				</div>
 			</div>
 
-			<!-- A blocked write is the one thing here the user must act on, so it
-			     is the only place the panel raises its voice. -->
 			<div v-if="stream.pending.length" class="jvp-pending">
 				<div v-for="p in stream.pending" :key="p.token" class="jvp-pending-row">
 					<div class="jvp-pending-txt">{{ p.summary || "Jarvis wants to make a change." }}</div>
 					<div class="jvp-pending-acts">
-						<button class="jvp-btn-subtle" type="button" @click="$emit('open-full')">
-							Review in full chat
+						<button class="jvp-btn-subtle" type="button" @click="$emit('open-full')">Review in full chat</button>
+						<button class="jvp-btn-solid" type="button" :disabled="resolving === p.token" @click="resolvePending(p.token)">
+							{{ resolving === p.token ? "Confirming…" : "Confirm" }}
 						</button>
-						<button
-							class="jvp-btn-solid"
-							type="button"
-							:disabled="resolving === p.token"
-							@click="resolvePending(p.token)"
-						>{{ resolving === p.token ? "Confirming…" : "Confirm" }}</button>
 					</div>
 				</div>
 			</div>
@@ -134,40 +155,25 @@
 						class="jvp-comp-text"
 						ref="textareaEl"
 						rows="1"
-						:placeholder="contextText ? `Ask about ${contextText}…` : 'Ask Jarvis…'"
+						:placeholder="contextText ? `Ask about ${contextText}…` : 'Ask Jarvis anything…'"
 						v-model="draft"
 						@focus="composerFocused = true"
 						@blur="composerFocused = false"
 						@input="autoGrow"
 						@keydown.enter.exact.prevent="send"
 					></textarea>
-					<div class="jvp-comp-bar">
-						<span class="jvp-comp-hint">{{ hint }}</span>
-						<button
-							v-if="stream.live"
-							class="jvp-send jvp-send--stop"
-							type="button"
-							aria-label="Stop generating"
-							@click="stop"
-						>
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-								<rect x="7" y="7" width="10" height="10" rx="2" />
-							</svg>
-						</button>
-						<button
-							v-else
-							class="jvp-send"
-							type="button"
-							aria-label="Send message"
-							:disabled="!canSend"
-							@click="send"
-						>
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M12 19V5M5 12l7-7 7 7" />
-							</svg>
-						</button>
-					</div>
+					<button v-if="stream.live" class="jvp-send jvp-send--stop" type="button" aria-label="Stop generating" @click="stop">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="7" y="7" width="10" height="10" rx="2" />
+						</svg>
+					</button>
+					<button v-else class="jvp-send" type="button" aria-label="Send message" :disabled="!canSend" @click="send">
+						<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 19V5M5 12l7-7 7 7" />
+						</svg>
+					</button>
 				</div>
+				<div class="jvp-foot-note">{{ hint }}</div>
 			</div>
 		</div>
 	</div>
@@ -235,6 +241,14 @@ const greeting = computed(() => {
 	return greetingLine(new Date().getHours(), who);
 });
 const suggestions = computed(() => suggestionsFor(props.context));
+
+// Lucide-shaped paths for the starter-card chips, indexed alongside suggestions.
+const CARD_ICONS = [
+	"M3 3v18h18M7 15l4-4 3 3 5-6", // trending analysis
+	"M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z", // draft / act
+	"m21 21-4.3-4.3M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z", // search
+	"M12 2v20M2 12h20", // fallback
+];
 
 // A suggestion is a starting point, not a command: it fills the composer so
 // the user can edit before sending.
@@ -412,8 +426,45 @@ defineExpose({ load, startNewChat, convId });
 </script>
 
 <style scoped>
-/* Desk CSS variables only — the Desk already stamps the theme, so light/dark
-   comes free and no dark: variants are needed (design.md 6). */
+/* Palette lifted from the "Jarvis Side Chat" design board. Scoped to the panel
+   so it cannot leak into Desk chrome; dark values follow the Desk theme flag. */
+.jvp-panel {
+	--jv-grad: linear-gradient(140deg, #8b7cf7, #6a56e8);
+	--jv-accent: #6a56e8;
+	--jv-surface: #ffffff;
+	--jv-rule: #eeeeee;
+	--jv-rule-2: #e9e9ea;
+	--jv-ink: #1f272e;
+	--jv-ink-2: #8a9096;
+	--jv-ink-3: #b0b6bb;
+	--jv-bot-bg: #f5f4f8;
+	--jv-bot-bd: #eeedf4;
+	--jv-comp-bg: #fafafa;
+	--jv-comp-bd: #e2e2e2;
+	--jv-chip-0: #f1f1f2;
+	--jv-chip-1: #e4f0e7;
+	--jv-chip-2: #fbeeddff;
+	--jv-chip-3: #eae7fb;
+	--jv-danger: #c0392b;
+}
+:global([data-theme="dark"]) .jvp-panel {
+	--jv-surface: #1e1d23;
+	--jv-rule: #2a2833;
+	--jv-rule-2: #2e2c36;
+	--jv-ink: #eceaf2;
+	--jv-ink-2: #9a97a6;
+	--jv-ink-3: #6e6b7a;
+	--jv-bot-bg: #26242e;
+	--jv-bot-bd: #302e3a;
+	--jv-comp-bg: #24222b;
+	--jv-comp-bd: #34313f;
+	--jv-chip-0: #2b2933;
+	--jv-chip-1: #1d2f25;
+	--jv-chip-2: #33291b;
+	--jv-chip-3: #2a2540;
+	--jv-danger: #ff8a80;
+}
+
 /* A mini chat window, not a full-height dock: left/top/width/height are set
    inline from panel_anchor.panelLayout() so the window follows the FAB
    wherever the user dragged it. */
@@ -423,387 +474,223 @@ defineExpose({ load, startNewChat, convId });
 	display: flex;
 	pointer-events: none;
 }
-
 .jvp-panel {
 	pointer-events: auto;
 	display: flex;
 	flex-direction: column;
 	flex: 1;
 	min-height: 0;
-	background: var(--card-bg, #fff);
-	border: 1px solid var(--border-color);
-	border-radius: 12px;
-	box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+	background: var(--jv-surface);
+	border: 1px solid var(--jv-rule-2);
+	border-radius: 22px;
+	box-shadow: 0 24px 60px -12px rgba(24, 20, 50, 0.28), 0 8px 20px -8px rgba(24, 20, 50, 0.16);
 	overflow: hidden;
 	font-size: 14px;
-	letter-spacing: 0.02em;
-	color: var(--text-color);
+	color: var(--jv-ink);
 	outline: none;
 }
-
-/* design.md 3.2: overlays fade + scale 0.98 -> 1 in 100ms. Not a slide — this
-   is the same motion every other overlay in the product uses. Gated so
-   reduced-motion users get an instant swap. */
 @media (prefers-reduced-motion: no-preference) {
-	.jvp-panel {
-		animation: jvp-in 100ms ease-out;
-	}
+	.jvp-panel { animation: jvp-in 120ms ease-out; }
 }
 @keyframes jvp-in {
-	from {
-		opacity: 0;
-		transform: scale(0.98);
-	}
-	to {
-		opacity: 1;
-		transform: scale(1);
-	}
+	from { opacity: 0; transform: scale(0.98); }
+	to { opacity: 1; transform: scale(1); }
 }
 
+/* ---- header ---- */
 .jvp-head {
-	height: 42px;
 	flex: none;
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	padding: 0 8px 0 12px;
-	border-bottom: 1px solid var(--border-color);
+	gap: 11px;
+	padding: 13px 15px;
+	border-bottom: 1px solid var(--jv-rule);
 }
-.jvp-title {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	font-weight: 600;
+.jvp-avatar {
+	position: relative;
+	width: 30px;
+	height: 30px;
+	flex: 0 0 auto;
+	border-radius: 9px;
+	background: var(--jv-grad);
+	display: grid;
+	place-items: center;
 }
-.jvp-mark {
-	width: 16px;
-	height: 16px;
-	flex: none;
+.jvp-avatar svg { width: 17px; height: 17px; }
+.jvp-online {
+	position: absolute;
+	right: -2px;
+	bottom: -2px;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: #3ad07e;
+	border: 2px solid var(--jv-surface);
 }
-.jvp-actions {
-	display: flex;
-	align-items: center;
-	gap: 2px;
-}
-
+.jvp-title { flex: 1; font-size: 14.5px; font-weight: 600; color: var(--jv-ink); }
+.jvp-actions { display: flex; align-items: center; gap: 2px; }
 .jvp-ib {
-	width: 28px;
-	height: 28px;
+	width: 29px;
+	height: 29px;
 	flex: none;
 	border: none;
 	background: transparent;
-	border-radius: 8px;
-	color: var(--text-muted);
+	border-radius: 7px;
+	color: var(--jv-ink-2);
 	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: background-color 0.12s ease;
+	display: grid;
+	place-items: center;
+	transition: background-color 0.12s ease, color 0.12s ease;
 }
-.jvp-ib:hover {
-	background: var(--fg-hover-color, rgba(0, 0, 0, 0.05));
-}
-.jvp-ib:focus-visible {
-	outline: 2px solid var(--border-primary, #999);
-	outline-offset: 1px;
-}
-.jvp-ib svg {
-	width: 16px;
-	height: 16px;
-}
-.jvp-ib--sm {
-	width: 24px;
-	height: 24px;
-}
-.jvp-ib--sm svg {
-	width: 14px;
-	height: 14px;
-}
+.jvp-ib:hover { background: var(--jv-chip-0); color: var(--jv-ink); }
+.jvp-ib:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 1px; }
+.jvp-ib svg { width: 16px; height: 16px; }
+.jvp-ib--sm { width: 24px; height: 24px; }
+.jvp-ib--sm svg { width: 14px; height: 14px; }
 
+/* ---- context chip ---- */
 .jvp-ctx {
-	margin: 12px 12px 0;
+	flex: none;
+	margin: 11px 15px 0;
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	border: 1px solid var(--border-color);
-	border-radius: 10px;
-	padding: 7px 8px;
+	border: 1px solid var(--jv-rule-2);
+	border-radius: 11px;
+	padding: 7px 8px 7px 10px;
 }
-.jvp-ctx svg {
-	width: 16px;
-	height: 16px;
-	flex: none;
-	color: var(--text-muted);
-}
+.jvp-ctx svg { width: 15px; height: 15px; flex: none; color: var(--jv-ink-2); }
 .jvp-ctx-txt {
 	flex: 1;
 	min-width: 0;
 	font-size: 12px;
-	line-height: 1.35;
-	color: var(--text-muted);
+	color: var(--jv-ink-2);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-.jvp-ctx-txt b {
-	font-weight: 600;
-	color: var(--text-color);
-}
+.jvp-ctx-txt b { font-weight: 600; color: var(--jv-ink); }
 
-.jvp-body {
-	flex: 1;
-	min-height: 0;
-	overflow-y: auto;
-	padding: 14px 12px;
-}
-
+/* ---- body ---- */
+.jvp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 15px; }
 .jvp-center {
 	height: 100%;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 9px;
+	gap: 10px;
 	text-align: center;
-	padding: 22px;
-	color: var(--text-muted);
-}
-.jvp-empty-ic {
-	width: 28px;
-	height: 28px;
-}
-.jvp-empty-t {
-	font-size: 16px;
-	font-weight: 500;
-	color: var(--text-color);
-}
-.jvp-empty-d {
-	font-size: 14px;
-	line-height: 1.5;
-	max-width: 30ch;
-}
-.jvp-err {
+	color: var(--jv-ink-2);
 	font-size: 13.5px;
-	color: var(--text-danger, #c0392b);
 }
+.jvp-err { font-size: 13px; color: var(--jv-danger); }
+.jvp-inline-err { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ---- welcome ---- */
 .jvp-welcome {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
-	padding: 6px 2px 2px;
+	align-items: center;
+	padding: 24px 9px 8px;
 }
+.jvp-hero {
+	width: 52px;
+	height: 52px;
+	border-radius: 14px;
+	background: var(--jv-grad);
+	display: grid;
+	place-items: center;
+	box-shadow: 0 14px 30px -10px rgba(106, 86, 232, 0.6);
+}
+.jvp-hero svg { width: 29px; height: 29px; }
 .jvp-greet {
-	font-size: 19px;
-	font-weight: 600;
-	color: var(--text-color);
+	font-size: 22px;
+	font-weight: 700;
+	color: var(--jv-ink);
+	margin-top: 18px;
+	text-align: center;
 	letter-spacing: -0.01em;
 }
 .jvp-greet-sub {
-	margin: 0;
+	margin: 7px 0 0;
 	font-size: 13.5px;
-	line-height: 1.5;
-	color: var(--text-muted);
+	line-height: 1.55;
+	color: var(--jv-ink-2);
+	text-align: center;
 }
-.jvp-cards {
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-	margin-top: 12px;
-}
-/* Cards are bordered and flat: selection and hover are colour shifts, never a
-   lift (design.md 1.3, 5 row 2). */
+.jvp-greet-sub b { font-weight: 600; color: var(--jv-ink); }
+.jvp-cards { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 28px; }
 .jvp-card {
 	display: flex;
-	flex-direction: column;
-	gap: 3px;
+	align-items: flex-start;
+	gap: 12px;
 	text-align: left;
-	padding: 10px 12px;
-	border: 1px solid var(--border-color);
-	border-radius: 10px;
+	border: 1px solid var(--jv-rule-2);
+	border-radius: 12px;
+	padding: 13px 14px;
 	background: transparent;
 	font: inherit;
-	letter-spacing: inherit;
 	cursor: pointer;
-	transition: background-color 0.12s ease, border-color 0.12s ease;
+	transition: border-color 0.12s ease, background-color 0.12s ease;
 }
-.jvp-card:hover {
-	background: var(--control-bg, #f3f3f3);
+.jvp-card:hover { border-color: var(--jv-accent); }
+.jvp-card:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 1px; }
+.jvp-card-ic {
+	width: 30px;
+	height: 30px;
+	flex: 0 0 auto;
+	border-radius: 9px;
+	display: grid;
+	place-items: center;
+	color: var(--jv-ink);
 }
-.jvp-card:focus-visible {
-	outline: 2px solid var(--border-primary, #999);
-	outline-offset: 1px;
-}
-.jvp-card-t {
-	font-size: 13.5px;
-	font-weight: 500;
-	color: var(--text-color);
-}
-.jvp-card-p {
-	font-size: 12.5px;
-	line-height: 1.45;
-	color: var(--text-muted);
-}
-.jvp-inline-err {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	flex-wrap: wrap;
-}
+.jvp-card-ic svg { width: 16px; height: 16px; }
+.jvp-card-ic--0 { background: var(--jv-chip-0); }
+.jvp-card-ic--1 { background: var(--jv-chip-1); }
+.jvp-card-ic--2 { background: var(--jv-chip-2); }
+.jvp-card-ic--3 { background: var(--jv-chip-3); }
+.jvp-card-txt { min-width: 0; }
+.jvp-card-t { display: block; font-size: 13.5px; font-weight: 600; color: var(--jv-ink); }
+.jvp-card-p { display: block; font-size: 12.5px; color: var(--jv-ink-2); margin-top: 2px; line-height: 1.4; }
 
-.jvp-msgs {
-	display: flex;
-	flex-direction: column;
-	gap: 14px;
+/* ---- messages ---- */
+.jvp-msgs { display: flex; flex-direction: column; gap: 14px; }
+.jvp-row { display: flex; gap: 9px; align-items: flex-start; }
+.jvp-row--user { justify-content: flex-end; }
+.jvp-m-avatar {
+	width: 27px;
+	height: 27px;
+	flex: 0 0 auto;
+	border-radius: 9px;
+	background: var(--jv-grad);
+	display: grid;
+	place-items: center;
+	margin-top: 2px;
 }
+.jvp-m-avatar svg { width: 15px; height: 15px; }
 .jvp-m-user {
-	align-self: flex-end;
-	max-width: 84%;
-	background: var(--control-bg, #f3f3f3);
-	border-radius: 12px;
-	padding: 8px 12px;
+	max-width: 270px;
+	background: var(--jv-grad);
+	color: #fff;
+	padding: 9px 13px;
+	border-radius: 16px 16px 5px 16px;
+	font-size: 14px;
 	line-height: 1.5;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
+	box-shadow: 0 8px 18px -10px rgba(106, 86, 232, 0.7);
 }
 .jvp-m-bot {
-	max-width: 94%;
+	background: var(--jv-bot-bg);
+	border: 1px solid var(--jv-bot-bd);
+	border-radius: 5px 15px 15px 15px;
+	padding: 11px 13px;
+	font-size: 14px;
 	line-height: 1.5;
+	color: var(--jv-ink);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
-}
-
-.jvp-pending {
-	flex: none;
-	border-top: 1px solid var(--border-color);
-	padding: 10px 12px;
-}
-.jvp-pending-row {
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-}
-.jvp-pending-txt {
-	font-size: 13px;
-	line-height: 1.45;
-	color: var(--text-color);
-}
-.jvp-pending-acts {
-	display: flex;
-	gap: 8px;
-	justify-content: flex-end;
-}
-
-.jvp-foot {
-	flex: none;
-	border-top: 1px solid var(--border-color);
-	padding: 12px;
-}
-
-/* One container holds the text and its controls, and the send button lives
-   inside it: at 400px a separate button row costs a message of vertical
-   space. */
-.jvp-comp {
-	background: var(--control-bg, #f3f3f3);
-	border: 1px solid transparent;
-	border-radius: 12px;
-	padding: 9px 9px 8px;
-	transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
-}
-.jvp-comp--focus,
-.jvp-comp:focus-within {
-	background: var(--card-bg, #fff);
-	border-color: var(--border-color);
-	box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-}
-.jvp-comp-text {
-	width: 100%;
-	border: none;
-	background: transparent;
-	resize: none;
-	font: inherit;
-	letter-spacing: inherit;
-	color: var(--text-color);
-	line-height: 1.5;
-	padding: 1px 3px 8px;
-	max-height: 120px;
-	outline: none;
-}
-.jvp-comp-bar {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-}
-.jvp-comp-hint {
-	font-size: 11.5px;
-	color: var(--text-muted);
-}
-
-/* The one solid button on this surface (design.md 3.1). */
-.jvp-send {
-	width: 28px;
-	height: 28px;
-	flex: none;
-	border: none;
-	border-radius: 8px;
-	cursor: pointer;
-	background: var(--text-color);
-	color: var(--card-bg, #fff);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: opacity 0.12s ease;
-}
-.jvp-send svg {
-	width: 16px;
-	height: 16px;
-}
-.jvp-send:hover {
-	opacity: 0.88;
-}
-.jvp-send:focus-visible {
-	outline: 2px solid var(--border-primary, #999);
-	outline-offset: 2px;
-}
-.jvp-send[disabled] {
-	background: var(--control-bg, #ededed);
-	color: var(--text-muted);
-	cursor: not-allowed;
-}
-.jvp-send--stop {
-	background: var(--control-bg, #ededed);
-	color: var(--text-color);
-}
-
-.jvp-btn-subtle {
-	height: 28px;
-	padding: 0 10px;
-	border: none;
-	border-radius: 8px;
-	background: var(--control-bg, #f3f3f3);
-	color: var(--text-color);
-	font: inherit;
-	cursor: pointer;
-}
-.jvp-btn-subtle:hover {
-	background: var(--fg-hover-color, rgba(0, 0, 0, 0.08));
-}
-.jvp-btn-solid {
-	height: 28px;
-	padding: 0 12px;
-	border: none;
-	border-radius: 8px;
-	cursor: pointer;
-	background: var(--text-color);
-	color: var(--card-bg, #fff);
-	font: inherit;
-	font-weight: 500;
-}
-.jvp-btn-solid[disabled] {
-	opacity: 0.6;
-	cursor: not-allowed;
 }
 
 /* ---- waiting for a reply ---- */
@@ -811,45 +698,107 @@ defineExpose({ load, startNewChat, convId });
 	display: flex;
 	align-items: center;
 	gap: 9px;
-	color: var(--text-muted);
+	background: var(--jv-bot-bg);
+	border: 1px solid var(--jv-bot-bd);
+	border-radius: 5px 15px 15px 15px;
+	padding: 11px 13px;
+	color: var(--jv-ink-2);
 	font-size: 13.5px;
 }
-.jvp-think-dots {
-	display: inline-flex;
-	align-items: flex-end;
-	gap: 3px;
-	height: 12px;
-}
-.jvp-think-dots i {
-	width: 4px;
-	height: 4px;
-	border-radius: 999px;
-	background: currentColor;
-	opacity: 0.35;
-}
+.jvp-think-dots { display: inline-flex; align-items: flex-end; gap: 3px; height: 10px; }
+.jvp-think-dots i { width: 5px; height: 5px; border-radius: 999px; background: var(--jv-accent); opacity: 0.35; }
 @media (prefers-reduced-motion: no-preference) {
-	.jvp-think-dots i {
-		animation: jvp-dot 1.2s infinite ease-in-out;
-	}
-	.jvp-think-dots i:nth-child(2) {
-		animation-delay: 0.15s;
-	}
-	.jvp-think-dots i:nth-child(3) {
-		animation-delay: 0.3s;
-	}
+	.jvp-think-dots i { animation: jvp-dot 1.2s infinite ease-in-out; }
+	.jvp-think-dots i:nth-child(2) { animation-delay: 0.15s; }
+	.jvp-think-dots i:nth-child(3) { animation-delay: 0.3s; }
 }
-/* Progress feedback, not decoration — the one animation design.md's
-   no-motion rule does not cover, and it is gated on motion-safe anyway. */
 @keyframes jvp-dot {
-	0%,
-	80%,
-	100% {
-		transform: translateY(0);
-		opacity: 0.35;
-	}
-	40% {
-		transform: translateY(-4px);
-		opacity: 1;
-	}
+	0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+	40% { transform: translateY(-5px); opacity: 1; }
 }
+
+/* ---- pending write confirmation ---- */
+.jvp-pending { flex: none; border-top: 1px solid var(--jv-rule); padding: 11px 15px; }
+.jvp-pending-row { display: flex; flex-direction: column; gap: 9px; }
+.jvp-pending-txt { font-size: 13px; line-height: 1.45; color: var(--jv-ink); }
+.jvp-pending-acts { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ---- composer ---- */
+.jvp-foot { flex: none; padding: 12px 15px 14px; border-top: 1px solid var(--jv-rule); }
+.jvp-comp {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+	border: 1px solid var(--jv-comp-bd);
+	border-radius: 14px;
+	padding: 7px 8px 7px 12px;
+	background: var(--jv-comp-bg);
+	transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.jvp-comp--focus, .jvp-comp:focus-within {
+	border-color: var(--jv-accent);
+	box-shadow: 0 0 0 3px rgba(106, 86, 232, 0.12);
+}
+.jvp-comp-text {
+	flex: 1;
+	min-width: 0;
+	border: none;
+	background: transparent;
+	resize: none;
+	font: inherit;
+	font-size: 14px;
+	color: var(--jv-ink);
+	line-height: 1.5;
+	padding: 5px 0;
+	max-height: 120px;
+	outline: none;
+}
+.jvp-comp-text::placeholder { color: var(--jv-ink-3); }
+.jvp-send {
+	width: 33px;
+	height: 33px;
+	flex: 0 0 auto;
+	border: none;
+	border-radius: 10px;
+	background: var(--jv-grad);
+	display: grid;
+	place-items: center;
+	cursor: pointer;
+	transition: opacity 0.12s ease;
+}
+.jvp-send svg { width: 17px; height: 17px; }
+.jvp-send:hover { opacity: 0.9; }
+.jvp-send:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 2px; }
+.jvp-send[disabled] { background: var(--jv-chip-0); cursor: not-allowed; }
+.jvp-send[disabled] svg { stroke: var(--jv-ink-3); }
+.jvp-send--stop { background: var(--jv-chip-0); color: var(--jv-ink); }
+.jvp-send--stop svg { stroke: currentColor; }
+.jvp-foot-note { text-align: center; font-size: 11px; color: var(--jv-ink-3); margin-top: 8px; }
+
+/* ---- buttons ---- */
+.jvp-btn-subtle {
+	height: 29px;
+	padding: 0 11px;
+	border: 1px solid var(--jv-rule-2);
+	border-radius: 9px;
+	background: transparent;
+	color: var(--jv-ink);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+.jvp-btn-subtle:hover { background: var(--jv-chip-0); }
+.jvp-btn-solid {
+	height: 29px;
+	padding: 0 13px;
+	border: none;
+	border-radius: 9px;
+	background: var(--jv-grad);
+	color: #fff;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+}
+.jvp-btn-solid[disabled] { opacity: 0.6; cursor: not-allowed; }
 </style>
