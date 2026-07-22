@@ -94,7 +94,18 @@
 				<div v-if="ended" class="jv-acct-actions">
 					<a :href="billingUrl" class="jv-btn jv-btn--primary">Renew subscription</a>
 				</div>
-				<div v-if="reauthNotice" class="jv-acct-notice">{{ reauthNotice }}</div>
+				<!-- Autopay off but re-armable. This MUST carry an action: a
+					 released mandate is terminal at Razorpay, so neither resume
+					 nor a one-shot renew brings auto-renewal back, and the notice
+					 alone left the customer told to "set up payment again" with
+					 nothing to click. -->
+				<div v-if="account.can_reauthorize" class="jv-acct-notice jv-acct-notice--row">
+					<span>{{ reauthBanner }}</span>
+					<a :href="billingUrl" class="jv-btn jv-btn--sm jv-btn--ghost"
+						>Set up auto-renewal</a
+					>
+				</div>
+				<div v-else-if="reauthNotice" class="jv-acct-notice">{{ reauthNotice }}</div>
 
 				<!-- Manage footer: the external billing link, with cancel tucked
 					 beside it as a quiet text link. It stays low-key because the confirm
@@ -221,6 +232,16 @@ async function doCancel() {
 		busy.value = false;
 	}
 }
+
+// Derived from the server payload, not from the resume response alone, so the
+// banner survives a page reload (the pane is reopened far more often than a
+// resume is performed).
+const reauthBanner = computed(() => {
+	const endsOn = (account.value.access_ends_on || "").split(" ")[0];
+	return endsOn
+		? `Auto-renewal is off. Set it up before ${endsOn} to stay subscribed.`
+		: "Auto-renewal is off. Set it up before your period ends.";
+});
 
 async function doResume() {
 	// Constructive action - no danger confirm.

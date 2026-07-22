@@ -755,6 +755,15 @@ def resume_plan() -> dict:
 	return _post(path=_m("api.account.resume_plan"), body={})
 
 
+def reauthorize_autopay() -> dict:
+	"""Mint a replacement Razorpay mandate for a sub whose autopay is off.
+
+	Returns the subscription id for a mandate-auth Checkout. Nothing is charged
+	now - the first cycle fires at the current period end.
+	"""
+	return _post(path=_m("api.account.reauthorize_autopay"), body={})
+
+
 def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 	"""POST a form-encoded grant to admin's OAuth token endpoint. Returns the
 	token dict ({access_token, refresh_token, expires_in, ...}) on success, or

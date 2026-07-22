@@ -320,6 +320,17 @@ def resume_plan() -> dict:
 	return out
 
 
+@frappe.whitelist()
+def reauthorize_autopay() -> dict:
+	"""Start re-arming auto-renewal; the page then opens a mandate Checkout.
+
+	No chat-gate bust: this only creates a Razorpay object, it changes no
+	entitlement. confirm_payment is what flips autorenew back on.
+	"""
+	require_jarvis_admin()
+	return _surface(admin_client.reauthorize_autopay)
+
+
 def _bust_chat_gate() -> None:
 	"""Drop the chat-readiness cache after a billing state change.
 
