@@ -42,8 +42,19 @@
 				title="Notify when a reply is ready"
 				help="Browser notification when Jarvis finishes while you are in another tab."
 				:modelValue="notifyEnabled"
-				@update:modelValue="toggleNotify"
+				:disabled="!notifySupported"
+				@update:modelValue="onToggleNotify"
 			/>
+			<!-- The store gates notifyEnabled on Notification.permission as well as
+			     the stored preference, so this switch can read off while the server
+			     row says on. Without a line here that looks like a broken toggle. -->
+			<p v-if="!notifySupported" class="pb-2 text-p-sm text-ink-gray-5">
+				This browser does not support notifications.
+			</p>
+			<p v-else-if="notifyBlocked" class="pb-2 text-p-sm text-ink-gray-5">
+				Notifications are blocked for this site. Allow them in your browser settings to
+				turn this on.
+			</p>
 		</div>
 
 		<hr class="my-8" />
@@ -204,8 +215,14 @@ function setActivityDetail(v) {
 	store.setActivityDetail(v);
 }
 const notifyEnabled = computed(() => store.notifyEnabled);
-function toggleNotify() {
-	store.toggleNotify();
+// Notification.permission is not reactive, so snapshot it on mount and again
+// after each toggle attempt (the store may prompt, and the answer changes it).
+const notifySupported = typeof Notification !== "undefined";
+const notifyPermission = ref(notifySupported ? Notification.permission : "unsupported");
+const notifyBlocked = computed(() => notifyPermission.value === "denied");
+async function onToggleNotify() {
+	await store.toggleNotify();
+	if (notifySupported) notifyPermission.value = Notification.permission;
 }
 
 // Delete all history → danger-zone action registered by ChatView.
