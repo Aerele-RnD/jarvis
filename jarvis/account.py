@@ -331,6 +331,31 @@ def reauthorize_autopay() -> dict:
 	return _surface(admin_client.reauthorize_autopay)
 
 
+@frappe.whitelist()
+def preview_downgrade(target_plan: str) -> dict:
+	"""Describe a downgrade for the picker. SM-only, same gate as upgrade."""
+	require_jarvis_admin()
+	return _surface(admin_client.preview_downgrade, target_plan)
+
+
+@frappe.whitelist()
+def start_downgrade(target_plan: str) -> dict:
+	"""Schedule a downgrade (next cycle). Monthly autopay returns a
+	subscription id for a ₹0 mandate Checkout; Annual just schedules.
+
+	Chat-gate bust: a downgrade never changes entitlement until the boundary,
+	so no bust is needed - the container keeps serving the current plan."""
+	require_jarvis_admin()
+	return _surface(admin_client.start_downgrade, target_plan)
+
+
+@frappe.whitelist()
+def cancel_scheduled_downgrade() -> dict:
+	"""Revoke a scheduled downgrade (SM-only)."""
+	require_jarvis_admin()
+	return _surface(admin_client.cancel_scheduled_downgrade)
+
+
 def _bust_chat_gate() -> None:
 	"""Drop the chat-readiness cache after a billing state change.
 

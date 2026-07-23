@@ -2069,7 +2069,25 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 						? `<button class="ja-btn ja-btn-ghost" id="ja-cta-reauth" data-action="reauth">Set up auto-renewal</button>`
 						: ""
 				}
+				${
+					// A cheaper plan is available and none is scheduled yet. Applies
+					// at the next cycle, so it's a quiet ghost action, not a headline.
+					(account.downgrade_plans || []).length && !account.scheduled_plan
+						? `<button class="ja-btn ja-btn-ghost" id="ja-cta-downgrade" data-action="downgrade">Switch to a smaller plan</button>`
+						: ""
+				}
 			</div>
+			${
+				account.scheduled_plan
+					? `<p class="ja-sub" style="margin-top:8px">Switching to ${esc(
+							account.scheduled_plan_name || account.scheduled_plan
+					  )}${
+							account.scheduled_plan_on
+								? " on " + esc(String(account.scheduled_plan_on).split(" ")[0])
+								: ""
+					  }. You keep your current plan until then.</p>`
+					: ""
+			}
 			<div class="ja-err" id="ja-billing-err"></div>
 		</div>`;
 	}
@@ -2126,12 +2144,82 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function bindBilling() {
-		$body.find("#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth").on("click", function () {
-			const action = $(this).data("action");
-			if (action === "upgrade") return openUpgradeModal();
-			if (action === "renew") return startRenew();
-			if (action === "reauth") return startReauthorize();
+		$body
+			.find("#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth, #ja-cta-downgrade")
+			.on("click", function () {
+				const action = $(this).data("action");
+				if (action === "upgrade") return openUpgradeModal();
+				if (action === "renew") return startRenew();
+				if (action === "reauth") return startReauthorize();
+				if (action === "downgrade") return openDowngradeModal();
+			});
+	}
+
+	// ---- downgrade (applies next cycle) -----------------------------------
+	function openDowngradeModal() {
+		const plans = account.downgrade_plans || [];
+		const cards = plans
+			.map(
+				(p) => `
+			<div class="ja-up-card" data-plan="${esc(p.name)}">
+				<div class="ja-up-card-head">
+					<div class="ja-up-card-name">${esc(p.plan_name || p.name)}</div>
+					<div class="ja-up-card-price">${inr(p.price_inr)} <span class="jo-plan-cycle">${cycleLabel(
+					p.billing_cycle
+				)}</span></div>
+				</div>
+				<button class="ja-btn ja-btn-primary ja-up-pick" data-plan="${esc(
+					p.name
+				)}">Switch at next cycle</button>
+			</div>`
+			)
+			.join("");
+		const html = `<div class="ja-modal-bg">
+			<div class="ja-modal">
+				<div class="ja-modal-head">
+					<h2 class="ja-h">Switch to a smaller plan</h2>
+					<button class="ja-modal-close" id="ja-modal-close">✕</button>
+				</div>
+				<p class="ja-sub">The change takes effect at your next billing cycle — you keep your current plan until then, and you're not charged anything extra now.</p>
+				<div class="ja-up-list">${cards || `<div class="ja-empty">No smaller plans available.</div>`}</div>
+				<div class="ja-err" id="ja-up-err"></div>
+			</div>
+		</div>`;
+		const $m = $(html).appendTo(document.body);
+		$m.find("#ja-modal-close, .ja-modal-bg").on("click", function (e) {
+			if (e.target === this) $m.remove();
 		});
+		$m.find(".ja-up-pick").on("click", function () {
+			startDowngrade($(this).data("plan"), $m);
+		});
+	}
+
+	function startDowngrade(target_plan, $modal) {
+		const $btn = $modal.find(`.ja-up-pick[data-plan="${target_plan}"]`);
+		setBusy($btn, true);
+		frappe
+			.call({ method: "jarvis.account.start_downgrade", args: { target_plan } })
+			.then((r) => {
+				setBusy($btn, false);
+				const data = (r.message && r.message.data) || r.message || {};
+				$modal.remove();
+				if (data.razorpay_subscription_id) {
+					// Monthly autopay: a ₹0 mandate-auth Checkout for the cheaper
+					// plan (openCheckout takes the subscription_id branch, no amount).
+					openCheckout(data, /*upgrade=*/ false);
+				} else {
+					// Annual / no mandate: scheduled server-side, nothing to pay.
+					frappe.show_alert({
+						message: __("Downgrade scheduled for your next billing cycle."),
+						indicator: "green",
+					});
+					loadInitial();
+				}
+			})
+			.catch((e) => {
+				setBusy($btn, false);
+				$modal.find("#ja-up-err").text(e.message || "Couldn't schedule the downgrade.");
+			});
 	}
 
 	// ---- re-authorize autopay ---------------------------------------------
