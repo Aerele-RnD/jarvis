@@ -1571,6 +1571,7 @@ import {
 	seedRowsFromConfig,
 	defaultSubscriptionModel,
 	apiKeyModelHealth,
+	subscriptionAccountHealth,
 	isCodeOnlyPaste,
 	effectiveApiKey,
 	LOCAL_PROVIDER_IDS,
@@ -2435,20 +2436,43 @@ function firstWarningMessage() {
 	return (sync.value.warnings && sync.value.warnings[0] && sync.value.warnings[0].message) || "";
 }
 // Honest model health: the connected-account dot + label for a model row.
-// Subscriptions reflect the fleet's last (pool-wide) subscription-probe result;
-// api-key rows reflect their own per-model verdict from the last apply
-// (contract 1.11 model_statuses). Onboarding (singleMode) never shows this - always neutral.
+// Subscriptions reflect the fleet's last (pool-wide) subscription-probe result via
+// subscriptionAccountHealth (@/llm/pool.js, shared with onboarding below); api-key
+// rows reflect their own per-model verdict from the last apply (contract 1.11
+// model_statuses).
+//
+// Onboarding (singleMode) USED to hardcode {level:"neutral"} unconditionally here,
+// before looking at any real signal - and the CSS painted "neutral" the exact same
+// green as a positively-verified "ok", so an unverified, out-of-quota account
+// rendered identically to a healthy one (2026-07-23 trace: the customer saw a green
+// dot + "Account connected" for a ChatGPT account that had no quota left). Fixed by
+// actually reading sync.value.subscription_status in both modes now.
 function accountHealth(m) {
-	if (singleMode.value) return { level: "neutral" };
 	if (!m) return { level: "ok" };
 	// Config changed but not yet (re)applied - the last probe result no longer
 	// describes what's about to be saved, so don't assert a stale health.
 	if (dirty.value || sync.value.pending) return { level: "neutral" };
-	// api-key rows carry a PER-MODEL verdict (contract 1.11 model_statuses), probed in
-	// isolation, so each shows its own health instead of the presence-only "key set" that
-	// once made a dead model look identical to a healthy one.
 	if (m.credentialType !== "subscription") {
+		// api-key rows carry a PER-MODEL verdict (contract 1.11 model_statuses), probed
+		// in isolation, so each shows its own health instead of the presence-only "key
+		// set" that once made a dead model look identical to a healthy one. Onboarding
+		// only ever renders the accounts/subscription branch below (its single api-key
+		// row has no "Connected accounts" chip list to hang a dot on), but this stays
+		// mode-agnostic for whenever that changes.
 		return apiKeyModelHealth(m, sync.value.model_statuses);
+	}
+	if (singleMode.value) {
+		// Onboarding's one connected account skips the failover-list's multi-row
+		// disambiguation below (there is only ever one row here) but must NOT inherit
+		// its "no verdict yet -> quiet green" default: right after OAuth paste-back,
+		// BEFORE "Start chatting" even runs save_llm_pool, sync.value is whatever the
+		// LAST applied config's status was - typically nothing at all for a brand-new
+		// tenant - so degrading that to green here is exactly the bug above. knownGood
+		// stays false so green is earned only by an explicit "verified".
+		return subscriptionAccountHealth(sync.value.subscription_status, {
+			knownGood: false,
+			warningDetail: firstWarningMessage(),
+		});
 	}
 	// sync.subscription_status is POOL-WIDE, not per-row: the fleet probes the pool's
 	// subscription credential and returns ONE verdict. Painting it on every subscription
@@ -2458,26 +2482,12 @@ function accountHealth(m) {
 	// neutral rather than assert something we did not measure.
 	const subRows = rows.value.filter((r) => r.credentialType === "subscription");
 	if (subRows.length > 1) return { level: "neutral" };
-	const status = sync.value.subscription_status;
-	if (status === "unverified") {
-		return {
-			level: "warn",
-			label: "Not accepting requests",
-			title:
-				firstWarningMessage() ||
-				"This subscription rejected a test request — reconnect to restore chat.",
-		};
-	}
-	if (status === "unchecked") {
-		return {
-			level: "unchecked",
-			label: "Not verified yet",
-			title: "We couldn't confirm this subscription is active — it will be re-checked on the next apply.",
-		};
-	}
-	// "verified", "not_applicable", "", or undefined (backend without the field) -
-	// all degrade to today's quiet green.
-	return { level: "ok" };
+	// knownGood defaults true here: an absent verdict on the settings editor can mean
+	// an EXISTING, previously-working pool that a pre-1.11 fleet just didn't report on -
+	// unlike onboarding, that has actually been proven to work before.
+	return subscriptionAccountHealth(sync.value.subscription_status, {
+		warningDetail: firstWarningMessage(),
+	});
 }
 // Open the connect panel WITHOUT starting OAuth.
 //
@@ -3153,15 +3163,18 @@ defineExpose({ save });
 	background: var(--green);
 }
 /* Option A "honest model health" - dot color reflects the fleet's last
-   subscription probe. --ok/--neutral both render the pre-existing green so a
-   backend without the field (or a config mid-edit) looks exactly as before. */
-.jv-pool-dot--ok,
-.jv-pool-dot--neutral {
+   subscription probe. --neutral now shares --unchecked's grey, NOT --ok's green:
+   "nothing known yet" and "not verified yet" are the same customer-facing state, and
+   painting neutral green is exactly how an unverified, out-of-quota account got shown
+   as healthy before anyone had checked it (2026-07-23 trace). Green is reserved for an
+   explicit --ok verdict only. */
+.jv-pool-dot--ok {
 	background: var(--green);
 }
 .jv-pool-dot--warn {
 	background: var(--amber);
 }
+.jv-pool-dot--neutral,
 .jv-pool-dot--unchecked {
 	background: var(--text-3);
 }

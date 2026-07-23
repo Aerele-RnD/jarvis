@@ -357,3 +357,38 @@ export function apiKeyModelHealth(row, modelStatuses) {
 	}
 	return { level: "ok" };
 }
+
+// Map the fleet's pool-wide subscription-probe verdict (sync.subscription_status) to a
+// dot health + label + title. Shared by the failover-list account row (LlmPoolEditor's
+// !singleMode accountHealth) and onboarding's single-account picker - both read the
+// exact same field; disambiguation of WHICH row it describes happens in the caller
+// (the failover list only attributes it when there is exactly one subscription row;
+// onboarding always has exactly one, so it skips that check).
+//
+// `knownGood` decides what "no verdict at all" (status is "not_applicable", "", or
+// undefined) degrades to:
+//   - true  (the failover-list editor): a previously-saved, working pool that a
+//     pre-1.11 fleet just didn't report on - quiet green, same as before this fix.
+//   - false (onboarding): "no verdict yet" almost always means the account was JUST
+//     connected and nothing has actually probed it - painting THAT green is exactly
+//     how an out-of-quota account got shown "Account connected" before anyone had
+//     checked it (2026-07-23 trace). Green there is earned only by an explicit
+//     "verified".
+export function subscriptionAccountHealth(status, { knownGood = true, warningDetail = "" } = {}) {
+	if (status === "unverified") {
+		return {
+			level: "warn",
+			label: "Not accepting requests",
+			title: warningDetail || "This account rejected a test request. Reconnect to restore chat.",
+		};
+	}
+	if (status === "unchecked") {
+		return {
+			level: "unchecked",
+			label: "Not verified yet",
+			title: "We couldn't confirm this account is active yet. It will be re-checked on the next apply.",
+		};
+	}
+	if (status === "verified") return { level: "ok" };
+	return knownGood ? { level: "ok" } : { level: "neutral" };
+}

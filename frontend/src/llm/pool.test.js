@@ -11,7 +11,7 @@ import {
 } from "./pool.js";
 import { PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig } from "./pool.js";
 import { defaultSubscriptionModel } from "./pool.js";
-import { apiKeyModelHealth } from "./pool.js";
+import { apiKeyModelHealth, subscriptionAccountHealth } from "./pool.js";
 import { LOCAL_PROVIDER_IDS, effectiveApiKey } from "./pool.js";
 
 test("defaultSubscriptionModel: per-upstream default, openai fallback", () => {
@@ -699,4 +699,50 @@ test("apiKeyModelHealth: the same 1113 detail on an UNRELATED provider does NOT 
 	assert.doesNotMatch(h.label, /endpoint/i);
 	assert.doesNotMatch(h.title, /coding plan/i);
 	assert.match(h.label, /Insufficient balance/);
+});
+
+// ---- subscriptionAccountHealth: honest dot health for a connected chat-subscription
+// account (contract: sync.subscription_status). Before this, LlmPoolEditor's onboarding
+// (singleMode) picker hardcoded EVERY connected account to {level:"neutral"} unconditionally,
+// and the CSS painted "neutral" the same green as a positively-verified "ok" - so a
+// FREE-tier account that was out of quota rendered exactly like a healthy one
+// (2026-07-23 trace). These pin the real-signal mapping both call sites now share. ----
+
+test("subscriptionAccountHealth: unverified is a warn state with an actionable title", () => {
+	const h = subscriptionAccountHealth("unverified");
+	assert.equal(h.level, "warn");
+	assert.equal(h.label, "Not accepting requests");
+	assert.match(h.title, /reconnect/i);
+});
+
+test("subscriptionAccountHealth: unverified prefers the fleet's own warning message", () => {
+	const h = subscriptionAccountHealth("unverified", { warningDetail: "429: rate limited" });
+	assert.equal(h.title, "429: rate limited");
+});
+
+test("subscriptionAccountHealth: unchecked reads as a neutral 'not verified yet'", () => {
+	const h = subscriptionAccountHealth("unchecked");
+	assert.equal(h.level, "unchecked");
+	assert.equal(h.label, "Not verified yet");
+});
+
+test("subscriptionAccountHealth: verified is a MEANINGFUL green (ok, no label) regardless of knownGood", () => {
+	assert.deepEqual(subscriptionAccountHealth("verified"), { level: "ok" });
+	assert.deepEqual(subscriptionAccountHealth("verified", { knownGood: false }), { level: "ok" });
+});
+
+test("subscriptionAccountHealth: no verdict at all -> quiet green ONLY when knownGood (failover-list default)", () => {
+	assert.deepEqual(subscriptionAccountHealth(""), { level: "ok" });
+	assert.deepEqual(subscriptionAccountHealth(undefined), { level: "ok" });
+	assert.deepEqual(subscriptionAccountHealth("not_applicable"), { level: "ok" });
+});
+
+test("subscriptionAccountHealth: no verdict at all -> neutral (grey), never green, when knownGood is false", () => {
+	// This is the onboarding case: right after OAuth paste-back, before Start chatting
+	// even runs save_llm_pool, nothing has actually probed the account yet. Green here
+	// is exactly the defect this test pins against a regression.
+	const opts = { knownGood: false };
+	assert.deepEqual(subscriptionAccountHealth("", opts), { level: "neutral" });
+	assert.deepEqual(subscriptionAccountHealth(undefined, opts), { level: "neutral" });
+	assert.deepEqual(subscriptionAccountHealth("not_applicable", opts), { level: "neutral" });
 });
