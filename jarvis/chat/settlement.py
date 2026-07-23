@@ -122,7 +122,13 @@ def invoke_settlement(
 			else:
 				ts._run_cas(f"UPDATE `tab{MSG}` SET streaming=0 WHERE name=%(m)s", {"m": am})
 		won = ts.settle_finalizing(run_id, v, epoch, required_effects=FINAL_EFFECTS)
-		pub_kind, pub_extra = "run:end", {"enrichment_pending": True}
+		# SUX-6: was_recovered tells the client a VISIBLE replacement is legitimate
+		# (the answer changed via snapshot recovery); on the normal path it is 0 and
+		# the client skips re-rendering an identical terminal.
+		pub_kind, pub_extra = "run:end", {
+			"enrichment_pending": True,
+			"was_recovered": bool(frappe.db.get_value(TURN, run_id, "was_recovered")),
+		}
 
 	if not won:
 		# D3 S3 stale-pump branch: rollback undoes the S1 message write; the shared

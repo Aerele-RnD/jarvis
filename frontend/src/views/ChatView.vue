@@ -1831,6 +1831,17 @@
 											>{{ elapsedLabel(m) }}</span
 										>
 									</div>
+									<!-- SUX-7: subtle "finishing…" affordance while the Relay-Pump
+									     finalize job is still adding late enrichment (attachments /
+									     canvas / title); cleared by the message:enriched event. -->
+									<div
+										v-if="!m.streaming && enrichmentPending.has(m.name)"
+										class="jv-meta"
+										style="opacity: 0.6"
+										title="Finishing up — attachments and extras are still being added"
+									>
+										<span>Finishing…</span>
+									</div>
 									<div v-if="!m.error && m.content" class="jv-msgbar">
 										<span
 											v-if="msgTime(m)"
@@ -4002,6 +4013,15 @@ const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
+// Pump streaming (Relay Pump): the fenced assistant:delta carries (turn_id, event_seq).
+// A replayed/duplicate frame (a re-attach re-streaming, or a double publish) has an
+// event_seq <= the last one applied for this message — skip it so the cumulative
+// mirror never regresses. Keyed by message_id (the assistant row the deltas target).
+const lastDeltaSeq = ref({}); // { [message_id]: event_seq }
+// SUX-7: a settled reply whose enrichment (canvas/attachments/title) is still running.
+// run:end carries enrichment_pending; message:enriched clears it. Drives a subtle
+// "finishing…" affordance so a late pop-in is signalled, not silent.
+const enrichmentPending = ref(new Set()); // message_ids awaiting message:enriched
 const recovering = ref(null); // { message_id, reason } while a turn is parked for background recovery — the composer stays UNLOCKED so the user isn't trapped
 const retrying = ref(false); // guards the error-card Retry against a double-enqueue while one is in flight
 const srMessage = ref(""); // visually-hidden aria-live text (turn completion / failure) for screen readers
@@ -7013,6 +7033,15 @@ function onEvent(p) {
 			}, 3500);
 			break;
 		case "assistant:delta": {
+			// Relay-Pump dedupe guard: skip a replayed/out-of-order frame. The pump
+			// publishes a fenced (turn_id, event_seq); a re-attach that re-streams, or
+			// a double publish, carries a seq <= the last one applied for this row.
+			// (Legacy deltas carry no event_seq → always applied, unchanged.)
+			if (p.event_seq != null && p.message_id) {
+				const seen = lastDeltaSeq.value[p.message_id];
+				if (seen != null && p.event_seq <= seen) break;
+				lastDeltaSeq.value[p.message_id] = p.event_seq;
+			}
 			waiting.value = false;
 			statusPhase.value = null;
 			recovering.value = null;
@@ -7062,6 +7091,19 @@ function onEvent(p) {
 			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			const m = messages.value.find((x) => x.name === p.message_id);
 			if (m) m.streaming = false;
+			// SUX-6: the terminal final text is the last cumulative mirror in the normal
+			// case, so a re-render would be identical — skip the visible churn. A VISIBLE
+			// replacement is legitimate only when the answer actually changed via snapshot
+			// recovery (was_recovered), which the reload below applies.
+			if (p.was_recovered) announceSR("Your answer is ready.");
+			// SUX-7: enrichment (canvas/attachments/title) may still be running after the
+			// authoritative terminal. Keep a subtle "finishing…" affordance until the
+			// message:enriched event clears it (a late pop-in is signalled, not silent).
+			if (p.message_id) {
+				if (p.enrichment_pending)
+					enrichmentPending.value = new Set(enrichmentPending.value).add(p.message_id);
+				lastDeltaSeq.value[p.message_id] = undefined; // free the dedupe slot
+			}
 			// Stamp metrics keyed by message_id so they survive the reload below.
 			if (p.message_id) {
 				runMeta.value = {
@@ -7090,6 +7132,19 @@ function onEvent(p) {
 			// (mutex-guarded, no-op when nothing's pending) catch that race.
 			setTimeout(processMermaid, 300);
 			setTimeout(processMermaid, 900);
+			break;
+		}
+		case "message:enriched": {
+			// SUX-7: the Relay-Pump finalize job finished the owed enrichment for a
+			// settled reply — clear the "finishing…" affordance and pull the late
+			// attachments/canvas/title in with one reload.
+			if (p.message_id && enrichmentPending.value.has(p.message_id)) {
+				const next = new Set(enrichmentPending.value);
+				next.delete(p.message_id);
+				enrichmentPending.value = next;
+			}
+			loadConversation(currentId.value);
+			setTimeout(processMermaid, 300);
 			break;
 		}
 		case "wiki:nudge": {
