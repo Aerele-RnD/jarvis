@@ -11,7 +11,14 @@
 	     so a confirm still opens on top of settings. -->
 	<Dialog v-model="open" :options="{ size: '5xl' }">
 		<template #body>
-			<div class="flex h-[calc(100vh-8rem)] flex-col sm:flex-row">
+			<!-- Overriding #body replaces Dialog's default content, which is where
+			     frappe-ui renders both its DialogClose (X) button and the
+			     DialogTitle that reka wires aria-labelledby to. Both have to be
+			     supplied here or the dialog ships with no close affordance and an
+			     unresolvable aria-labelledby. DialogTitle is visually hidden
+			     because each pane already renders its own visible header. -->
+			<DialogTitle as="h1" class="sr-only">Settings</DialogTitle>
+			<div class="relative flex h-[calc(100vh-8rem)] flex-col sm:flex-row">
 				<!-- ===== grouped rail =====
 				     Presentation, NOT a security boundary: /api/method is reachable
 				     directly, so every endpoint gates itself server-side. -->
@@ -42,10 +49,26 @@
 					</template>
 				</div>
 
-				<!-- ===== active pane ===== -->
-				<div class="min-h-0 min-w-0 flex-1 overflow-hidden">
+				<!-- ===== active pane =====
+				     flex-col matters: panes not yet migrated (AiModelsPane) still
+				     render `.jv-settings-body`, whose `flex:1; overflow-y:auto`
+				     only becomes a scroll region inside a flex-column parent. On a
+				     plain block wrapper their content would clip silently with no
+				     scrollbar. -->
+				<div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 					<component :is="pane" />
 				</div>
+
+				<!-- Close lives at the dialog level, not in SettingsPane, so panes
+				     that have not been migrated yet still get one. -->
+				<DialogClose as-child>
+					<button
+						class="absolute right-3 top-3 flex size-7 items-center justify-center rounded text-ink-gray-7 hover:bg-surface-gray-3"
+						aria-label="Close settings"
+					>
+						<FeatherIcon name="x" class="size-4" />
+					</button>
+				</DialogClose>
 			</div>
 		</template>
 	</Dialog>
@@ -54,6 +77,10 @@
 <script setup>
 import { computed, defineAsyncComponent } from "vue";
 import { Dialog, FeatherIcon } from "frappe-ui";
+// Straight from reka-ui, the same primitives frappe-ui's Dialog uses
+// internally. Needed because overriding the #body slot drops the ones it
+// renders by default.
+import { DialogClose, DialogTitle } from "reka-ui";
 import { useShellStore } from "@/stores/shell";
 
 const store = useShellStore();
