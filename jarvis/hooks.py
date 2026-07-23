@@ -241,6 +241,14 @@ scheduler_events = {
 			# non-terminal Turn rows exist (so it costs one COUNT when the feature
 			# is off or idle).
 			"jarvis.chat.admission.sweep",
+			# Relay Pump backstop (chat concurrency, WP-1c): the LAST-RESORT
+			# recovery path for the one gap the sender-driven ensure_pump cannot
+			# cover — a turn committed, the pump then died, and no new send arrives
+			# to revive it. Scans ALL nonterminal Turn states per-shard (age-out,
+			# prepare-deadline reclaim, deadline park, finalize re-enqueue) then
+			# ensure_pump for any shard with live work. Cheap no-op (one DISTINCT)
+			# when no non-terminal Turn rows exist.
+			"jarvis.chat.pump.watchdog",
 			# Onboarding convergence safety net (review P0-2): when an LLM
 			# apply parked at "pending: admin applying config" (admin accepted
 			# it and its reconcile is converging server-side), probe
