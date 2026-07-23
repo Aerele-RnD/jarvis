@@ -23,6 +23,7 @@
   "cancel_reason",
   "recovering",
   "was_recovered",
+  "usage_recorded",
   "terminal_kind",
   "terminal_payload",
   "error",
@@ -185,6 +186,14 @@
    "label": "Was Recovered",
    "default": "0",
    "description": "Set when a watchdog/recovery re-attached or re-dispatched this turn (or a takeover re-stamped it); feeds the attempt suffix + stale-fence telemetry (D2 #16)."
+  },
+  {
+   "fieldname": "usage_recorded",
+   "fieldtype": "Check",
+   "label": "Usage Recorded",
+   "default": "0",
+   "no_copy": 1,
+   "description": "(turn_id) idempotency guard for token-usage accrual (R-4 / §10.7): CAS 0->1 in finalize so a finalize replay can never double-count the soft monthly cap. The naked += is retired; usage is a fenced once-only enrichment effect."
   },
   {
    "fieldname": "terminal_kind",

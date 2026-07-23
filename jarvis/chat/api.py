@@ -935,7 +935,7 @@ def send_message(
 	# the legacy reject and let accept_or_queue serialize + queue it. We still
 	# reject up front on OVERLOAD (queue too deep) before inserting the user row,
 	# so an overloaded site never accretes orphaned messages.
-	if admission.admission_enabled():
+	if admission.turn_machine_enabled():
 		if admission.shard_overloaded(conversation):
 			return {"ok": False, "reason": _("The site is busy — please try again in a moment.")}
 	elif _conversation_busy(conversation):
@@ -1128,7 +1128,7 @@ def send_message(
 	# committed above, so this is the OAR-3 "existing seed" branch.
 	_adm = None
 	_interactive = not int(background or 0)
-	if admission.admission_enabled():
+	if admission.turn_machine_enabled():
 		_dispatch_payload = {}
 		if atts:
 			_dispatch_payload["attachments"] = atts
@@ -1607,7 +1607,7 @@ def retry_message(message: str) -> dict:
 	_get_owned_conversation(doc.conversation)
 	# Flag ON: a retry racing a live turn QUEUES (accept_or_queue) rather than
 	# rejecting; flag OFF keeps the legacy single-flight reject.
-	if admission.admission_enabled():
+	if admission.turn_machine_enabled():
 		if admission.shard_overloaded(doc.conversation):
 			return {"ok": False, "reason": _("The site is busy — please try again in a moment.")}
 	elif _conversation_busy(doc.conversation):
@@ -1643,10 +1643,10 @@ def retry_message(message: str) -> dict:
 		"run_id": run_id,
 		"enqueued_at_ms": int(time.time() * 1000),
 	}
-	# Phase-0 admission (flag ON): retry reuses the EXISTING user message as the
+	# Phase-0 admission / pump (ON): retry reuses the EXISTING user message as the
 	# seed (OAR-3) - no new user row, no seq allocation - and routes through the
-	# admission chokepoint so a retry at cap queues fairly.
-	if admission.admission_enabled():
+	# accept chokepoint so a retry at cap queues fairly.
+	if admission.turn_machine_enabled():
 		_adm = admission.accept_or_queue(
 			conversation=doc.conversation,
 			run_id=run_id,
@@ -1681,6 +1681,17 @@ def stop_run(conversation: str, run_id: str | None = None) -> dict:
 	# settles the Turn (cancelled) + promotes the next queued turn there. Marking
 	# intent here just makes support/telemetry honest. Best-effort + flag-gated.
 	admission.mark_cancel_requested(conversation)
+	# Relay-Pump mode: flag the conversation's in-flight pump turn for cancellation
+	# (D2 #17) and wake the pump so its cancel sweep drives the out-of-band abort +
+	# aborted-terminal + settle-cancelled. The direct chat.abort below still fires
+	# (§8-D: the bus is never the only abort route); the two are idempotent.
+	try:
+		from jarvis.chat import pump
+
+		if pump.pump_configured():
+			pump.request_cancel_conversation(conversation)
+	except Exception:
+		frappe.log_error(title="stop_run pump cancel", message=frappe.get_traceback())
 	# F6: a stopped run's parked cards must not linger or resurface on resync.
 	# Sweep this owner's live confirmation tokens for the conversation (best-effort).
 	try:
@@ -1795,10 +1806,10 @@ def _redispatch_orphan(
 		payload["attachments"] = attachments
 	if context:
 		payload["context"] = context
-	# Phase-0 admission (flag ON): the orphan re-dispatch reuses the EXISTING
-	# seed message (OAR-3) and goes through the admission gate at background
-	# class so a re-dispatch at cap queues instead of piling onto a full shard.
-	if admission.admission_enabled():
+	# Phase-0 admission / pump (ON): the orphan re-dispatch reuses the EXISTING
+	# seed message (OAR-3) and goes through the accept gate at background class so a
+	# re-dispatch at cap queues instead of piling onto a full shard.
+	if admission.turn_machine_enabled():
 		_dispatch_payload = {}
 		if attachments:
 			_dispatch_payload["attachments"] = attachments
@@ -1956,7 +1967,7 @@ def _enqueue_turn(
 	# so the caller (apply_action / confirm_tool) can render the standard queued
 	# chip instead of leaving the card to vanish into silence.
 	out = {"run_id": run_id, "message_id": msg_doc.name}
-	if admission.admission_enabled():
+	if admission.turn_machine_enabled():
 		_adm = admission.accept_or_queue(
 			conversation=conversation,
 			run_id=run_id,

@@ -1,0 +1,196 @@
+"""WP-1d — the ONE critical settlement transaction (Relay Pump).
+
+Pump-invoked at a terminal frame (``on_terminal``), plus the reconcile path
+(settlement-owed turns recovered from the row, R-12) and the cancel sweep. This
+is D3 Race 3 realised against the ownership table (WP-D / D1):
+
+  * the final assistant-text PROJECTION + the ``terminal_observed -> finalizing |
+    errored | cancelled`` state advance + the conversation-slot release, ALL in
+    ONE epoch+version-fenced transaction (nothing blocking — no WS poll, R-4);
+  * the turn's REQUIRED ``Jarvis Turn Effect`` rows inserted in that SAME txn so
+    finalize has a CLOSED, force-done-bounded owed-enrichment set (OAR-9);
+  * a 0-rows LOSS routes through the ONE shared ``lease_lost_exit`` (a takeover
+    re-stamped the epoch — D3 S3; the uncommitted S1 message write rolls back);
+  * AFTER the winning commit, the AUTHORITATIVE fenced terminal realtime event
+    (``run:end`` with ``enrichment_pending`` for a success/abort, SUX-7; or a
+    ``run:error`` carrying today's Message.error classification for an error,
+    SUX-11), then ``enqueue_finalize`` — enrichment can never block the next turn
+    or convert a success to an error.
+
+This module is wired as the pump's ``invoke_settlement`` seam (pump.PumpDeps);
+``jarvis.chat.pump._default_invoke_settlement`` lazily delegates here so the
+DEFAULT deps settle correctly in production, and tests inject it directly.
+
+HARD INVARIANTS (restated): every turn mutation goes through ``turn_state``; the
+settlement txn contains NOTHING blocking; realtime publishes are fenced and fire
+only after the winning commit; usage is NOT in this txn (it is a finalize effect
+with a (turn_id) idempotency guard, R-4).
+"""
+
+from __future__ import annotations
+
+import json
+
+import frappe
+
+from jarvis.chat import turn_state as ts
+
+TURN = "Jarvis Chat Turn"
+MSG = "Jarvis Chat Message"
+CONV = "Jarvis Conversation"
+
+# The owed-enrichment set fixed at settlement (OAR-9). A relay:final success owes
+# the full set; an errored/cancelled terminal owes only the macro-advance +
+# telemetry hooks (there is no rich output/title/usage to enrich, and its reply
+# is already terminal — finalize NEVER un-settles it).
+FINAL_EFFECTS = (
+	"rich_outputs",
+	"usage",
+	"chat_asks",
+	"macro_advance",
+	"auto_title",
+	"wiki_nudge",
+	"telemetry_flush",
+)
+TERMINAL_EFFECTS = ("macro_advance", "telemetry_flush")
+
+
+def invoke_settlement(
+	run_id: str,
+	*,
+	relay_target_id: str,
+	epoch: int,
+	version: int,
+	terminal_kind: str,
+	terminal_payload: dict | None,
+	assistant_message: str | None,
+	owner: str | None,
+	conversation: str,
+	deps,
+) -> None:
+	"""Settle one turn at its terminal (D3 Race 3). Epoch+version-fenced; a stale
+	pump's CAS affects 0 rows and exits via ``lease_lost_exit`` (which rolls back
+	the uncommitted S1 message write). On a win, publishes the authoritative fenced
+	terminal event AFTER commit, then enqueues finalize. Never blocks."""
+	row = ts.read_turn(run_id)
+	if row is None:
+		return
+	# Already settled (finalizing/done/errored/cancelled) — a replayed/duplicate
+	# terminal. Idempotent no-op (the CAS below would also 0-row, but skip the work).
+	if row["state"] not in ("terminal_observed",):
+		return
+	v = int(row["version"])
+	kind = row.get("terminal_kind") or terminal_kind
+	am = assistant_message or row.get("assistant_message")
+	aborted = bool(row.get("cancel_requested")) and _is_aborted_payload(
+		row.get("terminal_kind"), terminal_payload
+	)
+
+	if aborted:
+		# Clean-stop terminal (D2 #19). The stop is a FLAG, not prose — keep whatever
+		# streamed; the SPA renders the marker from `stopped` (matches legacy).
+		if am:
+			ts._run_cas(f"UPDATE `tab{MSG}` SET stopped=1, streaming=0 WHERE name=%(m)s", {"m": am})
+		won = ts.settle_cancelled(run_id, v, epoch)
+		if won:
+			ts.insert_required_effects(run_id, TERMINAL_EFFECTS)
+		pub_kind, pub_extra = "run:end", {"stopped": True}
+	elif kind == "relay:error":
+		err = _error_text(terminal_payload)
+		# Mark errored WITHOUT overwriting the streamed content (matches legacy
+		# _mark_errored: streaming=0 + error, content preserved). SUX-11: the code
+		# classification travels on the realtime event below.
+		if am:
+			ts._run_cas(
+				f"UPDATE `tab{MSG}` SET streaming=0, error=%(e)s WHERE name=%(m)s",
+				{"e": err[:1000], "m": am},
+			)
+		won = ts.settle_errored(run_id, v, epoch, error=err)
+		if won:
+			ts.insert_required_effects(run_id, TERMINAL_EFFECTS)
+		pub_kind, pub_extra = "run:error", {"error": err, "code": _classify(err)}
+	else:
+		final_text = _final_text(terminal_payload)
+		# S1 final projection (final text beats the batcher tail); always clear
+		# streaming even when the terminal carried no text (matches legacy).
+		if am:
+			if final_text:
+				ts._run_cas(
+					f"UPDATE `tab{MSG}` SET content=%(c)s, streaming=0 WHERE name=%(m)s",
+					{"c": final_text, "m": am},
+				)
+			else:
+				ts._run_cas(f"UPDATE `tab{MSG}` SET streaming=0 WHERE name=%(m)s", {"m": am})
+		won = ts.settle_finalizing(run_id, v, epoch, required_effects=FINAL_EFFECTS)
+		pub_kind, pub_extra = "run:end", {"enrichment_pending": True}
+
+	if not won:
+		# D3 S3 stale-pump branch: rollback undoes the S1 message write; the shared
+		# lease-loss exit stops writing/publishing (re-raised as LeaseLostExit, which
+		# the pump's on_terminal wrapper converts to its shared exit).
+		ts.lease_lost_exit(run_id)
+		return
+
+	frappe.db.commit()  # slot released; the NEXT turn can be promoted
+
+	# S5 — authoritative fenced terminal event, ONLY after the winning commit.
+	if owner:
+		ts.publish_fenced(
+			owner,
+			pub_kind,
+			conversation_id=conversation,
+			run_id=run_id,
+			message_id=am,
+			**pub_extra,
+		)
+
+	# S6 — enqueue enrichment (idempotent per (turn, effect_name); force-done at 3).
+	deps.enqueue_finalize(run_id, relay_target_id)
+
+
+# --------------------------------------------------------------------------- #
+# terminal-payload helpers (mirror pump.py's so the two agree on shape)
+# --------------------------------------------------------------------------- #
+
+
+def _coerce_payload(payload):
+	if isinstance(payload, str):
+		try:
+			return json.loads(payload)
+		except Exception:
+			return {"text": payload}
+	return payload
+
+
+def _final_text(payload) -> str | None:
+	payload = _coerce_payload(payload)
+	if isinstance(payload, dict):
+		return payload.get("text")
+	return None
+
+
+def _error_text(payload) -> str:
+	payload = _coerce_payload(payload)
+	if isinstance(payload, dict):
+		return payload.get("error") or payload.get("state") or "The run ended with an error."
+	return "The run ended with an error."
+
+
+def _is_aborted_payload(terminal_kind, payload) -> bool:
+	payload = _coerce_payload(payload)
+	if isinstance(payload, dict):
+		if payload.get("aborted") is True:
+			return True
+		if payload.get("state") == "aborted":
+			return True
+	return False
+
+
+def _classify(err_text: str) -> str:
+	"""Preserve today's Message.error headline classification (SUX-11)."""
+	try:
+		from jarvis.chat.turn_handler import _classify_error
+
+		return _classify_error(err_text)
+	except Exception:
+		return "internal"

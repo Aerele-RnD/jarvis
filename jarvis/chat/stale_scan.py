@@ -139,6 +139,17 @@ def _sweep_orphan_turns(now) -> int:
 
 	errored = 0
 	for r in rows:
+		# The conversation was deleted out from under this orphan (the LEFT JOIN
+		# surfaces it as owner IS NULL). Redispatching or erroring onto a gone
+		# conversation can only raise LinkValidationError — the Turn.conversation /
+		# Message.conversation Links are required — so skip it: there is nothing to
+		# heal and nobody to notify. This is both a real production hardening (the
+		# module docstring already promises "a row whose conversation is gone" is
+		# handled) AND what makes this scan hermetic on a shared bench, where a
+		# concurrent test's rolled-back conversation would otherwise trip the global
+		# sweep (WP-1d: test_chat_stale_scan isolation).
+		if not r.get("owner"):
+			continue
 		job_id = f"jarvis-turn::{r['name']}::a{int(r['was_recovered'] or 0)}"
 		try:
 			status = get_job_status(job_id)

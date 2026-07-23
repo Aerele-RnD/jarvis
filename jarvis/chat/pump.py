@@ -128,6 +128,55 @@ _monotonic: Callable[[], float] = time.monotonic
 _sleep: Callable[[float], None] = time.sleep
 
 
+# --------------------------------------------------------------------------- #
+# Pump-mode routing flags (§10.9 — managed relay ONLY; self-host keeps legacy)
+# --------------------------------------------------------------------------- #
+#
+# Per-site flag `jarvis_pump_enabled` (frappe.conf): unset/falsy = off; a truthy
+# value = ON (the pump owns new-turn dispatch); the sentinel 'draining' = no NEW
+# pump admissions (new turns fall through to legacy) while the pump keeps draining
+# its existing Turn rows to terminal. Independent of `jarvis_phase0_admission_enabled`
+# (pump ON implies admission semantics INSIDE the machine).
+
+
+def pump_mode_active() -> bool:
+	"""True when the Relay Pump owns NEW turn dispatch on this bench: the per-site
+	``jarvis_pump_enabled`` flag is truthy AND not ``'draining'``, AND the transport
+	is managed relay (§10.9 — self-host turns keep the legacy worker-per-turn path
+	even when the flag is set). Cheap conf read + one selfhost check."""
+	flag = frappe.conf.get("jarvis_pump_enabled")
+	if not flag or str(flag).strip().lower() == "draining":
+		return False
+	from jarvis import selfhost
+
+	return not selfhost.is_self_hosted()
+
+
+def pump_draining() -> bool:
+	"""True when ``jarvis_pump_enabled == 'draining'`` on a managed bench: NO new
+	pump admissions (new turns fall through to the legacy path), while the pump keeps
+	draining its existing Turn-row turns to terminal (OAR-11 coexistence)."""
+	flag = frappe.conf.get("jarvis_pump_enabled")
+	if not flag or str(flag).strip().lower() != "draining":
+		return False
+	from jarvis import selfhost
+
+	return not selfhost.is_self_hosted()
+
+
+def pump_configured() -> bool:
+	"""True when the pump is turned on in ANY form (active OR draining) on a managed
+	bench. Once configured, the pump OWNS every ``Jarvis Chat Turn`` row, so Phase-0
+	admission's promote/sweep step back (they must never legacy-dispatch or reconcile
+	a pump-owned Turn row) — the coexistence discriminator that keeps the two
+	machines from fighting over the same rows."""
+	if not frappe.conf.get("jarvis_pump_enabled"):
+		return False
+	from jarvis import selfhost
+
+	return not selfhost.is_self_hosted()
+
+
 # Operational-error tuple for the DB-disconnect park path (frappe.db exposes the
 # driver's exception classes; resolved lazily so import never needs a live DB).
 def _operational_errors() -> tuple[type[BaseException], ...]:
@@ -281,58 +330,28 @@ def _default_invoke_settlement(
 	winning commit) publishes the fenced terminal ``run:end`` with
 	``enrichment_pending`` (SUX-7) and enqueues finalize.
 
-	The default is minimal-but-CORRECT (it really releases the slot, so the pump
-	settles standalone): it routes to ``settle_cancelled`` for an aborted
-	terminal, ``settle_errored`` for a ``relay:error`` terminal, else
-	``settle_finalizing``. On a 0-rows LOSS it raises ``LeaseLostExit`` (a
-	takeover re-stamped the epoch, D3 S3) — the ``on_terminal`` wrapper translates
-	that raise into the pump's shared lease-loss exit. WP-1d replaces this with
-	the full ownership-table settlement (usage idempotency, effect rows, etc.)."""
-	row = ts.read_turn(run_id)
-	if row is None:
-		return
-	v = int(row["version"])
-	kind = row.get("terminal_kind") or terminal_kind
-	aborted = bool(row.get("cancel_requested")) and _is_aborted_payload(
-		row.get("terminal_kind"), terminal_payload
+	WP-1d wires the FULL ownership-table settlement (``jarvis.chat.settlement``):
+	final-text projection + slot release + the OAR-9 effect-ledger inserts in ONE
+	epoch+version-fenced txn, then the authoritative fenced terminal event
+	(``run:end`` w/ ``enrichment_pending`` SUX-7, or ``run:error`` preserving the
+	Message.error classification SUX-11) AFTER commit, then ``enqueue_finalize``.
+	A 0-rows LOSS raises ``LeaseLostExit`` (D3 S3) — the ``on_terminal`` wrapper
+	converts it to the pump's shared exit. Lazy import so pump.py has no import
+	cycle with settlement (settlement imports turn_state only)."""
+	from jarvis.chat import settlement
+
+	settlement.invoke_settlement(
+		run_id,
+		relay_target_id=relay_target_id,
+		epoch=epoch,
+		version=version,
+		terminal_kind=terminal_kind,
+		terminal_payload=terminal_payload,
+		assistant_message=assistant_message,
+		owner=owner,
+		conversation=conversation,
+		deps=deps,
 	)
-
-	if aborted:
-		won = ts.settle_cancelled(run_id, v, epoch)
-		pub_kind = "run:end"
-	elif kind == "relay:error":
-		err = _error_text(terminal_payload)
-		won = ts.settle_errored(
-			run_id, v, epoch, error=err, assistant_message=assistant_message, final_text=err
-		)
-		pub_kind = "run:end"
-	else:
-		final_text = _final_text(terminal_payload)
-		won = ts.settle_finalizing(
-			run_id,
-			v,
-			epoch,
-			assistant_message=assistant_message,
-			final_text=final_text,
-			required_effects=("terminal_publish", "usage", "auto_title"),
-		)
-		pub_kind = "run:end"
-
-	if not won:
-		# D3 S3 stale-pump branch: rollback undoes the S1 message write; the shared
-		# lease-loss exit stops writing/publishing. Re-raised as LeaseLostExit.
-		ts.lease_lost_exit(run_id)
-		return
-	frappe.db.commit()
-	if owner:
-		ts.publish_fenced(
-			owner,
-			pub_kind,
-			conversation_id=conversation,
-			run_id=run_id,
-			enrichment_pending=True,
-		)
-	deps.enqueue_finalize(run_id, relay_target_id)
 
 
 def _default_apply_tool(run_id: str, event: dict) -> None:
@@ -852,6 +871,11 @@ def _dispatch_one(ctx: PumpContext, run_id: str) -> bool:
 	if ts.mark_streaming(run_id, rs.version, ctx.epoch, gateway_run_id=gw):
 		rs.version += 1
 		frappe.db.commit()
+		# R-2: the ack PROVES delivery, so clear EXACTLY the agent-correction notes
+		# prepare folded into this prompt (id-keyed, idempotent). Deferred from
+		# WP-1c; the clear must fire on proven delivery (post-ack), never on an
+		# ack-timeout. Best-effort — a clear failure never breaks the stream.
+		_clear_agent_notes_on_ack(rs.conversation, dispatch.get("drained_note_ids"))
 		return True
 	# 0 rows: distinguish a real epoch loss from a benign version drift (e.g. a
 	# concurrent cancel bumped version out-of-band).
@@ -1278,6 +1302,29 @@ def ensure_pump(relay_target_id: str, *, deps: PumpDeps | None = None) -> dict:
 	return {"enqueued": True, "job_id": job_id, "hop_counter": hop}
 
 
+def request_cancel_conversation(relay_or_conversation: str) -> bool:
+	"""Web ``stop_run`` hook (pump mode): flag the conversation's in-flight pump turn
+	for cancellation (D2 #17, actor-fenced) and wake the pump so its cancel sweep
+	drives the out-of-band ``chat.abort`` + aborted terminal + settle-cancelled.
+	Best-effort; returns True iff a turn was flagged. NOT terminal itself — the pump
+	still owns the abort + settle."""
+	conversation = relay_or_conversation
+	row = frappe.db.get_value(
+		TURN,
+		{"conversation": conversation, "state": ["in", ("dispatching", "streaming")]},
+		["run_id", "version", "relay_target_id"],
+		as_dict=True,
+	)
+	if not row:
+		return False
+	if ts.request_cancel(row["run_id"], int(row["version"])):
+		frappe.db.commit()
+		ensure_pump(row["relay_target_id"])
+		lpush_wake(row["relay_target_id"], row["run_id"])
+		return True
+	return False
+
+
 def _handoff(ctx: PumpContext) -> None:
 	"""Hop handoff (D6 §3): increment ``hop_counter`` and enqueue the successor
 	under a FRESH job id ``jarvis-pump::<site>::<target>::hop<n+1>`` (the SAME id
@@ -1462,7 +1509,22 @@ def _load_dispatch(turn: dict) -> dict:
 		"message": message or "",
 		"thinking": payload.get("thinking"),
 		"attachments": payload.get("attachments"),
+		"drained_note_ids": payload.get("drained_note_ids") or [],
 	}
+
+
+def _clear_agent_notes_on_ack(conversation: str, drained_note_ids) -> None:
+	"""R-2: clear the agent-correction notes prepare folded into this turn's prompt,
+	by id (airtight against overlapping turns), once delivery is PROVEN at the ack.
+	Best-effort — never breaks the stream."""
+	if not drained_note_ids:
+		return
+	try:
+		from jarvis.chat import agent_notes
+
+		agent_notes.clear(conversation, drained_note_ids)
+	except Exception:
+		frappe.log_error(title="pump.agent_notes_clear", message=frappe.get_traceback())
 
 
 def _epoch_lost(ctx: PumpContext, run_id: str) -> bool:

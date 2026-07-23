@@ -77,6 +77,20 @@ _INFLIGHT_FRESH_SECONDS = 180
 
 _ACTIVE_STATES = ("queued", "dispatching")
 
+# Every non-terminal in-flight state that consumes a shard credit. Phase-0 turns
+# only ever occupy 'dispatching' among these, so the dual-signal counts below are
+# BYTE-IDENTICAL when the pump is off (the pump-only states are empty). During
+# pump/legacy coexistence (rollout + draining, OAR-11) they make a new Phase-0/
+# legacy send see a pump-owned in-flight turn as busy/inflight.
+_INFLIGHT_STATES = ("preparing", "ready", "dispatching", "streaming", "terminal_observed")
+# Same set + 'queued' = "any turn on this conversation not yet terminal" — the
+# single-flight scope (a pump 'queued' turn also blocks a second send on its conv).
+_CONV_ACTIVE_STATES = ("queued",) + _INFLIGHT_STATES
+
+
+def _in_sql(values) -> str:
+	return ", ".join(f"'{v}'" for v in values)
+
 
 # --------------------------------------------------------------------------- #
 # Flag / shard helpers
@@ -87,6 +101,21 @@ def admission_enabled() -> bool:
 	"""Cheap conf read (no DB). The single gate that keeps flag-OFF behavior
 	byte-identical: callers short-circuit to the legacy dispatch path."""
 	return bool(frappe.conf.get(FLAG))
+
+
+def turn_machine_enabled() -> bool:
+	"""True when a NEW turn must go through the durable turn machine
+	(``accept_or_queue``): the Relay Pump is ACTIVE (it owns dispatch), OR Phase-0
+	admission is on AND the pump is not configured. During pump DRAINING this is
+	FALSE so new turns fall through to the pure-legacy ``_dispatch_turn`` path (no
+	Turn row), coexisting with the draining pump's Turn-row turns via the dual
+	signal (OAR-11). Inside ``accept_or_queue``, ``pump.pump_mode_active()`` then
+	picks the pump branch vs the Phase-0 branch."""
+	from jarvis.chat import pump
+
+	if pump.pump_mode_active():
+		return True
+	return admission_enabled() and not pump.pump_configured()
 
 
 def relay_target_id(conversation: str | None = None) -> str:
@@ -178,8 +207,10 @@ def _run_cas(sql: str, params: dict) -> int:
 
 
 def _turn_dispatching_count(target: str) -> int:
+	# Byte-identical to `state='dispatching'` when the pump is off; counts pump
+	# in-flight turns during coexistence (OAR-11).
 	return frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tab{TURN}` WHERE relay_target_id=%(t)s AND state='dispatching'",
+		f"SELECT COUNT(*) FROM `tab{TURN}` WHERE relay_target_id=%(t)s AND state IN ({_in_sql(_INFLIGHT_STATES)})",
 		{"t": target},
 	)[0][0]
 
@@ -187,7 +218,7 @@ def _turn_dispatching_count(target: str) -> int:
 def _turn_dispatching_count_by_class(target: str, turn_class: str) -> int:
 	return frappe.db.sql(
 		f"""SELECT COUNT(*) FROM `tab{TURN}`
-		WHERE relay_target_id=%(t)s AND state='dispatching' AND turn_class=%(k)s""",
+		WHERE relay_target_id=%(t)s AND state IN ({_in_sql(_INFLIGHT_STATES)}) AND turn_class=%(k)s""",
 		{"t": target, "k": turn_class},
 	)[0][0]
 
@@ -219,7 +250,8 @@ def _legacy_streaming_count(target: str) -> int:
 			  AND m.modified > %(fresh)s
 			  AND NOT EXISTS (
 					SELECT 1 FROM `tab{TURN}` t
-					WHERE t.conversation = m.conversation AND t.state='dispatching'
+					WHERE t.conversation = m.conversation
+					  AND t.state IN ({_in_sql(_INFLIGHT_STATES)})
 			  )
 		) x
 		""",
@@ -247,11 +279,13 @@ def shard_overloaded(conversation: str | None = None) -> bool:
 
 
 def _conv_has_other_active_turn(conversation: str, run_id: str) -> bool:
-	"""Any other non-terminal (queued/dispatching) Turn row on this conversation."""
+	"""Any other non-terminal Turn row on this conversation (single-flight scope).
+	Byte-identical to ('queued','dispatching') when the pump is off; sees a
+	pump-owned in-flight turn during coexistence (OAR-11)."""
 	return bool(
 		frappe.db.sql(
 			f"""SELECT 1 FROM `tab{TURN}`
-			WHERE conversation=%(c)s AND name!=%(r)s AND state IN ('queued','dispatching')
+			WHERE conversation=%(c)s AND name!=%(r)s AND state IN ({_in_sql(_CONV_ACTIVE_STATES)})
 			LIMIT 1""",
 			{"c": conversation, "r": run_id},
 		)
@@ -402,6 +436,9 @@ def accept_or_queue(
 	``dispatch`` is a zero-arg callable that runs the legacy ``_dispatch_turn``
 	for this turn; it is invoked ONLY on the admit path and ONLY after the
 	admission txn commits."""
+	from jarvis.chat import pump
+
+	pump_mode = pump.pump_mode_active()
 	target = relay_target_id(conversation)
 	turn_class = turn_class if turn_class in ("interactive", "background") else "interactive"
 	payload_json = json.dumps(dispatch_payload) if dispatch_payload else None
@@ -478,34 +515,61 @@ def accept_or_queue(
 				"queued_position": None,
 			}
 
-		# Admit decision: dispatch iff nothing else is live on this conversation
-		# (single-flight) AND the shard has a free credit.
-		conv_busy = _conv_has_other_active_turn(conversation, run_id) or _conv_legacy_busy(conversation)
-		inflight = _shard_inflight(target)
-		queue_depth_at_accept = _shard_queued_depth(target)
-		admit = (not conv_busy) and (inflight < _max_inflight())
+		if pump_mode:
+			# Relay-Pump mode: the pump OWNS dispatch. Leave the turn 'queued'
+			# (reserved=0, pump_epoch=0); the pump reserves the credit at the
+			# queued->preparing PROMOTION point under the shard lock (D3 Race 2) and
+			# drives prepare->dispatch->settle. NO Phase-0 admit CAS, NO legacy
+			# dispatch(). A UI hint (will_dispatch) mirrors the Phase-0 admit read
+			# WITHOUT the CAS — the pump is authoritative.
+			conv_busy = _conv_has_other_active_turn(conversation, run_id) or _conv_legacy_busy(conversation)
+			will_dispatch = (not conv_busy) and (_shard_inflight(target) < _max_inflight())
+			frappe.db.commit()  # releases both locks; row durable
+		else:
+			# Admit decision: dispatch iff nothing else is live on this conversation
+			# (single-flight) AND the shard has a free credit.
+			conv_busy = _conv_has_other_active_turn(conversation, run_id) or _conv_legacy_busy(conversation)
+			inflight = _shard_inflight(target)
+			queue_depth_at_accept = _shard_queued_depth(target)
+			admit = (not conv_busy) and (inflight < _max_inflight())
 
-		if admit:
-			affected = _run_cas(
-				f"""UPDATE `tab{TURN}`
-				SET state='dispatching', reserved=1, dispatching_at=%(now)s,
-				    reservation_expires_at=%(exp)s, version=version+1
-				WHERE name=%(r)s AND state='queued' AND version=0""",
-				{
-					"r": run_id,
-					"now": _now(),
-					"exp": frappe.utils.add_to_date(None, seconds=RESERVE_TTL_S),
-				},
-			)
-			if affected != 1:
-				# Lost a race to a concurrent promoter (should not happen under the
-				# shard lock); fall back to queued and let promotion pick it up.
-				admit = False
+			if admit:
+				affected = _run_cas(
+					f"""UPDATE `tab{TURN}`
+					SET state='dispatching', reserved=1, dispatching_at=%(now)s,
+					    reservation_expires_at=%(exp)s, version=version+1
+					WHERE name=%(r)s AND state='queued' AND version=0""",
+					{
+						"r": run_id,
+						"now": _now(),
+						"exp": frappe.utils.add_to_date(None, seconds=RESERVE_TTL_S),
+					},
+				)
+				if affected != 1:
+					# Lost a race to a concurrent promoter (should not happen under the
+					# shard lock); fall back to queued and let promotion pick it up.
+					admit = False
 
-		frappe.db.commit()  # releases both locks; row is durable
+			frappe.db.commit()  # releases both locks; row is durable
 	except Exception:
 		frappe.db.rollback()  # release the FOR UPDATE locks on an unexpected failure
 		raise
+
+	if pump_mode:
+		# Wake the pump AFTER the durable commit (§8-E PRIMARY start path). ensure_pump
+		# is MariaDB-authoritative; lpush_wake is a best-effort tick (the pump scans
+		# queued rows on wake + every watchdog tick regardless).
+		_telemetry("accept_pump", run_id=run_id, target=target, turn_class=turn_class)
+		pump.ensure_pump(target)
+		pump.lpush_wake(target, run_id)
+		pos = None if will_dispatch else _position_of(run_id, target)
+		return {
+			"ok": True,
+			"dispatched": bool(will_dispatch),
+			"run_id": run_id,
+			"queued_position": pos,
+			"pump": True,
+		}
 
 	_telemetry(
 		"accept",
@@ -586,7 +650,16 @@ def promote_next(target: str | None = None) -> int:
 	the flag off, existing Turn rows still drain to terminal via the sweep's
 	reconcile/age-out duties (which only settle/cancel existing rows), but no
 	queued row is ever promoted onto a worker - disabling admission is a true
-	kill switch for new dispatch, not just for new rows."""
+	kill switch for new dispatch, not just for new rows.
+
+	WP-1d: once the Relay Pump is configured (active OR draining) it OWNS every
+	Jarvis Chat Turn row and drives its own promote/reconcile via the pump
+	watchdog; Phase-0 must NOT legacy-dispatch a pump-owned queued turn, so this
+	steps back entirely."""
+	from jarvis.chat import pump
+
+	if pump.pump_configured():
+		return 0
 	if not admission_enabled():
 		return 0
 	if target is None:
@@ -921,8 +994,18 @@ def sweep() -> dict:
 	is off. Disabling admission therefore stops all new dispatch immediately;
 	the leftover rows settle themselves out. accept_or_queue is never reached
 	with the flag off (all four callers gate on ``admission_enabled`` first), so
-	no NEW rows are created - the flag-OFF hot path stays byte-identical."""
+	no NEW rows are created - the flag-OFF hot path stays byte-identical.
+
+	WP-1d: once the Relay Pump is configured (active OR draining) it OWNS every
+	Jarvis Chat Turn row and reconciles them via the pump watchdog; Phase-0's
+	Turn<->Message reconcile / reservation-reclaim would fight the pump over the
+	same rows, so the sweep steps back entirely (new draining-window turns are pure
+	legacy with no Turn row, so nothing here is owed)."""
 	summary = {"reclaimed": 0, "reconciled": 0, "aged_out": 0, "promoted": 0}
+	from jarvis.chat import pump
+
+	if pump.pump_configured():
+		return summary
 	try:
 		open_count = frappe.db.sql(
 			f"SELECT COUNT(*) FROM `tab{TURN}` WHERE state IN ('queued','dispatching')"

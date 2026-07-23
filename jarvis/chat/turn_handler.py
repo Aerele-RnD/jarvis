@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass, field
 
 import frappe
 
@@ -445,104 +446,43 @@ def _admission_settle(run_id: str, state: str, error: str | None = None) -> None
 		frappe.log_error(title="admission settle hook", message=frappe.get_traceback())
 
 
-def handle_chat_send(payload: dict) -> None:
-	"""Drive one agent turn end to end.
+@dataclass
+class _PreparedPrompt:
+	"""The assembled, ready-to-send turn prompt + its bootstrap metadata. Produced
+	by :func:`assemble_prompt` and consumed by BOTH the legacy ``handle_chat_send``
+	body AND the Relay-Pump ``prepare`` job (jarvis.chat.prepare) — the ONE source
+	of truth for the clause ORDER (a documented safety invariant) + attachment
+	fencing, so the pump-mode prompt is byte-for-byte what the legacy path sends."""
 
-	Called by the RQ shim in ``jarvis.chat.worker.run_agent_turn`` today;
-	Phase 2 of the chat-bridge refactor will also call this from a gevent
-	subscriber inside the Python realtime process. Either way the payload
-	carries everything needed to execute one turn:
+	settings: object
+	chat_user: str
+	user_message: str
+	vision_parts: list = field(default_factory=list)
+	inlined_prompt_chars: int = 0
+	drained_notes: list = field(default_factory=list)
+	drained_ids: list = field(default_factory=list)
 
-	    {
-	        "conversation_id": str,
-	        "message_id": str,
-	        "run_id": str,
-	        "attachments": list[dict] | None,
-	        "context": dict | None,
-	    }
 
-	``attachments`` (optional): list of {file_url, file_name} dicts. Text files are
-	inlined into the prompt; images/PDFs are sent to the model as native vision
-	(managed pool + a vision-capable model) - see _prepare_attachments. The
-	persisted/visible user message keeps only the "📎 name" marker, so file
-	bytes never bloat the chat history.
+def assemble_prompt(
+	conv,
+	*,
+	message_id: str,
+	conversation_id: str,
+	context,
+	attachments,
+	user: str,
+) -> _PreparedPrompt:
+	"""Assemble the full turn prompt (the ``[Context: …]`` bracket + every clause,
+	the doc/report viewing context, and inlined/vision attachments) for one turn.
 
-	``context`` (optional): {doctype, name} of the ERP document the user was
-	viewing when they asked (floating-widget auto-context). Prepended to the
-	agent prompt only; the persisted/visible user message is unchanged.
-
-	Sprint-3 (2026-06-16 review): the inline ``except OpenclawUnreachableError``
-	blocks only marked the placeholder errored for openclaw-specific
-	failures. Any OTHER exception (cryptography.InvalidKey, ssl.SSLError,
-	programmer bug in _handle_event, etc.) propagated to RQ without
-	calling _mark_errored, leaving the assistant row stuck at
-	``streaming=1`` forever (the UI poller spins on the empty body).
-	An outer try/except Exception now catches everything else, marks the
-	row errored + publishes run:error, then re-raises so RQ still records
-	the job as failed.
-	"""
-	conversation_id: str = payload["conversation_id"]
-	message_id: str = payload["message_id"]
-	run_id: str = payload["run_id"]
-	attachments = payload.get("attachments")
-	context = payload.get("context")
-
-	# Latency telemetry (plan Phase 0): one summary line per turn with the
-	# segment timings that dominate first-message latency. queue_wait_ms is
-	# how long the job sat between the web request's enqueue and this
-	# handler starting (RQ dequeue + fork on the default backend).
-	from jarvis.chat.latency import get_logger as _get_latency_logger
-
-	_lat = _get_latency_logger()
-	t_handle0 = time.monotonic()
-	enqueued_at_ms = payload.get("enqueued_at_ms")
-	queue_wait_ms = max(0, int(time.time() * 1000) - int(enqueued_at_ms)) if enqueued_at_ms else -1
-	# Stream-phase stats filled in by _consume: ms to the first event of any
-	# kind, ms to the first assistant delta (= first visible token), and how
-	# many tool events fired before that first delta (measures the persona's
-	# read-SOUL/TOOLS/STYLE-before-answering tax; see the latency plan).
-	stream_stats = {
-		"t0": None,
-		"first_event_ms": -1,
-		"first_delta_ms": -1,
-		"pre_reply_tool_calls": 0,
-	}
-	checkout_ms = -1
-	session_create_ms = 0
-
-	conv = frappe.get_doc(CONV, conversation_id)
-	user = conv.owner
-	# User-message intake: the user replied, so any Pending chat-sourced
-	# approval materialized from a previous ```jarvis-ask fence is answered
-	# in chat now — flip it to Answered so the board never offers a stale
-	# double-answer. One indexed UPDATE; best-effort (hot path, never raises).
-	try:
-		from jarvis.chat import chat_asks
-
-		chat_asks.resolve_on_user_message(conversation_id)
-	except Exception:
-		frappe.log_error(
-			title="chat asks: resolve_on_user_message failed",
-			message=frappe.get_traceback(),
-		)
-	# Wall-clock turn start (epoch ms) - scopes codex imagegen output produced
-	# during this turn (compared against the generated image files' mtime).
-	turn_start_ms = int(time.time() * 1000)
-
-	# Create the assistant placeholder row up-front so the browser has a
-	# stable name to attach realtime events to.
-	assistant_msg = _create_assistant_placeholder(conv)
-
-	_publish_to_user(
-		user,
-		{
-			"kind": "run:start",
-			"conversation_id": conversation_id,
-			"message_id": assistant_msg.name,
-			"run_id": run_id,
-		},
-	)
-
+	Extracted VERBATIM from ``handle_chat_send`` so the Relay-Pump prepare job
+	reuses the exact same assembly (no logic duplication — WP-1d). It performs
+	only READS (Singles/Company/wiki/agent-notes snapshot + permission-gated File
+	reads) + string building; it has NO side effects, so calling it from either
+	owner is byte-identical. ``agent_notes`` are READ here (folded into the
+	bracket) but NOT cleared — the clear fires only after PROVEN delivery
+	(post-ack), which is the pump's job in managed-pump mode (R-2) and
+	``handle_chat_send``'s job on the legacy path."""
 	settings = frappe.get_single("Jarvis Settings")
 	# Fetch content + sender of THIS user message in one round-trip.
 	# msg_row.owner is the Frappe user who sent this turn, set by Frappe
@@ -692,6 +632,137 @@ def handle_chat_send(payload: dict) -> None:
 	_prompt_chars_before_attachments = len(user_message)
 	user_message, vision_parts = _prepare_attachments(user_message, attachments, vision_ok)
 	inlined_prompt_chars = max(0, len(user_message) - _prompt_chars_before_attachments)
+	return _PreparedPrompt(
+		settings=settings,
+		chat_user=chat_user,
+		user_message=user_message,
+		vision_parts=vision_parts,
+		inlined_prompt_chars=inlined_prompt_chars,
+		drained_notes=drained_notes,
+		drained_ids=drained_ids,
+	)
+
+
+def handle_chat_send(payload: dict) -> None:
+	"""Drive one agent turn end to end.
+
+	Called by the RQ shim in ``jarvis.chat.worker.run_agent_turn`` today;
+	Phase 2 of the chat-bridge refactor will also call this from a gevent
+	subscriber inside the Python realtime process. Either way the payload
+	carries everything needed to execute one turn:
+
+	    {
+	        "conversation_id": str,
+	        "message_id": str,
+	        "run_id": str,
+	        "attachments": list[dict] | None,
+	        "context": dict | None,
+	    }
+
+	``attachments`` (optional): list of {file_url, file_name} dicts. Text files are
+	inlined into the prompt; images/PDFs are sent to the model as native vision
+	(managed pool + a vision-capable model) - see _prepare_attachments. The
+	persisted/visible user message keeps only the "📎 name" marker, so file
+	bytes never bloat the chat history.
+
+	``context`` (optional): {doctype, name} of the ERP document the user was
+	viewing when they asked (floating-widget auto-context). Prepended to the
+	agent prompt only; the persisted/visible user message is unchanged.
+
+	Sprint-3 (2026-06-16 review): the inline ``except OpenclawUnreachableError``
+	blocks only marked the placeholder errored for openclaw-specific
+	failures. Any OTHER exception (cryptography.InvalidKey, ssl.SSLError,
+	programmer bug in _handle_event, etc.) propagated to RQ without
+	calling _mark_errored, leaving the assistant row stuck at
+	``streaming=1`` forever (the UI poller spins on the empty body).
+	An outer try/except Exception now catches everything else, marks the
+	row errored + publishes run:error, then re-raises so RQ still records
+	the job as failed.
+	"""
+	conversation_id: str = payload["conversation_id"]
+	message_id: str = payload["message_id"]
+	run_id: str = payload["run_id"]
+	attachments = payload.get("attachments")
+	context = payload.get("context")
+
+	# Latency telemetry (plan Phase 0): one summary line per turn with the
+	# segment timings that dominate first-message latency. queue_wait_ms is
+	# how long the job sat between the web request's enqueue and this
+	# handler starting (RQ dequeue + fork on the default backend).
+	from jarvis.chat.latency import get_logger as _get_latency_logger
+
+	_lat = _get_latency_logger()
+	t_handle0 = time.monotonic()
+	enqueued_at_ms = payload.get("enqueued_at_ms")
+	queue_wait_ms = max(0, int(time.time() * 1000) - int(enqueued_at_ms)) if enqueued_at_ms else -1
+	# Stream-phase stats filled in by _consume: ms to the first event of any
+	# kind, ms to the first assistant delta (= first visible token), and how
+	# many tool events fired before that first delta (measures the persona's
+	# read-SOUL/TOOLS/STYLE-before-answering tax; see the latency plan).
+	stream_stats = {
+		"t0": None,
+		"first_event_ms": -1,
+		"first_delta_ms": -1,
+		"pre_reply_tool_calls": 0,
+	}
+	checkout_ms = -1
+	session_create_ms = 0
+
+	conv = frappe.get_doc(CONV, conversation_id)
+	user = conv.owner
+	# User-message intake: the user replied, so any Pending chat-sourced
+	# approval materialized from a previous ```jarvis-ask fence is answered
+	# in chat now — flip it to Answered so the board never offers a stale
+	# double-answer. One indexed UPDATE; best-effort (hot path, never raises).
+	try:
+		from jarvis.chat import chat_asks
+
+		chat_asks.resolve_on_user_message(conversation_id)
+	except Exception:
+		frappe.log_error(
+			title="chat asks: resolve_on_user_message failed",
+			message=frappe.get_traceback(),
+		)
+	# Wall-clock turn start (epoch ms) - scopes codex imagegen output produced
+	# during this turn (compared against the generated image files' mtime).
+	turn_start_ms = int(time.time() * 1000)
+
+	# Create the assistant placeholder row up-front so the browser has a
+	# stable name to attach realtime events to.
+	assistant_msg = _create_assistant_placeholder(conv)
+
+	_publish_to_user(
+		user,
+		{
+			"kind": "run:start",
+			"conversation_id": conversation_id,
+			"message_id": assistant_msg.name,
+			"run_id": run_id,
+		},
+	)
+
+	# Prompt assembly (shared with the Relay-Pump prepare job so the two paths
+	# emit a byte-identical prompt — clause order + attachment fencing live in
+	# ONE place, jarvis.chat.turn_handler.assemble_prompt). Pure reads + string
+	# building; agent_notes are READ (folded in) but cleared only after a proven
+	# delivery below.
+	_ap = assemble_prompt(
+		conv,
+		message_id=message_id,
+		conversation_id=conversation_id,
+		context=context,
+		attachments=attachments,
+		user=user,
+	)
+	settings = _ap.settings
+	chat_user = _ap.chat_user
+	user_message = _ap.user_message
+	vision_parts = _ap.vision_parts
+	inlined_prompt_chars = _ap.inlined_prompt_chars
+	drained_notes = _ap.drained_notes
+	drained_ids = _ap.drained_ids
+	from jarvis import selfhost
+	from jarvis.chat import agent_notes
 	# The /think directive: self-hosted still inlines it as the FIRST bytes
 	# of the message body (openclaw's leading-directive parser strips it
 	# from there); managed sends it as the chat_send ``thinking`` param
