@@ -779,3 +779,53 @@ class TestCancelDurableMarker(_AdmissionTestCase):
 			pluck="name",
 		)
 		self.assertEqual(len(markers), 1, "age-out leaves a durable transcript marker")
+
+
+class TestEnqueueFailureCompensation(_AdmissionTestCase):
+	"""CDX-9: a dispatch-enqueue failure after the admission commit must CAS the
+	turn back to queued and release its credit - on BOTH the accept path and the
+	promotion path - instead of pinning a credit until the reservation TTL."""
+
+	def test_accept_path_compensates_on_enqueue_failure(self):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		def boom():
+			raise RuntimeError("broker down")
+
+		out = admission.accept_or_queue(
+			conversation=conv,
+			run_id="cdx9-accept",
+			seed_message=seed,
+			turn_class="interactive",
+			dispatch=boom,
+		)
+		self.assertFalse(out["dispatched"])
+		self.assertIsNotNone(out["queued_position"])
+		row = frappe.db.get_value(
+			"Jarvis Chat Turn", "cdx9-accept", ["state", "reserved"], as_dict=True
+		)
+		self.assertEqual(row.state, "queued")
+		self.assertEqual(int(row.reserved), 0)
+
+	def test_promote_path_compensates_on_enqueue_failure(self):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		with patch.object(admission, "_max_inflight", return_value=0):
+			admission.accept_or_queue(
+				conversation=conv,
+				run_id="cdx9-promote",
+				seed_message=seed,
+				turn_class="interactive",
+				dispatch=lambda: None,
+			)
+		self.assertEqual(frappe.db.get_value("Jarvis Chat Turn", "cdx9-promote", "state"), "queued")
+		with (
+			patch.object(admission, "_dispatch_promoted", side_effect=RuntimeError("broker down")),
+			patch.object(admission, "_max_inflight", return_value=4),
+		):
+			admission.promote_next()
+		row = frappe.db.get_value(
+			"Jarvis Chat Turn", "cdx9-promote", ["state", "reserved"], as_dict=True
+		)
+		self.assertEqual(row.state, "queued")
+		self.assertEqual(int(row.reserved), 0)

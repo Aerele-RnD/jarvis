@@ -518,8 +518,17 @@ def accept_or_queue(
 
 	if admit:
 		# Enqueue the legacy turn job AFTER the durable commit (mirrors the
-		# _dispatch_turn after_commit invariant).
-		dispatch()
+		# _dispatch_turn after_commit invariant). CDX-9: if the broker is down,
+		# compensate (dispatching -> queued + release) so the turn stays durably
+		# queued for the sweep/promoter instead of pinning a credit on a job that
+		# never existed.
+		try:
+			dispatch()
+		except Exception:
+			frappe.log_error(title="admission.accept dispatch", message=frappe.get_traceback())
+			_compensate_failed_dispatch(run_id, target)
+			pos = _position_of(run_id, target)
+			return {"ok": True, "dispatched": False, "run_id": run_id, "queued_position": pos}
 		return {"ok": True, "dispatched": True, "run_id": run_id, "queued_position": None}
 
 	pos = _position_of(run_id, target)
@@ -548,6 +557,29 @@ def _cas_dispatch(run_id: str) -> bool:
 		)
 		== 1
 	)
+
+
+def _compensate_failed_dispatch(run_id: str, target: str) -> None:
+	"""CDX-9: the RQ enqueue failed AFTER the admission commit. Return the slot
+	immediately: CAS the exact ``dispatching`` attempt back to ``queued``, CLEAR the
+	reservation, and republish positions - otherwise the credit is pinned until the
+	reservation TTL and capacity silently shrinks under repeated broker failures."""
+	try:
+		_run_cas(
+			f"""UPDATE `tab{TURN}`
+			SET state='queued', reserved=0, dispatching_at=NULL,
+			    reservation_expires_at=NULL, version=version+1
+			WHERE name=%(r)s AND state='dispatching'""",
+			{"r": run_id},
+		)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(title="admission.compensate_failed_dispatch", message=frappe.get_traceback())
+		return
+	try:
+		_publish_queue_positions(target)
+	except Exception:
+		pass
 
 
 def _dispatch_promoted(row: dict) -> None:
@@ -618,7 +650,11 @@ def promote_next(target: str | None = None) -> int:
 			_dispatch_promoted(row)
 			_telemetry("promote", run_id=row["run_id"], target=target, queue_wait_ms=wait_ms)
 		except Exception:
+			# CDX-9: enqueue failed after the promotion commit - compensate (CAS
+			# dispatching -> queued + release the credit) instead of only logging,
+			# so the next promoter can retry the turn.
 			frappe.log_error(title="admission.promote dispatch", message=frappe.get_traceback())
+			_compensate_failed_dispatch(row["run_id"], target)
 
 	# Positions shifted for everyone still queued.
 	try:
