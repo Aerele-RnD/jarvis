@@ -2082,24 +2082,21 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		</div>`;
 	}
 
-	// A scheduled switch is only revocable while no mandate has moved to the
-	// cheaper plan. Once one has, Razorpay already released the old mandate and
-	// there is nothing to fall back to - so say that instead of offering a
-	// button the server would refuse with DowngradeCommitted.
+	// Both shapes are undoable, but they cost differently: an Annual switch is a
+	// plain flag we clear, while a Monthly one already moved the mandate to the
+	// cheaper plan (the old mandate is released and terminal at Razorpay), so
+	// keeping the current plan means authorising a replacement at its price.
+	// Say which one they're in rather than springing the Checkout on them.
 	function renderScheduledSwitch() {
 		if (!account.scheduled_plan) return "";
 		const name = esc(account.scheduled_plan_name || account.scheduled_plan);
 		const on = account.scheduled_plan_on
 			? " on " + esc(String(account.scheduled_plan_on).split(" ")[0])
 			: "";
-		const revocable = account.scheduled_downgrade_revocable;
-		const locked = revocable
+		const cost = account.scheduled_downgrade_revocable
 			? ""
-			: " Auto-renewal has already moved to the new price, so this switch can't be undone.";
-		const keep = revocable
-			? `<button class="ja-btn ja-btn-ghost" id="ja-cta-keep" data-action="keep-plan">Keep current plan</button>`
-			: "";
-		return `<p class="ja-sub" style="margin-top:8px">Switching to ${name}${on}. You keep your current plan until then.${locked}</p>${keep}`;
+			: " Keeping it means setting up auto-renewal again at your current price.";
+		return `<p class="ja-sub" style="margin-top:8px">Switching to ${name}${on}. You keep your current plan until then.${cost}</p><button class="ja-btn ja-btn-ghost" id="ja-cta-keep" data-action="keep-plan">Keep current plan</button>`;
 	}
 
 	function primaryCta(sub) {
@@ -2170,7 +2167,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		setBusy("#ja-cta-keep", true);
 		frappe
 			.call({ method: "jarvis.account.cancel_scheduled_downgrade" })
-			.then(() => {
+			.then((r) => {
+				setBusy("#ja-cta-keep", false);
+				const data = (r.message && r.message.data) || r.message || {};
+				if (data.razorpay_subscription_id) {
+					// Monthly: the cheaper mandate is already dropped, so re-arm the
+					// current plan in the same step (mandate-only, nothing charged).
+					return openCheckout(data, /*upgrade=*/ false);
+				}
 				// loadInitial() re-renders the card, which drops the busy button.
 				frappe.show_alert({
 					message: __("Plan switch cancelled - you're staying on your current plan."),

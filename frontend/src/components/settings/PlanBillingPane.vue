@@ -67,9 +67,11 @@
 					</ul>
 				</template>
 
-				<!-- A downgrade already scheduled: state it plainly. Cancel is
-					 shown only when the server says it is revocable (a Monthly
-					 mandate migration is committal). -->
+				<!-- A downgrade already scheduled: state it plainly. Undoing an
+					 Annual one is a plain flag we clear, so it happens inline. A
+					 Monthly one already moved the mandate, so undoing needs a
+					 Checkout to re-arm the current price - and this pane has no
+					 Razorpay, so it deep-links to the Desk flow like upgrade/renew. -->
 				<div v-if="scheduledDowngrade" class="jv-acct-notice jv-acct-notice--row">
 					<span>{{ scheduledDowngradeNotice }}</span>
 					<button
@@ -81,6 +83,9 @@
 					>
 						Keep current plan
 					</button>
+					<a v-else :href="billingUrl" class="jv-btn jv-btn--sm jv-btn--ghost">
+						Keep current plan
+					</a>
 				</div>
 
 				<!-- Upgrade / Renew — deep-links to the existing Desk billing flow
