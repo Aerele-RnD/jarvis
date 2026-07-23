@@ -99,7 +99,7 @@ onMounted(() => {
 				Ask Jarvis anything
 			</div>
 			<div style="font-size: 14px; line-height: 1.5">
-				Invoices, stock, customers, reports — in plain language. Start a chat and see.
+				Invoices, stock, customers, reports, all in plain language. Start a chat and see.
 			</div>
 		</div>
 

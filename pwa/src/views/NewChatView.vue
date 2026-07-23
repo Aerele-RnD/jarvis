@@ -66,10 +66,10 @@ const uploading = computed(() => attachments.value.some((a) => a.uploading));
 function modelDesc(name) {
 	const n = String(name).toLowerCase();
 	if (n.includes("opus") || n.includes("5.5"))
-		return "Most capable — for complex, multi-step work";
+		return "Most capable, for complex multi-step work";
 	if (n.includes("sonnet")) return "Balanced speed and intelligence";
 	if (n.includes("haiku") || n.includes("mini") || n.includes("flash"))
-		return "Fastest — for quick everyday tasks";
+		return "Fastest, for quick everyday tasks";
 	return "Available on your plan";
 }
 
