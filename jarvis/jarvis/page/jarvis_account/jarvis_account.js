@@ -2158,44 +2158,60 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// ---- downgrade (applies next cycle) -----------------------------------
 	function openDowngradeModal() {
 		const plans = account.downgrade_plans || [];
+		// Downgrades are about paying less, so the saving vs the current plan
+		// is the one figure worth emphasising — everything else stays quiet.
+		const curPrice = (account.plan || {}).price_inr || 0;
 		const cards = plans
-			.map(
-				(p) => `
-			<div class="ja-up-card" data-plan="${esc(p.name)}">
-				<div class="ja-up-card-head">
-					<div class="ja-up-card-name">${esc(p.plan_name || p.name)}</div>
-					<div class="ja-up-card-price">${inr(p.price_inr)} <span class="jo-plan-cycle">${cycleLabel(
+			.map((p) => {
+				const saving = Math.max(0, curPrice - (p.price_inr || 0));
+				const save = saving
+					? `<div class="ja-dn-save">Save ${inr(saving)}${cycleLabel(
+							p.billing_cycle
+					  )}</div>`
+					: "";
+				return `
+			<div class="ja-dn-row" data-plan="${esc(p.name)}">
+				<div class="ja-dn-info">
+					<div class="ja-dn-name">${esc(p.plan_name || p.name)}</div>
+					${save}
+				</div>
+				<div class="ja-dn-price">${inr(p.price_inr)}<span class="jo-plan-cycle">${cycleLabel(
 					p.billing_cycle
 				)}</span></div>
-				</div>
-				<button class="ja-btn ja-btn-primary ja-up-pick" data-plan="${esc(
+				<button class="ja-btn ja-btn-ghost ja-dn-pick" data-plan="${esc(
 					p.name
-				)}">Switch at next cycle</button>
-			</div>`
-			)
+				)}">Switch</button>
+			</div>`;
+			})
 			.join("");
+		// The cutover date is shared by every option, so state it once here
+		// rather than repeating it on each row.
+		const endNice = account.current_period_end
+			? String(frappe.datetime.str_to_user(account.current_period_end)).split(" ")[0]
+			: "";
+		const until = endNice ? `<b>${esc(endNice)}</b>` : "your next billing cycle";
 		const html = `<div class="ja-modal-bg">
 			<div class="ja-modal">
 				<div class="ja-modal-head">
 					<h2 class="ja-h">Switch to a smaller plan</h2>
 					<button class="ja-modal-close" id="ja-modal-close">✕</button>
 				</div>
-				<p class="ja-sub">The change takes effect at your next billing cycle — you keep your current plan until then, and you're not charged anything extra now.</p>
+				<p class="ja-sub">You keep your current plan until ${until}, then move to the one you pick. Nothing is charged now.</p>
 				<div class="ja-up-list">${cards || `<div class="ja-empty">No smaller plans available.</div>`}</div>
-				<div class="ja-err" id="ja-up-err"></div>
+				<div class="ja-err" id="ja-dn-err"></div>
 			</div>
 		</div>`;
 		const $m = $(html).appendTo(document.body);
 		$m.find("#ja-modal-close, .ja-modal-bg").on("click", function (e) {
 			if (e.target === this) $m.remove();
 		});
-		$m.find(".ja-up-pick").on("click", function () {
+		$m.find(".ja-dn-pick").on("click", function () {
 			startDowngrade($(this).data("plan"), $m);
 		});
 	}
 
 	function startDowngrade(target_plan, $modal) {
-		const $btn = $modal.find(`.ja-up-pick[data-plan="${target_plan}"]`);
+		const $btn = $modal.find(`.ja-dn-pick[data-plan="${target_plan}"]`);
 		setBusy($btn, true);
 		frappe
 			.call({ method: "jarvis.account.start_downgrade", args: { target_plan } })
@@ -2218,7 +2234,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			})
 			.catch((e) => {
 				setBusy($btn, false);
-				$modal.find("#ja-up-err").text(e.message || "Couldn't schedule the downgrade.");
+				$modal.find("#ja-dn-err").text(e.message || "Couldn't schedule the downgrade.");
 			});
 	}
 
@@ -2559,6 +2575,18 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-up-card-name{font-size:14px;font-weight:600;color:var(--text-color)}
 		.ja-up-card-price{font-size:16px;font-weight:700;color:var(--text-color)}
 		.ja-up-card-prorate{font-size:13px;color:var(--text-muted);margin-bottom:10px}
+		/* Downgrade rows: compact, one line per plan. Name + saving on the left,
+		   price and a quiet Switch button on the right — no dead vertical space,
+		   and the primary colour stays reserved for upgrade/renew. */
+		.ja-dn-row{display:flex;align-items:center;gap:14px;border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;transition:border-color .15s}
+		.ja-dn-row:hover{border-color:var(--jarvis-primary-faint)}
+		.ja-dn-info{flex:1 1 auto;min-width:0}
+		.ja-dn-name{font-size:14.5px;font-weight:600;color:var(--text-color)}
+		.ja-dn-save{font-size:12.5px;font-weight:600;color:var(--green-700,#1f8d3a);margin-top:2px}
+		.ja-dn-price{font-size:15px;font-weight:700;color:var(--text-color);white-space:nowrap;font-variant-numeric:tabular-nums}
+		.ja-dn-price .jo-plan-cycle{font-size:12px;font-weight:500;color:var(--text-muted);margin-left:1px}
+		.ja-dn-pick{flex:0 0 auto;padding:7px 16px}
+		.ja-btn-ghost .ja-spin{border-color:var(--jarvis-primary-faint);border-top-color:var(--jarvis-primary)}
 		.ja-overlay{position:fixed;inset:0;z-index:2000;background:rgba(20,20,40,.45);display:flex;align-items:center;justify-content:center}
 		.ja-overlay-card{background:var(--card-bg);padding:18px 22px;border-radius:10px;font-size:14px;color:var(--text-color);box-shadow:0 12px 40px -12px rgba(0,0,0,.4)}
 		.ja-overlay .ja-spin{border-color:var(--jarvis-primary-faint);border-top-color:var(--jarvis-primary)}
