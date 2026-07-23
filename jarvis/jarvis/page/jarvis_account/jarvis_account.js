@@ -2188,25 +2188,31 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			});
 	}
 
+	// What the plan actually provisions - the real trade-off in a downgrade.
+	// A plan stores 0/NULL when a limit was never configured (the fleet agent
+	// rejects cpu_limit <= 0, so 0 is "unset", never "unlimited"), so say
+	// nothing rather than advertise "0 vCPU".
+	function planCapacity(p) {
+		const parts = [];
+		const cpu = parseFloat(p.cpu_limit);
+		if (cpu > 0) parts.push(`${+cpu.toFixed(2)} vCPU`);
+		const mb = Number(p.memory_limit_mb);
+		if (mb > 0) parts.push(mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB RAM` : `${mb} MB RAM`);
+		return parts.join(" · ");
+	}
+
 	// ---- downgrade (applies next cycle) -----------------------------------
 	function openDowngradeModal() {
 		const plans = account.downgrade_plans || [];
-		// Downgrades are about paying less, so the saving vs the current plan
-		// is the one figure worth emphasising — everything else stays quiet.
-		const curPrice = (account.plan || {}).price_inr || 0;
 		const cards = plans
 			.map((p) => {
-				const saving = Math.max(0, curPrice - (p.price_inr || 0));
-				const save = saving
-					? `<div class="ja-dn-save">Save ${inr(saving)}${cycleLabel(
-							p.billing_cycle
-					  )}</div>`
-					: "";
+				const cap = planCapacity(p);
+				const capLine = cap ? `<div class="ja-dn-cap">${esc(cap)}</div>` : "";
 				return `
 			<div class="ja-dn-row" data-plan="${esc(p.name)}">
 				<div class="ja-dn-info">
 					<div class="ja-dn-name">${esc(p.plan_name || p.name)}</div>
-					${save}
+					${capLine}
 				</div>
 				<div class="ja-dn-price">${inr(p.price_inr)}<span class="jo-plan-cycle">${cycleLabel(
 					p.billing_cycle
@@ -2615,14 +2621,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-up-card-name{font-size:14px;font-weight:600;color:var(--text-color)}
 		.ja-up-card-price{font-size:16px;font-weight:700;color:var(--text-color)}
 		.ja-up-card-prorate{font-size:13px;color:var(--text-muted);margin-bottom:10px}
-		/* Downgrade rows: compact, one line per plan. Name + saving on the left,
-		   price and a quiet Switch button on the right — no dead vertical space,
-		   and the primary colour stays reserved for upgrade/renew. */
+		/* Downgrade rows: compact, one line per plan. Name + the capacity it
+		   provisions on the left, price and a quiet Switch button on the right —
+		   no dead vertical space, and the primary colour stays for upgrade/renew. */
 		.ja-dn-row{display:flex;align-items:center;gap:14px;border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;transition:border-color .15s}
 		.ja-dn-row:hover{border-color:var(--jarvis-primary-faint)}
 		.ja-dn-info{flex:1 1 auto;min-width:0}
 		.ja-dn-name{font-size:14.5px;font-weight:600;color:var(--text-color)}
-		.ja-dn-save{font-size:12.5px;font-weight:600;color:var(--green-700,#1f8d3a);margin-top:2px}
+		.ja-dn-cap{font-size:12.5px;color:var(--text-muted);margin-top:2px;font-variant-numeric:tabular-nums}
 		.ja-dn-price{font-size:15px;font-weight:700;color:var(--text-color);white-space:nowrap;font-variant-numeric:tabular-nums}
 		.ja-dn-price .jo-plan-cycle{font-size:12px;font-weight:500;color:var(--text-muted);margin-left:1px}
 		.ja-dn-pick{flex:0 0 auto;padding:7px 16px}
