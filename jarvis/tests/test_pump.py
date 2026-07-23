@@ -805,7 +805,7 @@ class TestCreditLifecycle(_PumpTestCase):
 		self.assertTrue(ts.claim_preparing(rid, v, assistant_message=amsg))
 		self.assertTrue(ts.mark_ready(rid, v + 1))
 		frappe.db.commit()
-		self.assertTrue(ts.confirm_dispatching(rid, v + 2, ctx.epoch))
+		self.assertTrue(ts.confirm_dispatching(rid, v + 2, ctx.epoch, self._target))
 		self.assertTrue(ts.mark_streaming(rid, v + 3, ctx.epoch, gateway_run_id=rid))
 		frappe.db.commit()
 		self.assertEqual(pump._pump_local_reservations(self._target), 1, "in-flight still holds the credit")
@@ -1154,3 +1154,456 @@ class TestNonBlockingReactor(_PumpTestCase):
 		self.assertEqual(len(ctx.pending_acks), 3, "acks parked for polling, not awaited inline")
 		for rid in rids:
 			self.assertEqual(self._state(rid), "dispatching")
+
+
+# --------------------------------------------------------------------------- #
+# 15. CDX-1 — clean handoff / transport-exit succession (the fencing fix)
+# --------------------------------------------------------------------------- #
+
+
+class TestCleanHandoffSuccession(_PumpTestCase):
+	"""CDX-1: a hop must make its successor IMMEDIATELY able to acquire the lease.
+	The old code enqueued the successor while the predecessor's freshly-renewed lease
+	was still valid, so the successor's ``lease_acquire`` affected 0 rows and exited
+	successor-less — any turn that outlived a hop stranded. These tests exercise the
+	REAL handoff (the atomic epoch-guarded transfer force-expires the lease), never a
+	manual lease expiry."""
+
+	def _streaming_turn(self, ctx, rid, conv):
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"streaming",
+			version=4,
+			pump_epoch=ctx.epoch,
+			reserved=1,
+			assistant_message=amsg,
+			gateway_run_id=rid,
+			dispatching_at=frappe.utils.now(),
+			last_event_seq=2,
+			dispatch_payload=json.dumps({"session_key": f"sess-{rid}", "message": "hi"}),
+		)
+		return amsg
+
+	def test_clean_handoff_makes_lease_acquirable_and_turn_continues(self):
+		conv = self._mk_conv()
+		rid = "pmp_ho_a"
+		ctx = self._make_ctx(self._deps(), hop_counter=3, with_mux=False)  # acquires -> epoch E
+		E = ctx.epoch
+		self._streaming_turn(ctx, rid, conv)
+		# The running hop renews its lease to ~now+30s (the exact condition the OLD
+		# code stranded on) — a naive successor could not acquire.
+		self.assertTrue(ts.lease_renew(self._target, E))
+		pump._clear_lease_mirror(self._target)
+		won_pre, _ = ts.lease_acquire(self._target, "premature")
+		self.assertFalse(won_pre, "a valid renewed lease must block a naive successor acquire")
+		# The clean handoff: atomic epoch-guarded transfer, THEN enqueue.
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		pump._handoff(ctx)
+		self.assertEqual(rec.count, 1, "exactly one successor enqueued")
+		self.assertEqual(rec.calls[0][1]["hop_counter"], 4)
+		# The lease is now immediately acquirable DESPITE the fresh renewal (the fix).
+		won, e2 = ts.lease_acquire(self._target, "successor")
+		self.assertTrue(won, "successor MUST acquire immediately after a clean handoff")
+		self.assertEqual(e2, E + 1)
+		# The streaming turn was adopted (re-stamped) to E+1 by the acquire, and it
+		# continues to terminal under the new epoch (the SAME turn survives the hop).
+		self.assertEqual(int(self._val(rid, "pump_epoch")), E + 1)
+		v = int(self._val(rid, "version"))
+		self.assertTrue(ts.mark_terminal_observed(rid, v, E + 1, "relay:final", {"text": "done"}))
+		frappe.db.commit()
+		self.assertEqual(self._state(rid), "terminal_observed")
+
+	def test_stale_handoff_after_takeover_is_noop(self):
+		"""CDX-1 (d): a stale outgoing hop whose epoch a takeover already bumped must
+		transfer NOTHING — no hop_counter write, no successor enqueue (shared exit)."""
+		conv = self._mk_conv()
+		rid = "pmp_ho_d"
+		ctx = self._make_ctx(self._deps(), hop_counter=7, with_mux=False)  # epoch E
+		E = ctx.epoch
+		self._streaming_turn(ctx, rid, conv)
+		# A takeover lapses + re-acquires: epoch -> E+1 (ctx is now the stale owner).
+		frappe.db.set_value(
+			PUMP,
+			self._target,
+			"lease_expires_at",
+			frappe.utils.add_to_date(None, seconds=-5),
+			update_modified=False,
+		)
+		frappe.db.commit()
+		pump._clear_lease_mirror(self._target)
+		won, e2 = ts.lease_acquire(self._target, "new-owner")
+		self.assertTrue(won)
+		self.assertEqual(e2, E + 1)
+		hop_before = int(frappe.db.get_value(PUMP, self._target, "hop_counter"))
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		with self.assertRaises(ts.LeaseLostExit):
+			pump._handoff(ctx)
+		self.assertEqual(rec.count, 0, "stale handoff enqueues nothing")
+		self.assertEqual(
+			int(frappe.db.get_value(PUMP, self._target, "hop_counter")),
+			hop_before,
+			"stale handoff does not bump hop_counter",
+		)
+
+	def test_transport_closed_schedules_acquirable_successor(self):
+		"""CDX-1 (b): a transport-exit with live work releases the lease (epoch-guarded)
+		and enqueues an acquirable successor with an incremented transport_retry."""
+		conv = self._mk_conv()
+		rid = "pmp_ho_b"
+		ctx = self._make_ctx(self._deps(), hop_counter=2, with_mux=False)  # epoch E
+		E = ctx.epoch
+		self._streaming_turn(ctx, rid, conv)  # live work
+		self.assertTrue(ts.lease_renew(self._target, E))  # valid lease
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		pump._schedule_successor_on_exit(ctx, transport_retry=0)
+		self.assertEqual(rec.count, 1, "transport exit with live work enqueues a successor")
+		_, kw = rec.calls[0]
+		self.assertEqual(kw["transport_retry"], 1)
+		self.assertEqual(kw["hop_counter"], 3)
+		won, e2 = ts.lease_acquire(self._target, "succ")
+		self.assertTrue(won, "successor can acquire (lease force-released)")
+		self.assertEqual(e2, E + 1)
+
+	def test_transport_exit_no_live_work_no_successor(self):
+		ctx = self._make_ctx(self._deps(), hop_counter=1, with_mux=False)  # epoch E, no turns
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		pump._schedule_successor_on_exit(ctx, transport_retry=0)
+		self.assertEqual(rec.count, 0, "no live work -> no successor owed")
+
+	def test_transport_retry_budget_caps_then_defers_to_watchdog(self):
+		conv = self._mk_conv()
+		rid = "pmp_ho_cap"
+		ctx = self._make_ctx(self._deps(), hop_counter=1, with_mux=False)
+		self._streaming_turn(ctx, rid, conv)
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		pump._schedule_successor_on_exit(ctx, transport_retry=pump.TRANSPORT_RETRY_MAX)
+		self.assertEqual(rec.count, 0, "over the retry budget -> no enqueue (defer to watchdog)")
+		# The lease is still released so the watchdog / sender ensure_pump can revive it.
+		won, _ = ts.lease_acquire(self._target, "succ")
+		self.assertTrue(won)
+
+	def test_no_transport_make_mux_failure_enqueues_successor(self):
+		"""CDX-1 (c): a make_mux failure with live work must not exit successor-less."""
+		conv = self._mk_conv()
+		rid = "pmp_ho_c"
+		seed = self._mk_msg(conv)
+		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=0)  # live work
+		rec = _Recorder()
+		deps = pump.PumpDeps()
+		deps.enqueue_pump_job = rec
+		deps.dispatch_prepare = _Recorder()
+		deps.enqueue_finalize = _Recorder()
+
+		def boom(target, epoch):
+			raise RuntimeError("no socket")
+
+		deps.make_mux = boom
+		res = pump.run_pump_hop(self._target, deps=deps, soft_budget_s=999)
+		self.assertEqual(res["exit"], "no_transport")
+		self.assertEqual(rec.count, 1, "make_mux failure with live work enqueues a successor")
+		self.assertEqual(rec.calls[0][1]["transport_retry"], 1)
+		won, _ = ts.lease_acquire(self._target, "succ")
+		self.assertTrue(won, "successor can acquire after the no_transport release")
+
+
+# --------------------------------------------------------------------------- #
+# 16. CDX-2 — ready -> dispatching is epoch-fenced in the mutation
+# --------------------------------------------------------------------------- #
+
+
+class TestReadyDispatchEpochFence(_PumpTestCase):
+	def test_stale_pump_cannot_confirm_dispatching_after_takeover(self):
+		"""CDX-2: a pump that read a `ready` row at epoch E but paused past a takeover
+		(which does NOT re-stamp `ready`) must lose the ready->dispatching CAS, because
+		it proves the SHARD control row still holds E in the same statement."""
+		conv = self._mk_conv()
+		rid = "pmp_cdx2"
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="", streaming=1)
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"ready",
+			version=2,
+			reserved=1,
+			assistant_message=amsg,
+			ready_at=frappe.utils.now(),
+			dispatch_payload=json.dumps({"session_key": f"sess-{rid}", "message": "hi"}),
+		)
+		# Pump A acquires epoch E and reads the ready row (version 2).
+		won, E = ts.lease_acquire(self._target, "hopA")
+		self.assertTrue(won)
+		# A takeover between A's read and A's CAS: pump B acquires E+1. `ready` is NOT in
+		# EPOCH_INFLIGHT_STATES so the row is not re-stamped — the CDX-2 window.
+		frappe.db.set_value(
+			PUMP,
+			self._target,
+			"lease_expires_at",
+			frappe.utils.add_to_date(None, seconds=-5),
+			update_modified=False,
+		)
+		frappe.db.commit()
+		pump._clear_lease_mirror(self._target)
+		wonB, E2 = ts.lease_acquire(self._target, "hopB")
+		self.assertTrue(wonB)
+		self.assertEqual(E2, E + 1)
+		# Stale pump A loses; the ready row is untouched.
+		self.assertFalse(
+			ts.confirm_dispatching(rid, 2, E, self._target),
+			"a stale-epoch pump cannot confirm_dispatching (CDX-2)",
+		)
+		self.assertEqual(self._state(rid), "ready")
+		# Fresh pump B wins.
+		self.assertTrue(ts.confirm_dispatching(rid, 2, E2, self._target))
+		frappe.db.commit()
+		self.assertEqual(self._state(rid), "dispatching")
+		self.assertEqual(int(self._val(rid, "pump_epoch")), E2)
+
+	def test_dispatch_one_stale_shard_epoch_routes_to_lease_loss(self):
+		"""CDX-2: _dispatch_one's 0-rows branch re-reads the CONTROL epoch — a moved
+		shard epoch (a takeover) routes through the shared lease-loss exit."""
+		conv = self._mk_conv()
+		rid = "pmp_cdx2b"
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="", streaming=1)
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"ready",
+			version=2,
+			reserved=1,
+			assistant_message=amsg,
+			ready_at=frappe.utils.now(),
+			dispatch_payload=json.dumps({"session_key": f"sess-{rid}", "message": "hi"}),
+		)
+		double = self._double()
+		ctx = self._make_ctx(self._deps(double=double))  # epoch E
+		# A takeover bumps the shard epoch AFTER ctx acquired (ctx is now stale).
+		frappe.db.set_value(PUMP, self._target, "pump_epoch", ctx.epoch + 3, update_modified=False)
+		frappe.db.commit()
+		with self.assertRaises(ts.LeaseLostExit):
+			pump._dispatch_one(ctx, rid)
+		self.assertEqual(self._state(rid), "ready", "no dispatch by the stale pump")
+
+
+# --------------------------------------------------------------------------- #
+# 17. CDX-3 — publish fencing (server belt + payload shape)
+# --------------------------------------------------------------------------- #
+
+
+class TestPublishFencing(_PumpTestCase):
+	def test_stale_pump_publish_belt_skips_after_takeover(self):
+		won, E = ts.lease_acquire(self._target, "hopA")
+		self.assertTrue(won)
+		captured = []
+		with patch.object(ts, "publish_to_user", side_effect=lambda u, p: captured.append(p)):
+			ts.publish_fenced(
+				"u@x",
+				"assistant:delta",
+				conversation_id="c",
+				run_id="r",
+				event_seq=1,
+				pump_epoch=E,
+				relay_target_id=self._target,
+				text="hi",
+			)
+			self.assertEqual(len(captured), 1)
+			self.assertEqual(captured[0]["pump_epoch"], E)
+			self.assertEqual(captured[0]["event_seq"], 1)
+			# A takeover bumps the shard epoch.
+			frappe.db.set_value(PUMP, self._target, "pump_epoch", E + 1, update_modified=False)
+			frappe.db.commit()
+			# The stale pump's publish is belt-skipped server-side.
+			ts.publish_fenced(
+				"u@x",
+				"assistant:delta",
+				conversation_id="c",
+				run_id="r",
+				event_seq=2,
+				pump_epoch=E,
+				relay_target_id=self._target,
+				text="stale",
+			)
+			self.assertEqual(len(captured), 1, "stale-epoch publish belt-skipped")
+			# The fresh owner publishes fine.
+			ts.publish_fenced(
+				"u@x",
+				"assistant:delta",
+				conversation_id="c",
+				run_id="r",
+				event_seq=3,
+				pump_epoch=E + 1,
+				relay_target_id=self._target,
+				text="fresh",
+			)
+			self.assertEqual(len(captured), 2)
+
+	def test_pump_lifecycle_events_carry_epoch_and_seq(self):
+		"""CDX-3 payload shape: run:start / assistant:delta / run:end all carry
+		pump_epoch (and assistant:delta an event_seq) so the client can fence a stale
+		writer end-to-end."""
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="hello")
+		rid = "pmp_cdx3_shape"
+		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=0)
+		double = self._double()
+		captured = []
+		deps = self._deps(double=double, prepare=self._prepare_stub(conv, double, "success"))
+		ctx = self._make_ctx(deps)
+		with patch.object(ts, "publish_to_user", side_effect=lambda u, p: captured.append(p)):
+			self._pump_until(ctx, lambda: any(p.get("kind") == "run:end" for p in captured))
+		by_kind = {}
+		for p in captured:
+			by_kind.setdefault(p.get("kind"), p)
+		self.assertIn("run:start", by_kind)
+		self.assertEqual(by_kind["run:start"]["pump_epoch"], ctx.epoch)
+		self.assertIn("assistant:delta", by_kind)
+		self.assertEqual(by_kind["assistant:delta"]["pump_epoch"], ctx.epoch)
+		self.assertIsNotNone(by_kind["assistant:delta"].get("event_seq"))
+		self.assertIn("run:end", by_kind)
+		self.assertEqual(by_kind["run:end"]["pump_epoch"], ctx.epoch)
+
+
+# --------------------------------------------------------------------------- #
+# CDX-4 — watchdog EFFECT scan (recover a lost enqueue_finalize)
+# --------------------------------------------------------------------------- #
+
+
+class TestWatchdogEffectScan(_PumpTestCase):
+	def test_terminal_turn_with_open_effects_reenqueues_finalize(self):
+		# CDX-4: a crash after an errored/cancelled settlement commit but before
+		# enqueue_finalize leaves owed effects on a TERMINAL turn — invisible to the
+		# nonterminal-only scan. The independent effect scan re-enqueues finalize.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		rid = "pmp_wd_openeff"
+		self._mk_turn(conv, rid, seed, "errored", version=6)
+		ts.insert_required_effects(rid, ("terminal_publish", "macro_advance"))
+		frappe.db.commit()
+		fin_rec = _Recorder()
+		deps = pump.PumpDeps()
+		deps.enqueue_finalize = fin_rec
+		deps.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			pump.watchdog(deps=deps)
+		enqueued = [c[0][0] for c in fin_rec.calls]
+		self.assertIn(rid, enqueued, "terminal turn with open effects gets finalize re-enqueued")
+
+	def test_finalizing_turn_reenqueued_exactly_once(self):
+		# The finalizing branch and the effect scan must not BOTH re-enqueue the same
+		# turn (the effect scan skips turns the finalizing branch already handled).
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		rid = "pmp_wd_fin1"
+		self._mk_turn(conv, rid, seed, "finalizing", version=6)
+		ts.insert_required_effects(rid, ("terminal_publish",))
+		frappe.db.commit()
+		fin_rec = _Recorder()
+		deps = pump.PumpDeps()
+		deps.enqueue_finalize = fin_rec
+		deps.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			pump.watchdog(deps=deps)
+		enqueued = [c[0][0] for c in fin_rec.calls]
+		self.assertEqual(enqueued.count(rid), 1, "finalizing turn re-enqueued exactly once")
+
+	def test_live_running_effect_not_reenqueued(self):
+		# A turn whose only open effect is a LIVE (non-stale) running claim is NOT
+		# re-enqueued — its finalizer owns it.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		rid = "pmp_wd_live"
+		self._mk_turn(conv, rid, seed, "errored", version=6)
+		ts.insert_required_effects(rid, ("macro_advance",))
+		frappe.db.commit()
+		o, tok = ts.claim_effect(rid, "macro_advance")  # live running claim
+		frappe.db.commit()
+		self.assertEqual(o, "attempt")
+		fin_rec = _Recorder()
+		deps = pump.PumpDeps()
+		deps.enqueue_finalize = fin_rec
+		deps.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			pump.watchdog(deps=deps)
+		self.assertNotIn(rid, [c[0][0] for c in fin_rec.calls], "live claim excluded from the scan")
+
+
+# --------------------------------------------------------------------------- #
+# CDX-11 — conservative admission when gateway visibility is degraded
+# --------------------------------------------------------------------------- #
+
+
+class TestConservativeAdmission(_PumpTestCase):
+	def _queue_cold(self, n):
+		rids = []
+		for i in range(n):
+			c = self._mk_conv()
+			s = self._mk_msg(c)
+			rid = f"pmp_cons_{i}_{frappe.generate_hash(length=4)}"
+			self._mk_turn(c, rid, s, "queued", version=0, reserved=0)
+			rids.append(rid)
+		return rids
+
+	def test_snapshot_failure_holds_then_admits_reduced_cap(self):
+		from jarvis.chat import admission
+
+		# No last-known observation => truly unknown foreign usage.
+		frappe.cache().delete_value(pump._gateway_active_key(self._target))
+		deps = self._deps(
+			snapshot=lambda c: {"snapshot_ok": False, "gateway_active": None, "active_session_keys": None}
+		)
+		ctx = self._make_ctx(deps, with_mux=False)
+		pump._reconcile_gateway_active(ctx)
+		self.assertFalse(ctx.gateway_active_known, "snapshot failure w/ no last-known => UNKNOWN, not zero")
+		self._queue_cold(4)
+		# First batch: HOLD new promotions for one cycle (never fail-open to full cap).
+		self.assertEqual(pump._promote_queued(ctx), 0, "one-cycle hold on zero data")
+		self.assertTrue(ctx.conservative_hold_done)
+		# Next batch: admit at the REDUCED cap (cap - safety).
+		cap = admission._max_inflight()
+		self.assertEqual(
+			pump._promote_queued(ctx), cap - pump.CONSERVATIVE_CAP_SAFETY, "reduced cap, never the full cap"
+		)
+
+	def test_snapshot_failure_reuses_last_known_within_ttl(self):
+		# CDX-11: a failed snapshot with a RECENT last-known observation reuses it
+		# (KNOWN, not conservative) instead of holding.
+		pump._write_last_known_gateway_active(self._target, 1)
+		deps = self._deps(
+			snapshot=lambda c: {"snapshot_ok": False, "gateway_active": None, "active_session_keys": None}
+		)
+		ctx = self._make_ctx(deps, with_mux=False)
+		pump._reconcile_gateway_active(ctx)
+		self.assertTrue(ctx.gateway_active_known, "recent last-known is trusted")
+		self.assertEqual(ctx.gateway_active, 1)
+
+	def test_foreign_run_after_hop_start_refreshed_before_promote(self):
+		# CDX-11: a foreign run that begins AFTER the hop-start snapshot is caught by
+		# the mid-hop capacity refresh before the next promotion batch — no over-admit.
+		foreign = {"n": 0}
+		deps = self._deps(
+			snapshot=lambda c: {
+				"snapshot_ok": True,
+				"gateway_active": foreign["n"],
+				"active_session_keys": set(),
+			}
+		)
+		ctx = self._make_ctx(deps, with_mux=False)
+		pump._reconcile_gateway_active(ctx)  # hop start: 0 foreign
+		self.assertEqual(ctx.gateway_active, 0)
+		foreign["n"] = 4  # a foreign run fills the whole cap mid-hop
+		ctx.last_snapshot_mono -= pump.SNAPSHOT_REFRESH_S + 1  # force the refresh cadence
+		self._queue_cold(1)
+		self.assertEqual(pump._promote_queued(ctx), 0, "no local admission while foreign usage fills the cap")
+		self.assertEqual(ctx.gateway_active, 4, "capacity refreshed before the batch")

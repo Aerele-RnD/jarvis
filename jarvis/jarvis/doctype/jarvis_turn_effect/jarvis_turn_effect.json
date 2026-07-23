@@ -10,6 +10,8 @@
   "effect_name",
   "status",
   "attempts",
+  "claim_token",
+  "claimed_at",
   "applied_at"
  ],
  "fields": [
@@ -36,18 +38,31 @@
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "pending\ndone",
+   "options": "pending\nrunning\ndone",
    "default": "pending",
    "reqd": 1,
    "in_list_view": 1,
-   "description": "Set done inside the effect's own idempotent (turn,effect) txn, or FORCE-DONE after FINALIZE_MAX_ATTEMPTS=3 (OAR-9)."
+   "description": "pending -> running (exclusively claimed for one finalize attempt) -> done. A failed attempt returns running -> pending; a stale running claim (claimed_at past the bound) is reclaimable; FORCE-DONE after FINALIZE_MAX_ATTEMPTS=3 (OAR-9 / CDX-4)."
   },
   {
    "fieldname": "attempts",
    "fieldtype": "Int",
    "label": "Attempts",
    "default": "0",
-   "description": "Incremented on every finalize try for this effect; the force-done budget (FINALIZE_MAX_ATTEMPTS=3) reads it (D2 §1a)."
+   "description": "Incremented atomically on every EXCLUSIVE claim (pending/stale-running -> running) for this effect; the force-done budget (FINALIZE_MAX_ATTEMPTS=3) reads it (D2 §1a / CDX-4)."
+  },
+  {
+   "fieldname": "claim_token",
+   "fieldtype": "Data",
+   "label": "Claim Token",
+   "length": 32,
+   "description": "The current exclusive-claim token (CDX-4): stamped when a finalize attempt claims the effect (pending/stale-running -> running); complete_effect / release_effect fence on it so a stale finalizer cannot complete or release an effect another finalizer re-claimed."
+  },
+  {
+   "fieldname": "claimed_at",
+   "fieldtype": "Datetime",
+   "label": "Claimed At",
+   "description": "When the current running claim was taken (CDX-4). A running effect whose claimed_at is older than EFFECT_CLAIM_STALE_S is reclaimable by a fresh claim (the prior finalizer crashed)."
   },
   {
    "fieldname": "applied_at",

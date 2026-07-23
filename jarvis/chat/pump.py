@@ -139,8 +139,29 @@ _DELTA_BATCH_INTERVAL_MS = 250
 # Admission safety reserve (§10.1 — heartbeats self-defer, so default 0).
 SAFETY_RESERVE = 0
 
+# CDX-11 conservative admission when the gateway snapshot (foreign-usage visibility)
+# is degraded. A failed snapshot keeps the LAST-KNOWN foreign count for this long
+# (never fail-open to zero); once the last-known is also stale the pump HOLDS new
+# promotions for one cycle, then admits at a REDUCED cap (cap - CONSERVATIVE_CAP_SAFETY)
+# with a telemetry warning — never the full local cap on zero data. Capacity is
+# refreshed on this cadence mid-hop (a cheap re-snapshot), not only at hop start.
+GATEWAY_ACTIVE_TTL_S = 60
+SNAPSHOT_REFRESH_S = 30
+CONSERVATIVE_CAP_SAFETY = 1
+
 # Redis lease-mirror TTL (fast NO-OP path only; MariaDB is authoritative, R-17).
 LEASE_MIRROR_TTL_S = 30
+
+# CDX-1 transport-exit successor budget. A non-handoff loop exit (transport_closed /
+# no_transport) with live work releases the lease (epoch-guarded) and enqueues an
+# IMMEDIATE successor, up to this many consecutive transport retries. frappe.enqueue
+# exposes no delayed/scheduled enqueue (no enqueue_in/at; the RQ job scheduler is not
+# run by the bench workers), so the ruled '5s/15s/45s' time-delay is realized as a
+# bounded fast-retry COUNT paced by the OpenclawSession connect timeout, then a
+# fall-through to the watchdog-cron / sender ``ensure_pump`` revival for a sustained
+# outage. This preserves the hard invariant (never exit successor-less with live
+# work, within the budget) without a hot reconnect loop. See PUMP-RUNBOOK.md §CDX-1.
+TRANSPORT_RETRY_MAX = 4
 
 # Injection seams for timing (tests monkeypatch to remove real waits).
 _monotonic: Callable[[], float] = time.monotonic
@@ -416,6 +437,75 @@ def _lease_mirror_live(target: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# CDX-11 — last-known foreign gateway usage (never fail-open to zero)
+# --------------------------------------------------------------------------- #
+
+
+def _gateway_active_key(target: str) -> str:
+	return f"jarvis:pump:gateway_active:{target}"
+
+
+def _write_last_known_gateway_active(target: str, foreign: int) -> None:
+	"""CDX-11: cache the last SUCCESSFUL foreign-usage count with a short TTL so a
+	subsequent snapshot failure can reuse recent truth instead of failing open."""
+	try:
+		frappe.cache().set_value(
+			_gateway_active_key(target), str(int(foreign)), expires_in_sec=GATEWAY_ACTIVE_TTL_S
+		)
+	except Exception:
+		pass
+
+
+def _read_last_known_gateway_active(target: str) -> int | None:
+	"""CDX-11: the last-known foreign-usage count if still within its TTL, else None
+	(the observation aged out — treat foreign usage as genuinely unknown)."""
+	try:
+		v = frappe.cache().get_value(_gateway_active_key(target), use_local_cache=False)
+		if v is None:
+			return None
+		return int(v.decode() if isinstance(v, bytes) else v)
+	except Exception:
+		return None
+
+
+def _reconcile_gateway_active(ctx: "PumpContext", snap: dict | None = None) -> None:
+	"""CDX-11: fold a snapshot result into the context's capacity view — NEVER
+	fail-open. On a good snapshot: record foreign usage + cache it (TTL) + clear the
+	conservative flags. On a failed snapshot: reuse the last-known count if it is still
+	within TTL (KNOWN), else mark foreign usage UNKNOWN so ``_pump_usable_credit`` holds
+	one cycle then admits at a reduced cap. Stamps ``last_snapshot_mono`` for the
+	mid-hop refresh cadence."""
+	if snap is None:
+		try:
+			snap = ctx.deps.snapshot(ctx)
+		except Exception:
+			snap = {"snapshot_ok": False, "gateway_active": None, "active_session_keys": None}
+	ctx.last_snapshot_mono = _monotonic()
+	# Back-compat: a snapshot double without the CDX-11 key that returns an int is
+	# treated as a successful observation.
+	ok = snap.get("snapshot_ok")
+	ga = snap.get("gateway_active")
+	if ok is None:
+		ok = ga is not None
+	if ok and ga is not None:
+		ctx.gateway_active = int(ga)
+		ctx.gateway_active_known = True
+		ctx.conservative_hold_done = False
+		_write_last_known_gateway_active(ctx.relay_target_id, ctx.gateway_active)
+		return
+	# Snapshot failed — reuse a recent last-known observation if we have one.
+	last = _read_last_known_gateway_active(ctx.relay_target_id)
+	if last is not None:
+		ctx.gateway_active = last
+		ctx.gateway_active_known = True
+		_telemetry("capacity_last_known", target=ctx.relay_target_id, gateway_active=last)
+		return
+	# No trustworthy data at all — go conservative (hold-then-reduced-cap).
+	ctx.gateway_active_known = False
+	_telemetry("capacity_unknown", target=ctx.relay_target_id)
+
+
+# --------------------------------------------------------------------------- #
 # Control-job queue routing (F1 — long-queue self-starvation fix)
 # --------------------------------------------------------------------------- #
 #
@@ -626,27 +716,154 @@ def _default_invoke_settlement(
 	)
 
 
-def _default_apply_tool(run_id: str, event: dict) -> None:
-	"""WP-1d SEAM (R-6) — precious tool-event application. The real writer is fully
-	OUT-OF-BAND with ``(session_key, tool_call_id)`` idempotency and conv-lock seq
-	allocation (WP-1d). The default is a no-op so the pump streams tool-bearing
-	turns without WP-1d present; a raise here would QUARANTINE the lane (precious),
-	so it stays a no-op."""
-	return None
+def _default_apply_tool(ctx: "PumpContext", rs: "_RunState", event: dict) -> None:
+	"""CDX-5 — the REAL tool-event applier (D1 rows #30-32). Two ownership classes:
+
+	  * **built-in openclaw tools** (browser/canvas/image-gen — NOT ``jarvis__*``):
+	    the pump OWNS the durable ``role=tool`` receipt. On ``start`` it inserts the
+	    row (seq allocated UNDER the conversation lock, R-9) keyed idempotently by the
+	    durable ``(conversation, tool_call_id)`` so a hop re-attach / replay never
+	    doubles it; on ``end`` it updates ``tool_status``/``streaming=0``. Both phases
+	    publish the epoch-fenced ``tool:start`` / ``tool:end`` (P0-3 payload contract).
+	  * **``jarvis__*`` callback-owned tools**: the out-of-band ``call_tool`` path
+	    persists the receipt row (R-6, exactly-once by its own key) — the pump NEVER
+	    owns that row here; it publishes the ``tool:start`` / ``tool:end`` lifecycle
+	    ONLY (so the live activity indicator still animates), ``message_id=None``.
+
+	Runs on the pump thread inside ``mux.dispatch`` (the on_tool callback flushed the
+	batched deltas first, so the on-disk row order matches the frame order). A raise
+	QUARANTINES the lane (precious), so this is defensive; a benign duplicate is a
+	no-op via the durable dedupe."""
+	phase = event.get("phase")
+	tool_name = event.get("tool_name")
+	tool_call_id = event.get("tool_call_id")
+	is_jarvis = (tool_name or "").startswith("jarvis__")
+	conversation = rs.conversation
+	message_id = None
+
+	if phase == "start":
+		if not is_jarvis and tool_call_id:
+			message_id = _insert_tool_start_row(conversation, tool_call_id, tool_name)
+		if rs.owner:
+			ts.publish_fenced(
+				rs.owner,
+				"tool:start",
+				conversation_id=conversation,
+				run_id=rs.run_id,
+				event_seq=event.get("event_seq"),
+				message_id=message_id,
+				tool_name=tool_name,
+				tool_title=event.get("title"),
+				tool_call_id=tool_call_id,
+				pump_epoch=ctx.epoch,
+				relay_target_id=ctx.relay_target_id,
+			)
+	elif phase == "end":
+		if not is_jarvis and tool_call_id:
+			message_id = _update_tool_end_row(conversation, tool_call_id, event.get("status"), rs.run_id)
+		if rs.owner:
+			ts.publish_fenced(
+				rs.owner,
+				"tool:end",
+				conversation_id=conversation,
+				run_id=rs.run_id,
+				event_seq=event.get("event_seq"),
+				message_id=message_id,
+				tool_name=tool_name,
+				tool_call_id=tool_call_id,
+				status=event.get("status"),
+				pump_epoch=ctx.epoch,
+				relay_target_id=ctx.relay_target_id,
+			)
+
+
+def _insert_tool_start_row(conversation: str, tool_call_id: str, tool_name: str | None) -> str:
+	"""CDX-5: insert (or reuse) the durable built-in ``role=tool`` receipt for a tool
+	start. Idempotent on the durable ``(conversation, tool_call_id)`` key (a hop
+	re-attach / replayed frame reuses the existing row). seq is allocated UNDER the
+	conversation FOR UPDATE lock (R-9) so it never collides with a concurrent
+	out-of-band receipt / placeholder on the same conversation. Commits its own txn
+	(the tool row is a durable fact, committed before the fenced publish)."""
+	existing = frappe.db.get_value(
+		MSG, {"conversation": conversation, "tool_call_id": tool_call_id, "role": "tool"}, "name"
+	)
+	if existing:
+		return existing
+	frappe.db.commit()
+	ts._lock_conversation(conversation)
+	try:
+		# Re-check under the lock (a concurrent writer may have just inserted it).
+		existing = frappe.db.get_value(
+			MSG, {"conversation": conversation, "tool_call_id": tool_call_id, "role": "tool"}, "name"
+		)
+		if existing:
+			return existing
+		seq = (
+			frappe.db.sql(f"SELECT MAX(seq) FROM `tab{MSG}` WHERE conversation=%(c)s", {"c": conversation})[
+				0
+			][0]
+			or 0
+		) + 1
+		doc = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": conversation,
+				"seq": seq,
+				"role": "tool",
+				"content": f"calling {tool_name}…",
+				"tool_name": tool_name,
+				"tool_status": "running",
+				"tool_call_id": tool_call_id,
+				"streaming": 1,
+			}
+		)
+		doc.flags.ignore_permissions = True
+		doc.insert()
+		frappe.db.commit()
+		return doc.name
+	finally:
+		ts.reset_lock_tracking()
+
+
+def _update_tool_end_row(conversation: str, tool_call_id: str, status: str | None, run_id: str) -> str | None:
+	"""CDX-5: close the built-in tool receipt at ``end`` (tool_status + streaming=0).
+	Idempotent by (conversation, tool_call_id). An ``end`` with no matching ``start``
+	row is logged (an openclaw event-ordering regression) and returns None — matches
+	legacy ``turn_handler`` orphan handling."""
+	name = frappe.db.get_value(
+		MSG, {"conversation": conversation, "tool_call_id": tool_call_id, "role": "tool"}, "name"
+	)
+	if not name:
+		frappe.log_error(
+			title="pump.apply_tool: orphan tool 'end'",
+			message=f"conversation={conversation!r} run_id={run_id!r} tool_call_id={tool_call_id!r}",
+		)
+		return None
+	frappe.db.set_value(
+		MSG, name, {"tool_status": status or "completed", "streaming": 0}, update_modified=False
+	)
+	frappe.db.commit()
+	return name
 
 
 def _default_snapshot(ctx: "PumpContext") -> dict:
 	"""Snapshot / status reconcile source (Amendment D). Issues ``sessions.list``
 	over the mux and returns the reconcile inputs the pump needs:
 
-	  ``{"gateway_active": int, "active_session_keys": set[str] | None}``
+	  ``{"gateway_active": int, "active_session_keys": set[str] | None,
+	     "snapshot_ok": bool}``
 
 	``gateway_active`` = FOREIGN ``main`` runs (gateway sessions with
 	``hasActiveRun`` not matched to a local in-flight turn) — added to admission
 	inflight so the bench never over-admits past a run it did not start (§10.1).
 	``active_session_keys`` (or ``None`` = "no info") lets reconcile tell a
-	genuinely-gone in-flight run from one still active. Best-effort; on any error
-	returns the conservative empty snapshot (adopt-and-keep)."""
+	genuinely-gone in-flight run from one still active.
+
+	CDX-11: on ANY error the snapshot signals ``snapshot_ok=False`` with
+	``gateway_active=None`` — foreign usage is UNKNOWN, NOT zero. The caller then
+	treats unknown conservatively (last-known within a TTL, else a held/reduced cap)
+	instead of the old fail-OPEN that reported ``gateway_active=0`` and admitted the
+	full local cap on top of an unseen foreign run."""
 	try:
 		fut = ctx.mux.issue_rpc("sessions.list", {}, timeout_s=ACK_TIMEOUT_S)
 		frame = fut.result(ACK_TIMEOUT_S)
@@ -655,9 +872,9 @@ def _default_snapshot(ctx: "PumpContext") -> dict:
 		active_keys = {s.get("key") for s in sessions if s.get("hasActiveRun") and s.get("key")}
 		local_keys = _local_active_session_keys(ctx.relay_target_id)
 		foreign = len([k for k in active_keys if k not in local_keys])
-		return {"gateway_active": foreign, "active_session_keys": active_keys}
+		return {"gateway_active": foreign, "active_session_keys": active_keys, "snapshot_ok": True}
 	except Exception:
-		return {"gateway_active": 0, "active_session_keys": None}
+		return {"gateway_active": None, "active_session_keys": None, "snapshot_ok": False}
 
 
 def _default_make_mux(relay_target_id: str, epoch: int) -> RelayMux:
@@ -677,11 +894,20 @@ def _default_make_mux(relay_target_id: str, epoch: int) -> RelayMux:
 
 
 def _default_enqueue_pump_job(
-	*, method: str, queue: str, timeout: int, job_id: str, relay_target_id: str, hop_counter: int
+	*,
+	method: str,
+	queue: str,
+	timeout: int,
+	job_id: str,
+	relay_target_id: str,
+	hop_counter: int,
+	transport_retry: int = 0,
 ) -> None:
 	"""Internal seam — enqueue a hop / watchdog-start job. ALWAYS ``long`` with an
-	EXPLICIT ``timeout`` and a FRESH ``job_id`` (§10.4). Tests inject a recorder
-	to assert the args without running the successor."""
+	EXPLICIT ``timeout`` and a FRESH ``job_id`` (§10.4). ``transport_retry`` carries
+	the CDX-1 bounded transport-exit budget forward to the successor (0 on a clean
+	handoff / cold start; the successor resets it once it drains successfully). Tests
+	inject a recorder to assert the args without running the successor."""
 	frappe.enqueue(
 		method,
 		queue=queue,
@@ -689,6 +915,7 @@ def _default_enqueue_pump_job(
 		job_id=job_id,
 		relay_target_id=relay_target_id,
 		hop_counter=hop_counter,
+		transport_retry=transport_retry,
 	)
 
 
@@ -702,7 +929,7 @@ class PumpDeps:
 	dispatch_prepare: Callable[[str, str], None] = _default_dispatch_prepare
 	invoke_settlement: Callable[..., None] = _default_invoke_settlement
 	enqueue_finalize: Callable[[str, str], None] = _default_enqueue_finalize
-	apply_tool: Callable[[str, dict], None] = _default_apply_tool
+	apply_tool: Callable[..., None] = _default_apply_tool
 	snapshot: Callable[["PumpContext"], dict] = _default_snapshot
 	make_mux: Callable[[str, int], RelayMux] = _default_make_mux
 	enqueue_pump_job: Callable[..., None] = _default_enqueue_pump_job
@@ -792,6 +1019,11 @@ class PumpContext:
 	deps: PumpDeps
 	mux: RelayMux | None = None
 	gateway_active: int = 0
+	# CDX-11: whether the last capacity read had trustworthy foreign-usage data.
+	# False => conservative admission (hold one cycle, then reduced cap).
+	gateway_active_known: bool = True
+	conservative_hold_done: bool = False
+	last_snapshot_mono: float = 0.0
 	lease_lost: str | None = None
 	soft_deadline: float = 0.0
 	hard_deadline: float = 0.0
@@ -812,6 +1044,7 @@ def run_pump_hop(
 	relay_target_id: str,
 	*,
 	hop_counter: int = 0,
+	transport_retry: int = 0,
 	deps: PumpDeps | None = None,
 	soft_budget_s: float = SOFT_HOP_BUDGET_S,
 	hard_deadline_s: float = HARD_HOP_DEADLINE_S,
@@ -862,9 +1095,12 @@ def run_pump_hop(
 	try:
 		ctx.mux = deps.make_mux(relay_target_id, epoch)
 	except Exception:
-		# Could not build the transport this hop; leave the lease to expire and let
-		# ensure_pump / the watchdog revive on the next cycle. Do not crash the job.
+		# Could not build the transport this hop. CDX-1: do NOT exit successor-less —
+		# release the lease (epoch-guarded) and enqueue a bounded-backoff successor if
+		# the shard still has live work, so a make_mux failure cannot strand a turn
+		# until the watchdog. Do not crash the job.
 		frappe.log_error(title="pump.make_mux", message=frappe.get_traceback())
+		_schedule_successor_on_exit(ctx, transport_retry=transport_retry)
 		return {"acquired": True, "exit": "no_transport", "epoch": epoch}
 
 	# C1 (WP-2 Stage B): watch the cross-process accept wake bus on its own thread so
@@ -897,9 +1133,10 @@ def run_pump_hop(
 				outcome = "idle"
 				break
 			if result == "transport_closed":
-				# D5 §5-d: socket died — end the hop (lease held, ≤LEASE_TTL_S). The
-				# successor re-acquires with a fresh socket and reconciles from durable
-				# state (re-attach live lanes / snapshot-recover a missed terminal).
+				# D5 §5-d: socket died — end the hop. CDX-1: the exit branch below
+				# releases the lease (epoch-guarded) and enqueues an explicit successor,
+				# which re-acquires with a fresh socket and reconciles from durable state
+				# (re-attach live lanes / snapshot-recover a missed terminal).
 				outcome = "transport_closed"
 				break
 			if max_slices is not None and slices >= max_slices:
@@ -909,6 +1146,11 @@ def run_pump_hop(
 			outcome = "handoff"
 		if outcome == "handoff":
 			_handoff(ctx)
+		elif outcome == "transport_closed":
+			# CDX-1: a mid-hop socket death must not exit successor-less — release the
+			# lease (epoch-guarded) and enqueue a bounded-backoff successor so a live
+			# turn is re-attached/snapshot-recovered by the next hop, not stranded.
+			_schedule_successor_on_exit(ctx, transport_retry=transport_retry)
 	except ts.LeaseLostExit:
 		outcome = "lease_lost"
 	finally:
@@ -1011,6 +1253,15 @@ def _promote_queued(ctx: PumpContext) -> int:
 	enqueue happens AFTER the commit that releases the lock."""
 	target = ctx.relay_target_id
 	to_prepare: list[str] = []
+	# CDX-11: refresh foreign-usage capacity on the mid-hop snapshot cadence BEFORE
+	# taking the shard lock (the snapshot is a WS RPC — never hold the lock across it).
+	# The per-candidate ``_pump_local_reservations`` below is the cheap indexed read;
+	# this throttled re-snapshot keeps the foreign count from going stale over a long
+	# hop (a foreign run that began after hop start is caught before the next batch).
+	if _monotonic() - ctx.last_snapshot_mono >= SNAPSHOT_REFRESH_S:
+		_reconcile_gateway_active(ctx)
+	if not ctx.gateway_active_known:
+		_telemetry("capacity_conservative", target=target, hold_done=int(ctx.conservative_hold_done))
 	try:
 		ts._lock_shard(target)  # commit-first; FOR UPDATE is the first statement
 		active_convs = _pump_active_convs(target)
@@ -1067,17 +1318,29 @@ def _promote_queued(ctx: PumpContext) -> int:
 
 
 def _pump_usable_credit(ctx: PumpContext) -> int:
-	"""usable = min(hard_cap, learned_cap) - inflight - safety_reserve (§9-D2).
-	inflight = local reservations (reserved OR dispatching/streaming/
-	terminal_observed, unexpired) + FOREIGN gateway active runs. Learned cap =
-	hard cap until WP-2 telemetry lands (no learned signal yet)."""
+	"""usable = hard_cap - inflight - safety_reserve (§9-D2). inflight = local
+	reservations (reserved OR dispatching/streaming/terminal_observed, unexpired) +
+	FOREIGN gateway active runs.
+
+	CDX-11: the static hard cap is what ships (the design's "learned 60-75%
+	utilization controller" is a documented follow-up, NOT implemented — so there is
+	no ``min(hard, learned)`` theatre here). When the gateway snapshot is degraded and
+	no last-known observation is within TTL, foreign usage is UNKNOWN: HOLD new
+	promotions for one cycle (return 0, flip the hold flag), then admit at a REDUCED
+	cap (hard - CONSERVATIVE_CAP_SAFETY) — never the full local cap on top of an unseen
+	foreign run."""
 	from jarvis.chat import admission
 
 	hard = admission._max_inflight()
-	learned = hard
 	local_res = _pump_local_reservations(ctx.relay_target_id)
+	if not ctx.gateway_active_known:
+		if not ctx.conservative_hold_done:
+			# One-cycle hold: admit nothing NEW this batch while we have zero data.
+			ctx.conservative_hold_done = True
+			return 0
+		return max(0, hard - CONSERVATIVE_CAP_SAFETY) - local_res - SAFETY_RESERVE
 	inflight = local_res + max(0, int(ctx.gateway_active))
-	return min(hard, learned) - inflight - SAFETY_RESERVE
+	return hard - inflight - SAFETY_RESERVE
 
 
 def _pump_local_reservations(target: str) -> int:
@@ -1190,10 +1453,15 @@ def _dispatch_one(ctx: PumpContext, run_id: str) -> bool:
 	if turn is None or turn["state"] != "ready":
 		return False
 
-	# ready -> dispatching: E is FIRST stamped here (state+version fenced, no epoch
-	# in the guard). A 0-rows loss here is NOT a lease loss (epoch not yet ours on
-	# the row) — a concurrent cancel/version drift; skip.
-	if not ts.confirm_dispatching(run_id, int(turn["version"]), ctx.epoch):
+	# ready -> dispatching: E is FIRST stamped on the turn here, but the CAS now proves
+	# the SHARD control row still holds epoch E (confirm_dispatching's EXISTS clause,
+	# CDX-2) so a stale pump that read this ready row before a takeover cannot win. On
+	# 0 rows, disambiguate on the CONTROL epoch (the turn has no epoch yet): a moved
+	# shard epoch => a takeover happened => shared lease-loss exit; an intact shard
+	# epoch => an ordinary concurrent cancel/version drift => skip (§10.11).
+	if not ts.confirm_dispatching(run_id, int(turn["version"]), ctx.epoch, ctx.relay_target_id):
+		if _shard_epoch_lost(ctx):
+			ts.lease_lost_exit(run_id)
 		return False
 	frappe.db.commit()
 
@@ -1223,6 +1491,8 @@ def _dispatch_one(ctx: PumpContext, run_id: str) -> bool:
 			conversation_id=rs.conversation,
 			run_id=run_id,
 			message_id=rs.assistant_message,
+			pump_epoch=ctx.epoch,
+			relay_target_id=ctx.relay_target_id,
 		)
 
 	handler = _make_handler(ctx, rs)
@@ -1346,6 +1616,8 @@ def _handle_ack_failure(ctx: PumpContext, rs: _RunState, exc: OpenclawUnreachabl
 				error=err,
 				code=_classify_error(err),
 				changed_data=False,
+				pump_epoch=ctx.epoch,
+				relay_target_id=ctx.relay_target_id,
 			)
 		return False
 	if _epoch_lost(ctx, run_id):
@@ -1397,6 +1669,8 @@ def _flush_deltas(ctx: PumpContext, rs: _RunState) -> None:
 				message_id=rs.assistant_message,
 				text=text,
 				delta=delta,
+				pump_epoch=ctx.epoch,
+				relay_target_id=ctx.relay_target_id,
 			)
 			_emit_stream_telemetry(rs)
 	else:
@@ -1462,7 +1736,7 @@ def _make_handler(ctx: PumpContext, rs: _RunState) -> LaneHandler:
 		except ts.LeaseLostExit:
 			ctx.lease_lost = rs.run_id
 			return
-		ctx.deps.apply_tool(rs.run_id, event)
+		ctx.deps.apply_tool(ctx, rs, event)
 
 	def on_terminal(kind: str, payload: dict) -> None:
 		if ctx.lease_lost:
@@ -1637,8 +1911,10 @@ def _reconcile_on_start(ctx: PumpContext) -> None:
 	try:
 		snap = ctx.deps.snapshot(ctx)
 	except Exception:
-		snap = {"gateway_active": 0, "active_session_keys": None}
-	ctx.gateway_active = int(snap.get("gateway_active") or 0)
+		snap = {"snapshot_ok": False, "gateway_active": None, "active_session_keys": None}
+	# CDX-11: fold the snapshot into capacity WITHOUT failing open — a failed snapshot
+	# keeps the last-known foreign count (TTL) or goes conservative, never zero.
+	_reconcile_gateway_active(ctx, snap)
 	active_keys = snap.get("active_session_keys")
 
 	rows = frappe.db.sql(
@@ -1924,13 +2200,18 @@ def _mark_recovering_mirror(
 	reason: str,
 	require_deadline_passed: bool = False,
 	require_prepare_deadline: bool = False,
+	pump_epoch: int | None = None,
+	relay_target_id: str | None = None,
 ) -> bool:
 	"""SUXF-1: the ONE recovering-transition path every park uses. Runs
 	``mark_recovering`` (Turn CAS), commits, MIRRORS the state onto the Message row
 	(so reload can reconstruct the banner), then publishes the fenced
 	``run:recovering`` AFTER commit (SUX-1 — the event ChatView's live banner
 	consumes). Actor-fenced, so a benign 0-rows (already parked/moved) is NOT a
-	lease loss. Returns won/lost."""
+	lease loss. CDX-3: a pump-driven park passes ``pump_epoch``/``relay_target_id``
+	so the banner event is epoch-fenced end-to-end; the watchdog (no epoch) omits
+	them and the event stays legacy-compatible (the client bypasses the fence for an
+	epoch-less event). Returns won/lost."""
 	if not ts.mark_recovering(
 		run_id,
 		version,
@@ -1951,6 +2232,8 @@ def _mark_recovering_mirror(
 			run_id=run_id,
 			message_id=assistant_message,
 			reason=reason,
+			pump_epoch=pump_epoch,
+			relay_target_id=relay_target_id,
 		)
 	return True
 
@@ -2010,6 +2293,8 @@ def _park_recovering(ctx: PumpContext, run_id: str, *, reason: str) -> None:
 		turn_conversation(run_id),
 		turn.get("assistant_message"),
 		reason=reason,
+		pump_epoch=ctx.epoch,
+		relay_target_id=ctx.relay_target_id,
 	)
 	_telemetry("park_recovering", run_id=run_id, reason=reason)
 
@@ -2041,6 +2326,8 @@ def _park_affected_recovering(ctx: PumpContext) -> None:
 				r["conversation"],
 				r.get("assistant_message"),
 				reason="db-disconnect",
+				pump_epoch=ctx.epoch,
+				relay_target_id=ctx.relay_target_id,
 			)
 		except Exception:
 			try:
@@ -2126,20 +2413,29 @@ def request_cancel_conversation(relay_or_conversation: str) -> bool:
 
 
 def _handoff(ctx: PumpContext) -> None:
-	"""Hop handoff (D6 §3): increment ``hop_counter`` and enqueue the successor
-	under a FRESH job id ``jarvis-pump::<site>::<target>::hop<n+1>`` (the SAME id
-	would be silently deduped — the frappe self-chain trap), ALWAYS to ``long``
-	with an EXPLICIT ``timeout=180``. The lease (not the job id) enforces
-	single-instance; the successor re-acquires + bumps the epoch, fencing this
-	hop."""
+	"""Hop handoff (D6 §3, CDX-1): an EPOCH-GUARDED ATOMIC lease TRANSFER, then a
+	fresh-id successor enqueue. A bare re-enqueue is NOT enough: the running hop
+	renewed its lease to ~now+30s, so a successor enqueued while that lease is still
+	valid would fail ``lease_acquire`` and exit successor-less — stranding any turn
+	that outlives a hop. ``ts.lease_handoff`` proves this pump still holds epoch E,
+	makes the lease immediately acquirable, advances ``hop_counter`` (fresh job id —
+	the frappe self-chain trap), and commits, ALL in one epoch-fenced statement; a
+	stale outgoing hop (a takeover already bumped the epoch) matches 0 rows and we
+	enqueue NOTHING (the shared lease-loss exit). The lease + epoch (not the job id)
+	enforce single-instance; the successor re-acquires and bumps the epoch, fencing
+	this hop."""
 	# OARF-6: flush any sub-threshold batched deltas so a tail batch is not left in
 	# memory across the hop boundary (the next hop would re-derive it from the
 	# cumulative mirror, but flushing now keeps the streamed text current).
 	_flush_all_pending(ctx)
 	next_hop = ctx.hop_counter + 1
 	job_id = f"jarvis-pump::{ctx.site}::{ctx.relay_target_id}::hop{next_hop}"
-	frappe.db.set_value(PUMP, ctx.relay_target_id, "hop_counter", next_hop, update_modified=False)
-	frappe.db.commit()
+	if not ts.lease_handoff(ctx.relay_target_id, ctx.epoch, next_hop, job_id):
+		# Stale outgoing hop — a takeover already owns the shard. Write no counter,
+		# enqueue no successor; the current owner drives succession (shared exit).
+		ts.lease_lost_exit(ctx.relay_target_id, rollback=False)
+		return
+	_clear_lease_mirror(ctx.relay_target_id)
 	ctx.deps.enqueue_pump_job(
 		method="jarvis.chat.pump.run_pump_hop",
 		queue=PUMP_QUEUE,
@@ -2148,6 +2444,70 @@ def _handoff(ctx: PumpContext) -> None:
 		relay_target_id=ctx.relay_target_id,
 		hop_counter=next_hop,
 	)
+
+
+def _shard_epoch_lost(ctx: PumpContext) -> bool:
+	"""CDX-2: True iff the SHARD control row's ``pump_epoch`` no longer matches this
+	pump's epoch. Distinct from ``_epoch_lost`` (which reads the TURN row): at the
+	``ready -> dispatching`` CAS the turn has no epoch yet, so a stale-pump loss can
+	only be proven on the control row."""
+	e = frappe.db.get_value(PUMP, ctx.relay_target_id, "pump_epoch")
+	return e is None or int(e) != ctx.epoch
+
+
+def _shard_has_live_work(target: str) -> bool:
+	"""True iff the shard still has a nonterminal turn (used to decide whether a
+	transport-exit successor is owed, CDX-1)."""
+	return bool(
+		frappe.db.sql(
+			f"""SELECT 1 FROM `tab{TURN}`
+			WHERE relay_target_id=%(t)s AND state IN ({_in_list(ts.NONTERMINAL_STATES)}) LIMIT 1""",
+			{"t": target},
+		)
+	)
+
+
+def _schedule_successor_on_exit(ctx: PumpContext, *, transport_retry: int) -> None:
+	"""CDX-1 transport-exit succession. A non-handoff loop exit (transport_closed /
+	no_transport) must not leave live work successor-less. Epoch-guarded ATOMIC lease
+	release (``ts.lease_handoff`` forces the lease immediately acquirable + advances
+	``hop_counter``, proving we still hold epoch E), then — only when the shard still
+	has live nonterminal work and the bounded fast-retry budget is not exhausted —
+	enqueue an IMMEDIATE successor carrying an incremented ``transport_retry``.
+
+	A stale outgoing hop (a takeover bumped the epoch) matches 0 rows in
+	``lease_handoff`` and we do nothing (the new owner drives succession). Over the
+	budget (``TRANSPORT_RETRY_MAX``) we leave the now-acquirable lease for the
+	watchdog-cron / sender ``ensure_pump`` to revive — the documented backoff tail for
+	a sustained gateway outage (see the ``TRANSPORT_RETRY_MAX`` note). Best-effort:
+	never raises out of an exit path."""
+	target = ctx.relay_target_id
+	next_hop = ctx.hop_counter + 1
+	successor = f"jarvis-pump::{ctx.site}::{target}::hop{next_hop}"
+	try:
+		if not ts.lease_handoff(target, ctx.epoch, next_hop, successor):
+			return  # stale — a takeover owns the shard; it drives succession
+		_clear_lease_mirror(target)
+		if not _shard_has_live_work(target):
+			return  # idle — nothing to revive; the released lease simply stays vacant
+		if transport_retry >= TRANSPORT_RETRY_MAX:
+			# Bounded fast-retry budget spent: fall through to the watchdog / sender
+			# ensure_pump (the lease is already acquirable). Documented backoff tail.
+			_telemetry("transport_retry_capped", target=target, retry=transport_retry)
+			return
+		ctx.deps.enqueue_pump_job(
+			method="jarvis.chat.pump.run_pump_hop",
+			queue=PUMP_QUEUE,
+			timeout=HOP_TIMEOUT_S,
+			job_id=successor,
+			relay_target_id=target,
+			hop_counter=next_hop,
+			transport_retry=transport_retry + 1,
+		)
+	except Exception:
+		# A release/enqueue failure must never crash the exit path — the watchdog /
+		# sender ensure_pump remains the final backstop.
+		frappe.log_error(title="pump.schedule_successor", message=frappe.get_traceback())
 
 
 # --------------------------------------------------------------------------- #
@@ -2173,13 +2533,18 @@ def watchdog(deps: PumpDeps | None = None) -> dict:
 	if not pump_configured():
 		return summary
 	try:
-		targets = [
+		targets = {
 			r[0]
 			for r in frappe.db.sql(
 				f"""SELECT DISTINCT relay_target_id FROM `tab{TURN}`
 				WHERE state IN ({_in_list(ts.NONTERMINAL_STATES)})"""
 			)
-		]
+		}
+		# CDX-4: also scan shards that have a turn with an open (pending/stale-running)
+		# EFFECT row regardless of that turn's terminal state — a crash after an
+		# errored/cancelled settlement commit but before enqueue_finalize leaves the
+		# owed effects on a TERMINAL turn that the nonterminal-only scan above misses.
+		targets |= set(ts.shards_with_open_effects())
 	except Exception:
 		return summary
 	for target in targets:
@@ -2290,6 +2655,22 @@ def _watchdog_shard(target: str, deps: PumpDeps, summary: dict) -> None:
 			# re-enqueueing finalize (never re-enter recovering).
 			deps.enqueue_finalize(run_id, target)
 			summary["finalize_requeued"] += 1
+
+	# CDX-4: independent EFFECT-ledger scan. Any turn on this shard with an open
+	# (pending / stale-running) effect row — INCLUDING a terminal errored/cancelled
+	# turn whose finalize enqueue was lost after the settlement commit — gets finalize
+	# re-enqueued. Idempotent (the attempt-suffixed dedupe + the exclusive claim make a
+	# concurrent healthy finalize a no-op), so this never fights a live finalizer.
+	try:
+		open_effect_turns = ts.turns_with_open_effects(target)
+	except Exception:
+		open_effect_turns = []
+	requeued_finalize = {r["run_id"] for r in rows if r["state"] == "finalizing"}
+	for run_id in open_effect_turns:
+		if run_id in requeued_finalize:
+			continue  # already re-enqueued by the finalizing branch above
+		deps.enqueue_finalize(run_id, target)
+		summary["finalize_requeued"] += 1
 
 	if live_work:
 		res = ensure_pump(target, deps=deps)

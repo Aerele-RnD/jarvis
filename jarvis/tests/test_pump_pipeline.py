@@ -1097,3 +1097,259 @@ class TestDeltaBatcher(_PipelineCase):
 			math.ceil(len(frames) / pump._DELTA_BATCH_SIZE) + 3,
 			"publish count within the N=10 batch cadence",
 		)
+
+
+# --------------------------------------------------------------------------- #
+# 11. CDX-5 — the PRODUCTION tool applier (no recorder injection)
+# --------------------------------------------------------------------------- #
+
+
+class TestToolApplierEquivalence(_PipelineCase):
+	"""CDX-5 equivalence RE-RUN: the tool-heavy transcript through the pump with the
+	DEFAULT (production) ``apply_tool`` — NOT the recorder the Stage-B evidence used.
+	Built-in openclaw tools (browser) must produce their durable role=tool receipt +
+	tool-end update + start/end publishes; ``jarvis__*`` callback-owned tools must
+	publish lifecycle ONLY (no pump-owned receipt row)."""
+
+	def test_production_applier_tool_heavy_equivalence(self):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="how much do we owe?")
+		rid = "pmp_toolheavy"
+		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=0)
+		double = self._double()
+		deps = self._deps(double=double, prepare=self._prepare_stub(conv, double, "tool-heavy"))
+		# The whole point of CDX-5: use the REAL applier, not a recorder.
+		deps.apply_tool = pump.PumpDeps().apply_tool
+		ctx = self._make_ctx(deps)
+		self._pubs.clear()
+		self._pump_until(ctx, lambda: self._state(rid) in ("finalizing", "done"))
+
+		# Built-in tool (browser, t3): durable receipt row inserted + closed.
+		row = frappe.db.get_value(
+			MSG,
+			{"conversation": conv, "tool_call_id": "t3", "role": "tool"},
+			["name", "tool_name", "tool_status", "streaming"],
+			as_dict=True,
+		)
+		self.assertIsNotNone(row, "built-in browser tool got a durable role=tool receipt")
+		self.assertEqual(row["tool_name"], "browser")
+		self.assertEqual(row["tool_status"], "completed")
+		self.assertEqual(int(row["streaming"]), 0, "tool-end closed the receipt")
+
+		# jarvis__* tools (t1/t2): NO pump-owned receipt row (callback owns it, R-6).
+		self.assertFalse(
+			frappe.db.exists(MSG, {"conversation": conv, "tool_call_id": "t1", "role": "tool"}),
+			"jarvis__* tool receipt is NOT pump-owned",
+		)
+		self.assertFalse(frappe.db.exists(MSG, {"conversation": conv, "tool_call_id": "t2", "role": "tool"}))
+
+		# Lifecycle publishes fired for ALL three tools (3 start + 3 end), epoch-fenced.
+		starts = [p for p in self._pubs if p.get("kind") == "tool:start"]
+		ends = [p for p in self._pubs if p.get("kind") == "tool:end"]
+		self.assertEqual(len(starts), 3, "a tool:start per tool")
+		self.assertEqual(len(ends), 3, "a tool:end per tool")
+		for p in starts + ends:
+			self.assertEqual(p.get("pump_epoch"), ctx.epoch, "tool events epoch-fenced (P0-3 contract)")
+		# The built-in tool's publishes carry the receipt message_id; jarvis__ ones None.
+		bstart = next(p for p in starts if p.get("tool_call_id") == "t3")
+		self.assertEqual(bstart.get("message_id"), row["name"])
+		jstart = next(p for p in starts if p.get("tool_call_id") == "t1")
+		self.assertIsNone(jstart.get("message_id"))
+
+	def test_builtin_tool_row_idempotent_on_replay(self):
+		# CDX-5: a re-applied start (hop re-attach / replayed frame) reuses the durable
+		# (conversation, tool_call_id) row instead of doubling it.
+		conv = self._mk_conv()
+		rid = "pmp_toolidem"
+		self._mk_msg(conv, content="x")
+		self._mk_turn(conv, rid, self._mk_msg(conv), "streaming", version=3, pump_epoch=1)
+		ctx = self._make_ctx(self._deps(), with_mux=False)
+		ctx.epoch = int(frappe.db.get_value("Jarvis Relay Pump", self._target, "pump_epoch"))
+		rs = pump._RunState(
+			run_id=rid,
+			conversation=conv,
+			owner=TEST_USER,
+			assistant_message=None,
+			session_key="s",
+			version=4,
+		)
+		ev = {"event_seq": 1, "phase": "start", "tool_name": "browser", "tool_call_id": "tz", "title": "t"}
+		pump._default_apply_tool(ctx, rs, ev)
+		pump._default_apply_tool(ctx, rs, ev)  # replay
+		rows = frappe.get_all(MSG, filters={"conversation": conv, "tool_call_id": "tz", "role": "tool"})
+		self.assertEqual(len(rows), 1, "replayed tool start reuses the durable row (idempotent)")
+
+
+# --------------------------------------------------------------------------- #
+# 12. CDX-6 — usage honesty (no permanent 'recorded' on stale/missing data)
+# --------------------------------------------------------------------------- #
+
+
+class TestUsageHonesty(_PipelineCase):
+	def _finalizing_usage_turn(self, rid, session_key):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="ans", streaming=0)
+		frappe.db.set_value(CONV, conv, "session_key", session_key)
+		self._mk_turn(conv, rid, seed, "finalizing", version=5, assistant_message=amsg)
+		ts.insert_required_effects(rid, ("usage",))
+		frappe.db.commit()
+
+	def test_stale_row_does_not_mark_recorded(self):
+		# CDX-6: a fresh=False row is a `retry` — the usage effect must NOT commit the
+		# guard; it stays pending for a later cycle (never a silent permanent loss).
+		self._finalizing_usage_turn("pmp_usage_stale", "sess-stale")
+		fake = _FakeSess()
+		fake._key = "sess-stale"
+		stale_row = {"key": "sess-stale", "totalTokensFresh": False, "inputTokens": 10, "outputTokens": 5}
+		with self._gateway(fake), patch("jarvis.chat.usage.fetch_fresh_session_row", return_value=stale_row):
+			finalize.run_finalize("pmp_usage_stale", self._target)
+		self.assertEqual(int(self._val("pmp_usage_stale", "usage_recorded")), 0, "guard NOT set on stale")
+		self.assertEqual(self._effects("pmp_usage_stale")["usage"], "pending", "usage stays pending")
+
+	def test_no_row_does_not_mark_recorded(self):
+		# CDX-6: no row at all (None) is a `retry`.
+		self._finalizing_usage_turn("pmp_usage_none", "sess-none")
+		fake = _FakeSess()
+		fake._key = "sess-none"
+		with self._gateway(fake), patch("jarvis.chat.usage.fetch_fresh_session_row", return_value=None):
+			finalize.run_finalize("pmp_usage_none", self._target)
+		self.assertEqual(int(self._val("pmp_usage_none", "usage_recorded")), 0)
+		self.assertEqual(self._effects("pmp_usage_none")["usage"], "pending")
+
+	def test_delayed_fresh_row_records_on_retry(self):
+		# CDX-6: stale on the first cycle (pending), fresh on the next (recorded once).
+		self._finalizing_usage_turn("pmp_usage_delay", "sess-delay")
+		fake = _FakeSess()
+		fake._key = "sess-delay"
+		stale = {"key": "sess-delay", "totalTokensFresh": False}
+		fresh = {"key": "sess-delay", "totalTokensFresh": True, "inputTokens": 40, "outputTokens": 10}
+		with self._gateway(fake), patch("jarvis.chat.usage.fetch_fresh_session_row", return_value=stale):
+			finalize.run_finalize("pmp_usage_delay", self._target)
+		self.assertEqual(self._effects("pmp_usage_delay")["usage"], "pending")
+		rec = _Recorder()
+		with (
+			self._gateway(fake),
+			patch("jarvis.chat.usage.fetch_fresh_session_row", return_value=fresh),
+			patch("jarvis.chat.usage.record_turn_usage", rec),
+		):
+			finalize.run_finalize("pmp_usage_delay", self._target)
+		self.assertEqual(rec.count, 1, "recorded exactly once on the fresh retry")
+		self.assertEqual(int(self._val("pmp_usage_delay", "usage_recorded")), 1)
+		self.assertEqual(self._state("pmp_usage_delay"), "done")
+
+
+# --------------------------------------------------------------------------- #
+# 13. CDX-12 — terminal_publish backstop
+# --------------------------------------------------------------------------- #
+
+
+class TestTerminalPublishBackstop(_PipelineCase):
+	def test_suppressed_settlement_terminal_delivered_by_finalize(self):
+		# CDX-12: settlement's terminal publish is LOST (belt-skip / socket hiccup) but
+		# the DB settled; finalize's terminal_publish effect re-delivers run:end so the
+		# client can clear its spinner from durable truth.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="final answer", streaming=0)
+		rid = "pmp_termpub"
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"finalizing",
+			version=5,
+			pump_epoch=1,
+			assistant_message=amsg,
+			terminal_kind="relay:final",
+			terminal_payload=json.dumps({"text": "final answer"}),
+		)
+		# The owed set includes terminal_publish (CDX-12).
+		ts.insert_required_effects(rid, settlement.FINAL_EFFECTS)
+		frappe.db.commit()
+		self.assertIn("terminal_publish", self._effects(rid))
+		self._pubs.clear()
+		with self._mock_enrichment():
+			finalize.run_finalize(rid, self._target)
+		ends = [p for p in self._pubs if p.get("kind") == "run:end"]
+		self.assertGreaterEqual(len(ends), 1, "finalize re-published the terminal run:end")
+		self.assertEqual(ends[0].get("run_id"), rid)
+		self.assertEqual(self._effects(rid)["terminal_publish"], "done")
+
+	def test_terminal_publish_for_errored_turn_republishes_run_error(self):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="", streaming=0, error="boom")
+		rid = "pmp_termpub_err"
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"errored",
+			version=6,
+			pump_epoch=1,
+			assistant_message=amsg,
+			terminal_kind="relay:error",
+			terminal_payload=json.dumps({"state": "error", "error": "boom"}),
+			error="boom",
+		)
+		ts.insert_required_effects(rid, settlement.TERMINAL_EFFECTS)
+		frappe.db.commit()
+		self._pubs.clear()
+		with self._mock_enrichment():
+			finalize.run_finalize(rid, self._target)
+		errs = [p for p in self._pubs if p.get("kind") == "run:error"]
+		self.assertGreaterEqual(len(errs), 1, "errored terminal re-published as run:error")
+		self.assertEqual(self._effects(rid)["terminal_publish"], "done")
+
+
+# --------------------------------------------------------------------------- #
+# 14. CDX-7 — prepare writes are actor-fenced (no orphan on a lost claim)
+# --------------------------------------------------------------------------- #
+
+
+class TestPrepareActorFencing(_PipelineCase):
+	def test_stale_prepare_after_reclaim_leaves_no_orphan(self):
+		# CDX-7: pause a prepare AFTER it creates its placeholder; a watchdog reclaim
+		# bumps the version (preparing->recovering->queued); the stale prepare then
+		# resumes, LOSES the actor-fenced attach, and cleans its orphan placeholder —
+		# the turn is left cleanly queued with assistant_message NULL and no dangling
+		# streaming row.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="hi")
+		rid = "pmp_prep_fence"
+		self._mk_turn(conv, rid, seed, "queued", version=1, reserved=1)
+		fake = _FakeSess()
+
+		created = {}
+		orig = prepare._create_placeholder_locked
+
+		def _capture_then_reclaim(conversation):
+			# Create the placeholder exactly as prepare would...
+			name = orig(conversation)
+			created["msg"] = name
+			# ...then simulate a watchdog reclaim landing in the pause window: bump the
+			# turn's version out from under this prepare (preparing->recovering->queued).
+			row = ts.read_turn(rid)
+			self.assertTrue(ts.mark_recovering(rid, int(row["version"])))
+			frappe.db.commit()
+			self.assertTrue(ts.recover_to_queued(rid, int(row["version"]) + 1))
+			frappe.db.commit()
+			return name
+
+		with (
+			self._gateway(fake),
+			self._pump_on(),
+			patch.object(prepare, "_create_placeholder_locked", _capture_then_reclaim),
+		):
+			# claim_preparing runs FIRST (version 1->2); then our patched placeholder
+			# creator reclaims (2->recovering->queued, version 3+); the attach CAS at
+			# version 2 then affects 0 rows and prepare cleans its orphan.
+			res = prepare.run_prepare(rid, self._target)
+
+		self.assertEqual(res.get("skipped"), "attach_lost", "the stale prepare lost the actor-fenced attach")
+		# The orphan placeholder was cleaned (deleted).
+		self.assertFalse(frappe.db.exists(MSG, created["msg"]), "orphan placeholder deleted")
+		# The turn is cleanly re-queued with NO stale prepare refs.
+		self.assertEqual(self._state(rid), "queued")
+		self.assertIsNone(self._val(rid, "assistant_message"), "no orphan placeholder attached")

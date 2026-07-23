@@ -606,7 +606,23 @@ def accept_or_queue(
 	if admit:
 		# Enqueue the legacy turn job AFTER the durable commit (mirrors the
 		# _dispatch_turn after_commit invariant).
-		dispatch()
+		try:
+			dispatch()
+		except Exception:
+			# CDX-9: enqueue failed after the admission commit — compensate so the
+			# credit is not stranded until the reservation TTL, and return the turn as
+			# durably queued (a sweep/promote will re-dispatch it) instead of a false
+			# "dispatched".
+			frappe.log_error(title="admission.accept dispatch", message=frappe.get_traceback())
+			_compensate_failed_dispatch(run_id, target)
+			pos = _position_of(run_id, target)
+			return {
+				"ok": True,
+				"dispatched": False,
+				"run_id": run_id,
+				"queued_position": pos,
+				"dispatch_failed": True,
+			}
 		return {"ok": True, "dispatched": True, "run_id": run_id, "queued_position": None}
 
 	pos = _position_of(run_id, target)
@@ -635,6 +651,37 @@ def _cas_dispatch(run_id: str) -> bool:
 		)
 		== 1
 	)
+
+
+def _compensate_failed_dispatch(run_id: str, target: str) -> None:
+	"""CDX-9: an enqueue (RQ/Redis) failure AFTER the admission/promotion commit leaves
+	the row ``dispatching`` + ``reserved`` with no job behind it, stranding a shard
+	credit until the ~900s reservation TTL + the periodic sweep. Compensate
+	immediately: CAS the exact ``dispatching`` attempt back to ``queued``, CLEAR the
+	reservation/expiry, and republish positions so a waiting sender sees the freed
+	slot. Version-fenced on ``state='dispatching'`` so a turn that meanwhile started
+	streaming (won't happen on the same run in Phase-0, but defensive) is untouched.
+	Best-effort — never raises into the caller."""
+	try:
+		affected = _run_cas(
+			f"""UPDATE `tab{TURN}`
+			SET state='queued', reserved=0, dispatching_at=NULL,
+			    reservation_expires_at=NULL, version=version+1
+			WHERE name=%(r)s AND state='dispatching'""",
+			{"r": run_id},
+		)
+		frappe.db.commit()
+		if affected == 1:
+			try:
+				_publish_queue_positions(target)
+			except Exception:
+				pass
+	except Exception:
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
+		frappe.log_error(title="admission.compensate_failed_dispatch", message=frappe.get_traceback())
 
 
 def _dispatch_promoted(row: dict) -> None:
@@ -714,7 +761,11 @@ def promote_next(target: str | None = None) -> int:
 			_dispatch_promoted(row)
 			_telemetry("promote", run_id=row["run_id"], target=target, queue_wait_ms=wait_ms)
 		except Exception:
+			# CDX-9: enqueue failed after the promotion commit — compensate (CAS
+			# dispatching->queued + release the credit) instead of only logging, so the
+			# promoted-but-not-dispatched credit is not stranded until the sweep.
 			frappe.log_error(title="admission.promote dispatch", message=frappe.get_traceback())
+			_compensate_failed_dispatch(row["run_id"], target)
 
 	# Positions shifted for everyone still queued.
 	try:
@@ -860,23 +911,58 @@ def _assert_owner(conversation: str) -> str:
 
 @frappe.whitelist()
 def cancel_queued_turn(run_id: str) -> dict:
-	"""Owner-checked cancel of a queued turn: CAS queued->cancelled, publish
-	turn:cancelled, republish positions. Frees no slot (a queued turn holds
-	none) but renumbers the queue."""
+	"""Owner-checked cancel of a pre-dispatch turn, ROUTED BY STATE (CDX-8):
+
+	  * ``queued``            -> ``turn_state.cancel_queued`` (version-fenced): CAS to
+	                            ``cancelled`` CLEARING ``reserved`` + ``reservation_
+	                            expires_at`` atomically. A reserved-but-unclaimed queued
+	                            turn (the pump reserved a credit before prepare) would
+	                            otherwise leak that credit until the ~900s reservation
+	                            expiry — the reported leak.
+	  * ``preparing``/``ready`` -> ``turn_state.cancel_preparing_or_ready`` (version-
+	                            fenced): CAS to ``cancelled`` (also clearing the
+	                            reservation) + clean the assistant placeholder so no
+	                            stuck spinner. The pump owns dispatch but nothing is in
+	                            flight yet, so no gateway abort is needed; the losing
+	                            prepare's ``mark_ready`` then affects 0 rows.
+
+	Returns ``{"ok": True, "run_id", "path": "queued"|"preparing_ready"}`` so the
+	caller/UI knows which path won; ``{"ok": False, ...}`` when the turn already
+	advanced (e.g. dispatched) — the UI then KEEPS its chip until the server confirms
+	(no optimistic clear on failure)."""
 	require_jarvis_access()
 	row = frappe.db.get_value(
-		TURN, run_id, ["conversation", "state", "relay_target_id", "seed_message"], as_dict=True
+		TURN,
+		run_id,
+		["conversation", "state", "version", "relay_target_id", "seed_message", "assistant_message"],
+		as_dict=True,
 	)
 	if not row:
 		return {"ok": False, "reason": frappe._("This turn no longer exists.")}
 	owner = _assert_owner(row["conversation"])
-	affected = _run_cas(
-		f"""UPDATE `tab{TURN}` SET state='cancelled', cancel_requested=1, done_at=%(now)s,
-		version=version+1 WHERE name=%(r)s AND state='queued'""",
-		{"r": run_id, "now": _now()},
-	)
+	from jarvis.chat import turn_state as ts
+
+	state = row["state"]
+	version = int(row["version"] or 0)
+	path = None
+	if state == "queued":
+		if ts.cancel_queued(run_id, version):
+			path = "queued"
+	elif state in ("preparing", "ready"):
+		if ts.cancel_preparing_or_ready(run_id, version):
+			path = "preparing_ready"
+			# Clean the assistant placeholder prepare attached so a reload never shows
+			# a stuck spinner for a cancelled turn (credit already released by the CAS).
+			if row.get("assistant_message"):
+				try:
+					_run_cas(
+						f"UPDATE `tab{MSG}` SET streaming=0 WHERE name=%(m)s",
+						{"m": row["assistant_message"]},
+					)
+				except Exception:
+					pass
 	frappe.db.commit()
-	if affected != 1:
+	if path is None:
 		return {"ok": False, "reason": frappe._("This turn already started or was cancelled.")}
 	try:
 		publish_to_user(
@@ -895,10 +981,20 @@ def cancel_queued_turn(run_id: str) -> dict:
 	# cancelled (not silently dropped).
 	_write_cancel_marker(row["conversation"], USER_CANCEL_REASON)
 	target = row["relay_target_id"] or DEFAULT_RELAY_TARGET
-	# A cancel can free capacity indirectly (an over-cap conversation clears) -
-	# best-effort promote + republish positions.
-	promote_next(target)
-	return {"ok": True, "run_id": run_id}
+	# The freed credit lets the next queued turn run. In pump mode wake the pump to
+	# re-promote (promote_next is a no-op there); else best-effort legacy promote.
+	from jarvis.chat import pump
+
+	if pump.pump_configured():
+		try:
+			pump.ensure_pump(target)
+			pump.lpush_wake(target, run_id)
+			_publish_queue_positions(target)
+		except Exception:
+			pass
+	else:
+		promote_next(target)
+	return {"ok": True, "run_id": run_id, "path": path}
 
 
 @frappe.whitelist()
@@ -962,6 +1058,83 @@ def active_turn_for_conversation(conversation: str) -> dict:
 			"position": pos,
 		},
 	}
+
+
+# --------------------------------------------------------------------------- #
+# Cutover preflight (CDX-10) — first-deploy legacy-overlap detector
+# --------------------------------------------------------------------------- #
+
+
+def _legacy_turn_jobs() -> tuple[int, list[str]]:
+	"""CDX-10: scan every RQ queue (queued + started registries) for THIS site's
+	legacy ``jarvis-turn::*`` jobs. Frappe namespaces a job id as
+	``"<site>||<job_id-with-colons-as-pipes>"`` (``create_job_id``), so a legacy
+	``jarvis-turn::<msg>::a<n>`` id becomes ``<site>||jarvis-turn|<msg>|a<n>`` — we
+	match that prefix. Best-effort; a probe failure returns what was found so far."""
+	prefix = f"{frappe.local.site}||jarvis-turn|"
+	found: set[str] = set()
+	try:
+		from frappe.utils.background_jobs import get_queues
+		from rq.registry import StartedJobRegistry
+
+		for q in get_queues():
+			ids: list = []
+			try:
+				ids += list(q.get_job_ids() or [])
+			except Exception:
+				pass
+			try:
+				ids += list(StartedJobRegistry(queue=q).get_job_ids() or [])
+			except Exception:
+				pass
+			for jid in ids:
+				if isinstance(jid, bytes):
+					jid = jid.decode()
+				if isinstance(jid, str) and jid.startswith(prefix):
+					found.add(jid)
+	except Exception:
+		frappe.log_error(title="admission.pump_cutover_preflight scan", message=frappe.get_traceback())
+	ordered = sorted(found)
+	return len(ordered), ordered[:20]
+
+
+@frappe.whitelist()
+def pump_cutover_preflight(relay_target: str | None = None) -> dict:
+	"""CDX-10 — the MANDATORY first-deploy cutover preflight. Before removing the
+	explicit ``jarvis_pump_enabled=0`` kill switch to enter the default-ON pump, run
+	``bench --site <site> execute jarvis.chat.admission.pump_cutover_preflight`` to
+	detect INVISIBLE legacy activity that a fresh pump start could overlap (violating
+	per-conversation ordering / the container cap):
+
+	  * queued OR started legacy ``jarvis-turn::*`` RQ jobs — a pre-upgrade job that has
+	    no Turn row AND no assistant placeholder yet (it creates the placeholder only
+	    after the worker starts), so neither the pump reconcile nor the dual signal can
+	    see it;
+	  * fresh legacy streaming assistant messages with no owning Turn row (a legacy
+	    turn already mid-stream).
+
+	Returns a verdict + counts. ``clear=True`` (verdict ``"clear"``) ⇒ no invisible
+	legacy activity — safe to unset the kill switch and enter default-ON. ``clear=
+	False`` (verdict ``"drain_first"``) ⇒ DRAIN the listed jobs / let the streams
+	finish first (PUMP-RUNBOOK §2). System-Manager gated (so ``bench execute`` as
+	Administrator works)."""
+	if "System Manager" not in frappe.get_roles():
+		raise frappe.PermissionError("pump_cutover_preflight requires System Manager")
+	target = relay_target or DEFAULT_RELAY_TARGET
+	legacy_jobs, job_ids = _legacy_turn_jobs()
+	legacy_streaming = _legacy_streaming_count(target)
+	clear = legacy_jobs == 0 and legacy_streaming == 0
+	result = {
+		"ok": True,
+		"clear": clear,
+		"verdict": "clear" if clear else "drain_first",
+		"legacy_jobs": legacy_jobs,
+		"legacy_streaming": legacy_streaming,
+		"job_ids": job_ids,
+		"relay_target": target,
+	}
+	_telemetry("cutover_preflight", target=target, legacy_jobs=legacy_jobs, legacy_streaming=legacy_streaming)
+	return result
 
 
 def _write_cancel_marker(conversation: str, reason: str) -> None:

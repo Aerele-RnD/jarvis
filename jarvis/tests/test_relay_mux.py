@@ -445,6 +445,42 @@ class TestRelayMuxWhiteBox(FrappeTestCase):
 		self.assertEqual(lane.state, "active")  # never quarantines on lossy
 		self.assertGreaterEqual(mux.stats()["deltas_dropped"], 5)
 
+	def test_lane_fairness_hot_lane_does_not_starve_cold(self):
+		# CDX-13: a backed-up hot lane must not monopolise one dispatch — the per-lane
+		# quantum + round-robin service a cold lane within the same bounded call.
+		from jarvis.chat import relay_mux as rm
+
+		mux = self._mux()
+		hot, cold = _Recorder(), _Recorder()
+		mux.register_run("hot", hot.handler(), session_key="sh")
+		mux.register_run("cold", cold.handler(), session_key="sc")
+		for i in range(rm.LANE_QUANTUM * 3):  # hot backlog >> one quantum
+			mux._classify(_agent_frame("hot", "sh", "assistant", {"text": f"h{i}", "delta": f"h{i}"}))
+		mux._classify(_agent_frame("cold", "sc", "assistant", {"text": "c", "delta": "c"}))
+		# One bounded dispatch: without the quantum this would apply only hot events and
+		# never reach the cold lane; the round-robin quantum services cold within budget.
+		applied = mux.dispatch(max_events=rm.LANE_QUANTUM + 1)
+		self.assertEqual(applied, rm.LANE_QUANTUM + 1)
+		self.assertEqual(len(cold.deltas), 1, "cold lane serviced within the budget (not starved)")
+		self.assertEqual(len(hot.deltas), rm.LANE_QUANTUM, "hot lane bounded to its per-pass quantum")
+		# Residue remains -> the wake is re-armed so the next dispatch continues at once.
+		self.assertTrue(mux._has_work())
+		self.assertTrue(mux._wake.is_set())
+
+	def test_dispatch_round_robin_drains_all_within_default_budget(self):
+		# CDX-13: fairness must not LOSE events — a moderate backlog fully drains via
+		# round-robin passes within one default-budget dispatch.
+		from jarvis.chat import relay_mux as rm
+
+		mux = self._mux()
+		rec = _Recorder()
+		mux.register_run("r", rec.handler(), session_key="s")
+		total = rm.LANE_QUANTUM * 2 + 5
+		for i in range(total):
+			mux._classify(_agent_frame("r", "s", "assistant", {"text": f"t{i}", "delta": f"t{i}"}))
+		self.assertEqual(mux.dispatch(), total, "all events drained in one call (round-robin passes)")
+		self.assertFalse(mux._has_work())
+
 
 # --------------------------------------------------------------------------- #
 # Reader-loop tests (real reader thread + in-process transport double)

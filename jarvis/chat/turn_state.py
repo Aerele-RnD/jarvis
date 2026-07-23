@@ -67,6 +67,12 @@ PREPARE_DEADLINE_S = 300
 # logged) so a settled turn always reaches `done` (D2 §1a, OAR-9).
 FINALIZE_MAX_ATTEMPTS = 3
 
+# CDX-4: a `running` effect whose exclusive claim is older than this bound is
+# reclaimable — the finalizer that claimed it crashed (a finalize job is bounded
+# well under this by HOP_TIMEOUT_S=180). Until the bound elapses the claim is
+# exclusive, so two concurrent finalizers can never run the same effect twice.
+EFFECT_CLAIM_STALE_S = 300
+
 # Per-turn soft deadline stamped at dispatch (openclaw_client.py TURN_TIMEOUT).
 TURN_TIMEOUT_SECONDS = 600
 
@@ -382,6 +388,39 @@ def claim_preparing(run_id: str, version: int, assistant_message: str | None = N
 	)
 
 
+def attach_placeholder(run_id: str, version: int, assistant_message: str) -> bool:
+	"""CDX-7 — attach the assistant placeholder to the Turn through an ACTOR-fenced
+	CAS proving the caller still holds the preparing claim (state='preparing' AND
+	version=V, the claim version). Does NOT bump version (an intra-claim durable
+	write, not a state transition — mark_ready is the transition). A prepare that
+	paused past a watchdog reclaim / cancel (which bumped version) affects 0 rows here
+	and must clean its orphan placeholder + abort, never attaching a streaming row to a
+	re-queued/cancelled turn. Returns won/lost. No commit."""
+	return (
+		_run_cas(
+			f"""UPDATE `tab{TURN}` SET assistant_message=%(am)s
+			WHERE name=%(r)s AND state='preparing' AND version=%(v)s""",
+			{"am": assistant_message, "r": run_id, "v": version},
+		)
+		== 1
+	)
+
+
+def store_dispatch_payload(run_id: str, version: int, payload_json: str) -> bool:
+	"""CDX-7 — store the prepare->pump handoff ``dispatch_payload`` through an
+	ACTOR-fenced CAS proving the caller still holds the preparing claim
+	(state='preparing' AND version=V). Does NOT bump version (intra-claim write). A
+	losing prepare discards its payload + aborts. Returns won/lost. No commit."""
+	return (
+		_run_cas(
+			f"""UPDATE `tab{TURN}` SET dispatch_payload=%(p)s
+			WHERE name=%(r)s AND state='preparing' AND version=%(v)s""",
+			{"p": payload_json, "r": run_id, "v": version},
+		)
+		== 1
+	)
+
+
 def mark_ready(run_id: str, version: int) -> bool:
 	"""D2 row 3 (preparing -> ready), prep, ACTOR-fenced. The credit is already
 	held; stamp ``ready_at``, ``version+1``. Returns won/lost. No commit."""
@@ -413,13 +452,22 @@ def prepare_errored(run_id: str, version: int, error: str | None = None) -> bool
 	)
 
 
-def confirm_dispatching(run_id: str, version: int, epoch: int) -> bool:
-	"""D2 row 5 (ready -> dispatching), pump, EPOCH-fenced (E is FIRST stamped
-	here — so the guard has NO ``pump_epoch=`` clause; it is state+version only).
-	CONFIRM-only: the credit was reserved at queued->preparing (OAR-2), so NO
-	admission re-check. Stamp ``pump_epoch=E``, ``dispatching_at``, ``deadline_at``
-	(= now + TURN_TIMEOUT_SECONDS, D2 #27), ``version+1``. Returns won/lost. No
-	commit."""
+def confirm_dispatching(run_id: str, version: int, epoch: int, target: str) -> bool:
+	"""D2 row 5 (ready -> dispatching), pump, EPOCH-fenced (CDX-2). ``pump_epoch=E``
+	is FIRST *stamped on the turn* here, so the guard cannot fence on the turn's own
+	``pump_epoch`` (it is not E yet) — instead it proves, IN THE SAME statement, that
+	the SHARD control row still carries epoch E via an ``EXISTS`` on
+	``Jarvis Relay Pump`` (different table => MariaDB-legal inside an UPDATE, verified
+	on patterntest). This closes the stale-``ready``-pump window: a pump that read the
+	``ready`` row at epoch E but paused past a takeover (which re-stamps only
+	``EPOCH_INFLIGHT_STATES`` — ``ready`` is excluded, §10.5) affects 0 rows here,
+	because the control row now holds E+1. A prior Python epoch check is NOT
+	sufficient (the takeover can land between the check and this CAS); the proof must
+	be in the mutation. CONFIRM-only: the credit was reserved at queued->preparing
+	(OAR-2), so NO admission re-check. Stamp ``pump_epoch=E``, ``dispatching_at``,
+	``deadline_at`` (= now + TURN_TIMEOUT_SECONDS, D2 #27), ``version+1``. On 0 rows
+	the caller re-reads the CONTROL epoch: mismatch => shared lease-loss exit; intact
+	=> ordinary state/version CAS loss (§10.11). Returns won/lost. No commit."""
 	now = _now()
 	deadline = frappe.utils.add_to_date(None, seconds=TURN_TIMEOUT_SECONDS)
 	return (
@@ -427,8 +475,12 @@ def confirm_dispatching(run_id: str, version: int, epoch: int) -> bool:
 			f"""UPDATE `tab{TURN}`
 			SET state='dispatching', pump_epoch=%(e)s, dispatching_at=%(now)s,
 			    deadline_at=%(dl)s, version=version+1
-			WHERE name=%(r)s AND state='ready' AND version=%(v)s""",
-			{"r": run_id, "e": epoch, "now": now, "dl": deadline, "v": version},
+			WHERE name=%(r)s AND state='ready' AND version=%(v)s
+			  AND EXISTS (
+			        SELECT 1 FROM `tab{PUMP}` p
+			        WHERE p.relay_target_id=%(t)s AND p.pump_epoch=%(e)s
+			  )""",
+			{"r": run_id, "e": epoch, "now": now, "dl": deadline, "v": version, "t": target},
 		)
 		== 1
 	)
@@ -911,38 +963,101 @@ def insert_required_effects(run_id: str, effect_names) -> int:
 	return inserted
 
 
-def claim_effect(run_id: str, effect_name: str) -> str:
-	"""Effect ledger — CLAIM one effect for a finalize attempt (D2 §1a). Returns:
-	  * ``'done'``       — already done (or no such required row); skip.
-	  * ``'attempt'``    — ``attempts < FINALIZE_MAX_ATTEMPTS``; ``attempts`` was
-	                       incremented; the caller runs the effect then calls
-	                       ``complete_effect`` on success (or leaves it pending on
-	                       failure, so the next finalize retries).
-	  * ``'force_done'`` — ``attempts >= FINALIZE_MAX_ATTEMPTS``; the effect is
-	                       FORCE-DONE (status=done, logged) and skipped, so the turn
-	                       always reaches ``done`` (OAR-9).
-	No commit (caller owns the finalize txn)."""
+def claim_effect(run_id: str, effect_name: str) -> tuple[str, str | None]:
+	"""Effect ledger — EXCLUSIVELY CLAIM one effect for a finalize attempt (D2 §1a,
+	CDX-4). The claim is ONE atomic CAS (``pending``/stale-``running`` -> ``running``)
+	that stamps a fresh ``claim_token`` + ``claimed_at`` AND increments ``attempts``,
+	with the affected-rows count as the success signal — so two concurrent finalizers
+	can never both run the same effect (only one wins the CAS; the other sees a live
+	``running`` claim). Returns ``(outcome, token)``:
+	  * ``('done', None)``       — already done (or no such required row); skip.
+	  * ``('attempt', token)``   — EXCLUSIVELY claimed; ``attempts`` incremented, the
+	                               row is now ``running`` under ``token``. The caller
+	                               runs the effect then ``complete_effect(.., token)``
+	                               on success, or ``release_effect(.., token)`` on
+	                               failure (back to pending for the next cycle).
+	  * ``('busy', None)``       — another finalizer holds a LIVE (non-stale) claim;
+	                               skip this cycle (its owner will complete/release it).
+	  * ``('force_done', None)`` — ``attempts >= FINALIZE_MAX_ATTEMPTS``; the effect is
+	                               FORCE-DONE (status=done, logged) and skipped, so the
+	                               turn always reaches ``done`` (OAR-9).
+	A ``running`` row whose ``claimed_at`` is older than ``EFFECT_CLAIM_STALE_S`` (its
+	finalizer crashed) is RECLAIMABLE by this same CAS. No commit (caller owns the txn;
+	it commits after the claim so the attempt increment survives a mid-effect crash)."""
 	name = _effect_name(run_id, effect_name)
 	row = frappe.db.get_value(EFFECT, name, ["status", "attempts"], as_dict=True)
 	if not row or row["status"] == "done":
-		return "done"
+		return ("done", None)
 	if int(row["attempts"] or 0) >= FINALIZE_MAX_ATTEMPTS:
 		force_done_effect(run_id, effect_name)
-		return "force_done"
-	_run_cas(
-		f"""UPDATE `tab{EFFECT}` SET attempts=attempts+1 WHERE name=%(n)s AND status='pending'""", {"n": name}
+		return ("force_done", None)
+	token = frappe.generate_hash(length=16)
+	stale_cut = frappe.utils.add_to_date(None, seconds=-EFFECT_CLAIM_STALE_S)
+	won = (
+		_run_cas(
+			f"""UPDATE `tab{EFFECT}`
+			SET status='running', claim_token=%(tok)s, claimed_at=%(now)s, attempts=attempts+1
+			WHERE name=%(n)s AND attempts < %(max)s
+			  AND ( status='pending'
+			        OR (status='running' AND (claimed_at IS NULL OR claimed_at < %(stale)s)) )""",
+			{"n": name, "tok": token, "now": _now(), "max": FINALIZE_MAX_ATTEMPTS, "stale": stale_cut},
+		)
+		== 1
 	)
-	return "attempt"
+	if won:
+		return ("attempt", token)
+	# 0 rows: another finalizer holds a live (non-stale) running claim — skip.
+	return ("busy", None)
 
 
-def complete_effect(run_id: str, effect_name: str) -> bool:
-	"""Effect ledger — mark an effect ``done`` inside its own idempotent txn
-	(D2 §1a). Returns won/lost. No commit."""
+def complete_effect(run_id: str, effect_name: str, token: str | None = None) -> bool:
+	"""Effect ledger — mark a CLAIMED effect ``done`` inside its own idempotent txn
+	(D2 §1a, CDX-4). Fenced on the claim ``token``: a finalizer whose ``running`` claim
+	was already reclaimed (it stalled past ``EFFECT_CLAIM_STALE_S`` and another
+	finalizer took the effect) affects 0 rows here and does NOT overwrite the new
+	owner's work. When ``token`` is None the guard degrades to ``status='running'``
+	(any live claim), used by legacy callers/tests. Returns won/lost. No commit."""
 	name = _effect_name(run_id, effect_name)
+	if token is not None:
+		return (
+			_run_cas(
+				f"""UPDATE `tab{EFFECT}` SET status='done', applied_at=%(now)s
+				WHERE name=%(n)s AND status='running' AND claim_token=%(tok)s""",
+				{"n": name, "now": _now(), "tok": token},
+			)
+			== 1
+		)
 	return (
 		_run_cas(
-			f"""UPDATE `tab{EFFECT}` SET status='done', applied_at=%(now)s WHERE name=%(n)s""",
+			f"""UPDATE `tab{EFFECT}` SET status='done', applied_at=%(now)s
+			WHERE name=%(n)s AND status='running'""",
 			{"n": name, "now": _now()},
+		)
+		== 1
+	)
+
+
+def release_effect(run_id: str, effect_name: str, token: str | None = None) -> bool:
+	"""Effect ledger — RELEASE a claimed effect back to ``pending`` after a FAILED
+	attempt (CDX-4), so the next finalize cycle retries it (the attempt increment
+	stays, driving the force-done budget). Fenced on the claim ``token`` so a stalled
+	finalizer whose claim was reclaimed cannot un-claim the new owner's ``running``
+	row. Returns won/lost. No commit."""
+	name = _effect_name(run_id, effect_name)
+	if token is not None:
+		return (
+			_run_cas(
+				f"""UPDATE `tab{EFFECT}` SET status='pending', claim_token=NULL
+				WHERE name=%(n)s AND status='running' AND claim_token=%(tok)s""",
+				{"n": name, "tok": token},
+			)
+			== 1
+		)
+	return (
+		_run_cas(
+			f"""UPDATE `tab{EFFECT}` SET status='pending', claim_token=NULL
+			WHERE name=%(n)s AND status='running'""",
+			{"n": name},
 		)
 		== 1
 	)
@@ -970,12 +1085,45 @@ def force_done_effect(run_id: str, effect_name: str) -> bool:
 
 
 def all_required_effects_done(run_id: str) -> bool:
-	"""True iff no required effect row for the turn is still pending (the D2 row 12
-	finalize guard, mirrored in Python for the caller's pre-check)."""
+	"""True iff no required effect row for the turn is still pending/running (the D2
+	row 12 finalize guard, mirrored in Python for the caller's pre-check)."""
 	return not frappe.db.sql(
 		f"""SELECT 1 FROM `tab{EFFECT}` WHERE turn=%(r)s AND status!='done' LIMIT 1""",
 		{"r": run_id},
 	)
+
+
+def shards_with_open_effects() -> list[str]:
+	"""CDX-4 — every shard that has a turn with a still-open (``pending``/``running``)
+	effect row, INDEPENDENT of that turn's terminal state. Lets the pump watchdog
+	recover a crash-after-settlement-commit-before-``enqueue_finalize`` on an
+	errored/cancelled (terminal) turn whose owed effects would otherwise be invisible
+	to a nonterminal-only scan."""
+	rows = frappe.db.sql(
+		f"""SELECT DISTINCT t.relay_target_id
+		FROM `tab{EFFECT}` e INNER JOIN `tab{TURN}` t ON t.run_id = e.turn
+		WHERE e.status != 'done'"""
+	)
+	return [r[0] for r in rows if r[0]]
+
+
+def turns_with_open_effects(target: str) -> list[str]:
+	"""CDX-4 — every turn on ``target`` with a still-open (``pending``/stale-
+	``running``) effect row. The watchdog re-enqueues finalize for each so a lost/
+	crashed ``enqueue_finalize`` (settlement committed but finalize never ran) is
+	recovered regardless of the turn's state (finalizing OR errored/cancelled). A
+	live (non-stale) ``running`` claim is EXCLUDED — its finalizer owns it — so the
+	watchdog never fights a healthy in-flight finalize."""
+	stale_cut = frappe.utils.add_to_date(None, seconds=-EFFECT_CLAIM_STALE_S)
+	rows = frappe.db.sql(
+		f"""SELECT DISTINCT e.turn
+		FROM `tab{EFFECT}` e INNER JOIN `tab{TURN}` t ON t.run_id = e.turn
+		WHERE t.relay_target_id=%(t)s
+		  AND ( e.status='pending'
+		        OR (e.status='running' AND (e.claimed_at IS NULL OR e.claimed_at < %(stale)s)) )""",
+		{"t": target, "stale": stale_cut},
+	)
+	return [r[0] for r in rows]
 
 
 # --------------------------------------------------------------------------- #
@@ -1041,6 +1189,43 @@ def lease_acquire(target: str, holder: str, hop_counter: int | None = None) -> t
 	)
 	frappe.db.commit()
 	return (True, epoch)
+
+
+def lease_handoff(target: str, epoch: int, next_hop: int, successor_holder: str) -> bool:
+	"""Clean-hop ATOMIC lease TRANSFER (CDX-1, D6 §3). A normal hop reaching its soft
+	budget must make its successor IMMEDIATELY able to acquire — a bare re-enqueue is
+	not enough, because the running hop renewed its lease to ~now+30s, so the
+	successor's ``lease_acquire`` (``lease_expires_at IS NULL OR < now``) would find a
+	still-future lease, affect 0 rows, and exit successor-less (the stranded-turn
+	defect). Under the control-row epoch, in ONE statement, this:
+	  * PROVES this pump still holds epoch E (``pump_epoch=%(e)s`` in the WHERE) — a
+	    stale outgoing hop whose epoch a takeover already bumped matches 0 rows, so the
+	    caller writes NO counter and enqueues NO successor (it must not resurrect a
+	    shard a newer owner holds);
+	  * makes the lease immediately acquirable (``lease_expires_at`` set 1s in the
+	    PAST — unambiguously expired for the successor's ``< now`` acquire predicate,
+	    the same convention ``lease_release_if_idle`` uses);
+	  * advances ``hop_counter`` (a fresh hop mints a fresh job id — the frappe dedupe
+	    trap) — this counter write is now epoch-guarded (CDX-1: a stale hop must not
+	    bump it);
+	  * stamps ``lease_holder`` = the successor job id (a transfer HINT for
+	    observability — the successor's epoch bump on acquire is the real fence, not
+	    this value).
+	The caller COMMITS via this function, THEN enqueues the fresh successor id.
+	Returns won/lost. Commits its own transaction (a standalone lifecycle op)."""
+	frappe.db.commit()
+	past = frappe.utils.add_to_date(None, seconds=-1)
+	won = (
+		_run_cas(
+			f"""UPDATE `tab{PUMP}`
+			SET lease_expires_at=%(past)s, hop_counter=%(hop)s, lease_holder=%(h)s
+			WHERE relay_target_id=%(t)s AND pump_epoch=%(e)s""",
+			{"past": past, "hop": next_hop, "h": successor_holder, "t": target, "e": epoch},
+		)
+		== 1
+	)
+	frappe.db.commit()
+	return won
 
 
 def lease_renew(target: str, epoch: int, holder: str | None = None) -> bool:
@@ -1123,17 +1308,37 @@ def publish_fenced(
 	conversation_id: str,
 	run_id: str,
 	event_seq: int | None = None,
+	pump_epoch: int | None = None,
+	relay_target_id: str | None = None,
 	**extra,
 ) -> None:
-	"""Fenced realtime publish (Amendment B, D4 e). Call ONLY after the winning CAS
-	has COMMITTED — a stale pump raises ``LeaseLostExit`` before reaching here and
-	so never publishes. The payload carries ``(turn_id, event_seq)`` so a duplicate
-	frame is idempotent at the client. Best-effort (a publish failure never breaks
+	"""Fenced realtime publish (Amendment B, D4 e, CDX-3). Call ONLY after the
+	winning CAS has COMMITTED — a stale pump raises ``LeaseLostExit`` before reaching
+	here and so never publishes on the happy path. Every pump-owned payload also
+	carries ``(turn_id, event_seq, pump_epoch)`` so a stale writer's late frame is
+	fenced END-TO-END at the client: the client keeps the greatest accepted
+	``(turn_id, epoch, seq)`` and ignores a lower-epoch event, an equal-epoch
+	lower/equal-seq frame, or ANY event that arrives after a terminal at a higher
+	epoch. Events published WITHOUT a ``pump_epoch`` (legacy transport, prepare/
+	finalize actor-fenced events) bypass the client epoch fence unchanged.
+
+	BELT (CDX-3): when ``pump_epoch`` + ``relay_target_id`` are given, re-read the
+	shard's CURRENT control epoch and SKIP the publish when this caller's epoch is
+	already stale. This is a cheap PK read that suppresses the common stale-writer
+	case server-side, but it CANNOT close the final race — a takeover can land
+	between this check and the socket write — which is exactly why the client epoch
+	fence above is the real guarantee. Best-effort (a publish failure never breaks
 	the committed transition)."""
 	try:
+		if pump_epoch is not None and relay_target_id is not None:
+			current = frappe.db.get_value(PUMP, relay_target_id, "pump_epoch")
+			if current is None or int(current) != int(pump_epoch):
+				return  # stale writer — belt-skip (the client fence is the real guarantee)
 		payload = {"kind": kind, "conversation_id": conversation_id, "run_id": run_id, "turn_id": run_id}
 		if event_seq is not None:
 			payload["event_seq"] = event_seq
+		if pump_epoch is not None:
+			payload["pump_epoch"] = pump_epoch
 		payload.update(extra)
 		publish_to_user(user, payload)
 	except Exception:

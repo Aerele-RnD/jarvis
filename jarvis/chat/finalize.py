@@ -39,8 +39,11 @@ CONV = "Jarvis Conversation"
 
 # Canonical run order. Effects NOT in a turn's required set claim as "done"
 # (no ledger row) and are skipped — so a single ordered pass covers both the
-# relay:final full set and the errored/cancelled minimal set.
+# relay:final full set and the errored/cancelled minimal set. terminal_publish
+# (CDX-12) runs FIRST so a lost/failed settlement terminal publish is re-delivered
+# before the slower enrichment effects.
 _EFFECT_ORDER = (
+	"terminal_publish",
 	"rich_outputs",
 	"chat_asks",
 	"macro_advance",
@@ -49,6 +52,12 @@ _EFFECT_ORDER = (
 	"usage",
 	"telemetry_flush",
 )
+
+
+class _UsageRetry(Exception):
+	"""CDX-6: raised by the usage effect on a transient no-fresh-data read so the
+	finalize runner rolls back the usage guard and releases the effect to pending
+	(never a silent permanent 'recorded' with nothing accrued)."""
 
 
 def run_finalize(run_id: str, relay_target_id: str | None = None, deps=None) -> dict:
@@ -86,23 +95,32 @@ def run_finalize(run_id: str, relay_target_id: str | None = None, deps=None) -> 
 
 	ran = 0
 	for name in _EFFECT_ORDER:
-		outcome = ts.claim_effect(run_id, name)
-		# Persist the attempt increment / force-done so a crash mid-effect still
-		# counts toward the force-done budget (never an infinite retry loop).
+		outcome, token = ts.claim_effect(run_id, name)
+		# Persist the EXCLUSIVE claim (status='running' + attempt increment) so a
+		# crash mid-effect still counts toward the force-done budget AND another
+		# finalizer sees the live claim (never runs the same effect twice, CDX-4).
 		frappe.db.commit()
+		# 'done' (not required / already applied), 'busy' (another finalizer holds a
+		# live claim), or 'force_done' (budget spent) — skip.
 		if outcome != "attempt":
-			continue  # 'done' (not required / already applied) or 'force_done' (budget) — skip
+			continue
 		try:
 			_RUNNERS[name](ctx)
-			ts.complete_effect(run_id, name)
+			ts.complete_effect(run_id, name, token)
 			frappe.db.commit()
 			ran += 1
 		except Exception:
-			# Leave the row PENDING (rolls back this effect's uncommitted work, e.g.
-			# the usage guard CAS); the watchdog re-enqueues finalize, and
-			# claim_effect force-dones it after 3 attempts. NEVER errors the turn.
+			# Roll back this effect's uncommitted work (e.g. the usage guard CAS),
+			# then RELEASE the claim back to pending (CDX-4) so the next finalize
+			# cycle / the watchdog effect-scan retries it; claim_effect force-dones
+			# it after 3 attempts. NEVER errors the turn.
 			try:
 				frappe.db.rollback()
+			except Exception:
+				pass
+			try:
+				ts.release_effect(run_id, name, token)
+				frappe.db.commit()
 			except Exception:
 				pass
 			frappe.log_error(title=f"finalize.{name}", message=frappe.get_traceback())
@@ -271,9 +289,81 @@ def _effect_usage(ctx: _Ctx) -> None:
 	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 	with openclaw_session_pool.checkout(gateway_url) as sess:
 		row = _usage.fetch_fresh_session_row(sess, session_key)
-	# record_turn_usage commits internally (guard + counters atomic) or no-ops
-	# without committing (no fresh row) — either way NEVER raises.
-	_usage.record_turn_usage(session_key, row)
+	# CDX-6: honour record_turn_usage's EXPLICIT outcome. A `retry` (stale/missing/
+	# no-fresh row) must NOT permanently mark usage recorded — RAISE so the runner
+	# rolls back the guard CAS above and RELEASES the effect to pending for the next
+	# cycle (subject to the bounded force-done budget, which logs the undercount at
+	# the cap). `recorded` / `valid_zero` return normally: the guard commits with the
+	# effect (done), never double-counting the soft monthly cap on a later replay.
+	outcome = _usage.record_turn_usage(session_key, row)
+	if outcome == _usage.USAGE_RETRY:
+		raise _UsageRetry(f"usage not fresh for {ctx.run_id} (session {session_key})")
+
+
+def _effect_terminal_publish(ctx: _Ctx) -> None:
+	# CDX-12 / R-5: the idempotent terminal RE-PUBLISH backstop. Settlement emits the
+	# authoritative fenced terminal (run:end / run:error) immediately after its winning
+	# commit (S5); if THAT one publish is lost while the socket stays nominally
+	# connected, the client can keep a spinner despite durable terminal truth (no
+	# reconnect/visibility event to resync). This effect re-emits the SAME terminal
+	# from the durable Turn row — epoch-fenced, so the client dedupes a duplicate (it
+	# already accepted a terminal at this turn's epoch) and clears the spinner on a
+	# genuine miss. Runs FIRST in the effect order so the truth reconciles before the
+	# slower enrichment effects.
+	if not ctx.owner:
+		return
+	row = (
+		frappe.db.get_value(
+			TURN,
+			ctx.run_id,
+			[
+				"terminal_kind",
+				"terminal_payload",
+				"pump_epoch",
+				"cancel_requested",
+				"was_recovered",
+				"error",
+				"relay_target_id",
+				"assistant_message",
+			],
+			as_dict=True,
+		)
+		or {}
+	)
+	from jarvis.chat import settlement
+
+	kind = row.get("terminal_kind")
+	payload = settlement._coerce_payload(row.get("terminal_payload"))
+	am = row.get("assistant_message") or ctx.turn.get("assistant_message")
+	aborted = bool(row.get("cancel_requested")) and settlement._is_aborted_payload(kind, payload)
+	if aborted:
+		pub_kind, extra = "run:end", {"stopped": True}
+	elif kind == "relay:error":
+		err = settlement._error_text(payload) or row.get("error") or "The run ended with an error."
+		pub_kind, extra = "run:error", {"error": err, "code": settlement._classify(err)}
+	else:
+		# relay:final success — mirror settlement's run:end (enrichment may still be
+		# running; enrichment_pending=True keeps a re-delivered client waiting for the
+		# eventual message:enriched instead of freezing).
+		pub_kind, extra = (
+			"run:end",
+			{"enrichment_pending": True, "was_recovered": bool(row.get("was_recovered"))},
+		)
+	# CDX-12: carry pump_epoch so the CLIENT fence dedupes a duplicate (it already
+	# accepted a terminal at this turn's epoch) and clears the spinner on a genuine
+	# miss — but DELIBERATELY omit relay_target_id so the server belt (a live-pump
+	# ownership check) is skipped: finalize is not the pump, the shard may have hopped
+	# to a higher epoch since settlement, and this re-publish is durable-truth of a
+	# SETTLED terminal, not a stale-writer race. The client epoch fence is the guard.
+	ts.publish_fenced(
+		ctx.owner,
+		pub_kind,
+		conversation_id=ctx.conversation,
+		run_id=ctx.run_id,
+		message_id=am,
+		pump_epoch=row.get("pump_epoch"),
+		**extra,
+	)
 
 
 def _effect_telemetry(ctx: _Ctx) -> None:
@@ -293,6 +383,7 @@ def _effect_telemetry(ctx: _Ctx) -> None:
 
 
 _RUNNERS = {
+	"terminal_publish": _effect_terminal_publish,
 	"rich_outputs": _effect_rich_outputs,
 	"chat_asks": _effect_chat_asks,
 	"macro_advance": _effect_macro_advance,

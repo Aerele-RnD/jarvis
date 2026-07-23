@@ -795,3 +795,173 @@ class TestCancelDurableMarker(_AdmissionTestCase):
 			pluck="name",
 		)
 		self.assertEqual(len(markers), 1, "age-out leaves a durable transcript marker")
+
+
+# --------------------------------------------------------------------------- #
+# CDX-8 — cancel routes by state, clears the reserved credit
+# --------------------------------------------------------------------------- #
+
+
+class TestCancelCreditLeak(_AdmissionTestCase):
+	def test_reserved_queued_cancel_frees_credit_immediately(self):
+		# CDX-8: a reserved-but-unclaimed queued turn cancelled must CLEAR reserved +
+		# expiry atomically, freeing the shard credit at once (not leaking it until the
+		# ~900s reservation TTL).
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		rid = "adm_cancel_rsv"
+		self._insert_turn(
+			conv,
+			rid,
+			seed,
+			"queued",
+			version=0,
+			reserved=1,
+			reservation_expires_at=frappe.utils.add_to_date(None, seconds=900),
+		)
+		target = admission.DEFAULT_RELAY_TARGET
+		self.assertEqual(pump._pump_local_reservations(target), 1, "credit reserved before cancel")
+		res = admission.cancel_queued_turn(rid)
+		self.assertTrue(res["ok"])
+		self.assertEqual(res["path"], "queued")
+		self.assertEqual(self._state(rid), "cancelled")
+		self.assertEqual(int(frappe.db.get_value(TURN, rid, "reserved")), 0, "reserved cleared")
+		self.assertIsNone(frappe.db.get_value(TURN, rid, "reservation_expires_at"), "expiry cleared")
+		self.assertEqual(pump._pump_local_reservations(target), 0, "credit freed immediately")
+
+	def test_preparing_cancel_end_to_end(self):
+		# CDX-8: a preparing/ready turn cancel routes to cancel_preparing_or_ready
+		# (release credit) + cleans the assistant placeholder (no stuck spinner).
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		amsg = self._mk_msg(conv, 2, role="assistant", content="", streaming=1)
+		rid = "adm_cancel_prep"
+		self._insert_turn(
+			conv,
+			rid,
+			seed,
+			"preparing",
+			version=2,
+			reserved=1,
+			assistant_message=amsg,
+			reservation_expires_at=None,
+		)
+		res = admission.cancel_queued_turn(rid)
+		self.assertTrue(res["ok"])
+		self.assertEqual(res["path"], "preparing_ready")
+		self.assertEqual(self._state(rid), "cancelled")
+		self.assertEqual(int(frappe.db.get_value(TURN, rid, "reserved")), 0, "credit released")
+		self.assertEqual(int(frappe.db.get_value(MSG, amsg, "streaming")), 0, "placeholder cleaned")
+
+	def test_cancel_dispatched_turn_reports_not_cancelled(self):
+		# A turn that already advanced past preparing/ready cannot be cancelled here —
+		# the endpoint returns ok=False so the UI keeps its chip.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		rid = "adm_cancel_disp"
+		self._insert_turn(conv, rid, seed, "dispatching", version=3, reserved=1)
+		res = admission.cancel_queued_turn(rid)
+		self.assertFalse(res["ok"])
+		self.assertEqual(self._state(rid), "dispatching", "dispatched turn untouched")
+
+
+# --------------------------------------------------------------------------- #
+# CDX-9 — enqueue-failure compensation (both admit + promote paths)
+# --------------------------------------------------------------------------- #
+
+
+class TestEnqueueCompensation(_AdmissionTestCase):
+	def test_accept_enqueue_failure_compensates_to_queued(self):
+		# CDX-9: dispatch() (the RQ enqueue) fails AFTER the admission commit — the
+		# credit must not strand; compensate CAS dispatching->queued + release.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		rid = "adm_enq_fail"
+
+		def boom():
+			raise RuntimeError("redis down")
+
+		with patch.object(admission, "_max_inflight", return_value=4):
+			res = admission.accept_or_queue(
+				conversation=conv, run_id=rid, seed_message=seed, turn_class="interactive", dispatch=boom
+			)
+		self.assertTrue(res["ok"])
+		self.assertFalse(res["dispatched"], "not a false 'dispatched' on enqueue failure")
+		self.assertTrue(res.get("dispatch_failed"))
+		self.assertEqual(self._state(rid), "queued", "compensated back to queued")
+		self.assertEqual(int(frappe.db.get_value(TURN, rid, "reserved")), 0, "reservation released")
+		self.assertIsNone(frappe.db.get_value(TURN, rid, "reservation_expires_at"))
+
+	def test_promote_enqueue_failure_compensates_to_queued(self):
+		# CDX-9: the same compensation for the promotion path (_dispatch_promoted raises).
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		rid = "adm_promote_fail"
+		self._insert_turn(conv, rid, seed, "queued", version=0)
+		target = admission.DEFAULT_RELAY_TARGET
+		with (
+			patch.object(admission, "_max_inflight", return_value=4),
+			patch.object(admission, "_dispatch_promoted", side_effect=RuntimeError("redis down")),
+		):
+			admission.promote_next(target)
+		self.assertEqual(self._state(rid), "queued", "compensated back to queued after failed promote")
+		self.assertEqual(int(frappe.db.get_value(TURN, rid, "reserved")), 0)
+		self.assertIsNone(frappe.db.get_value(TURN, rid, "reservation_expires_at"))
+
+
+# --------------------------------------------------------------------------- #
+# CDX-10 — cutover preflight (legacy-overlap detector)
+# --------------------------------------------------------------------------- #
+
+
+class TestCutoverPreflight(_AdmissionTestCase):
+	class _FakeReg:
+		def __init__(self, *a, **k):
+			pass
+
+		def get_job_ids(self):
+			return []
+
+	def test_detects_legacy_turn_job(self):
+		site = frappe.local.site
+		legacy_id = f"{site}||jarvis-turn|msgX|a0"
+
+		class _FakeQ:
+			def get_job_ids(self_inner):
+				return [legacy_id, f"{site}||other|job"]
+
+		with (
+			patch("frappe.utils.background_jobs.get_queues", return_value=[_FakeQ()]),
+			patch("rq.registry.StartedJobRegistry", self._FakeReg),
+		):
+			n, ids = admission._legacy_turn_jobs()
+		self.assertEqual(n, 1, "only the jarvis-turn::* job matched")
+		self.assertIn(legacy_id, ids)
+
+	def test_preflight_verdict_drain_first_with_legacy_job(self):
+		legacy_id = f"{frappe.local.site}||jarvis-turn|msgY|a0"
+
+		class _FakeQ:
+			def get_job_ids(self_inner):
+				return [legacy_id]
+
+		with (
+			patch("frappe.utils.background_jobs.get_queues", return_value=[_FakeQ()]),
+			patch("rq.registry.StartedJobRegistry", self._FakeReg),
+			patch.object(admission, "_legacy_streaming_count", return_value=0),
+		):
+			res = admission.pump_cutover_preflight()
+		self.assertFalse(res["clear"])
+		self.assertEqual(res["verdict"], "drain_first")
+		self.assertEqual(res["legacy_jobs"], 1)
+
+	def test_preflight_clear_when_no_legacy_activity(self):
+		with (
+			patch("frappe.utils.background_jobs.get_queues", return_value=[]),
+			patch("rq.registry.StartedJobRegistry", self._FakeReg),
+			patch.object(admission, "_legacy_streaming_count", return_value=0),
+		):
+			res = admission.pump_cutover_preflight()
+		self.assertTrue(res["clear"])
+		self.assertEqual(res["verdict"], "clear")
+		self.assertEqual(res["legacy_jobs"], 0)

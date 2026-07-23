@@ -352,10 +352,16 @@ class StageB:
 		# tool-row writer is out-of-band, WP-1d, exactly-once unit-tested). Recording
 		# the mux's tool-event DELIVERIES lets equivalence assert the pump demuxes and
 		# delivers the same tool round-trips the transcript defines (side-effect count).
-		def _rec_apply_tool(run_id, event):
+		def _rec_apply_tool(ctx, rs, event):
+			# CDX-5: the applier seam is now (ctx, rs, event). This phase records the
+			# demuxed tool-event DELIVERIES by count to assert the pump delivers the
+			# same tool round-trips the transcript defines; the PRODUCTION applier's
+			# durable-row/publish equivalence is proven deterministically in
+			# test_pump_pipeline.TestToolApplierEquivalence.
+			run_id = getattr(rs, "run_id", None)
 			data = event.get("data") if isinstance(event.get("data"), dict) else event
 			phase = (data or {}).get("phase") or event.get("phase")
-			name = (data or {}).get("name") or event.get("name")
+			name = (data or {}).get("tool_name") or (data or {}).get("name") or event.get("tool_name")
 			self.pubs.append(
 				{
 					"kind": "tool:start" if phase == "start" else "tool:end",

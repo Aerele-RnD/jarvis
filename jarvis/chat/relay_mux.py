@@ -96,6 +96,15 @@ READER_SOFT_TIMEOUT_S = 0.5
 #     wedged consumer.
 LANE_QUEUE_MAX = 512
 
+# CDX-13 lane-fairness: one ``dispatch`` drains at most LANE_QUANTUM events from a
+# single lane per round-robin pass, and at most DISPATCH_EVENT_BUDGET events overall
+# per call. A backed-up hot lane can therefore no longer monopolise the callback/DB/
+# publish work for hundreds of events before a cold lane is serviced — the passes
+# interleave the lanes, and any residue re-arms the wake so the next dispatch
+# continues at once (latency isolation between conversations on the single reader).
+LANE_QUANTUM = 32
+DISPATCH_EVENT_BUDGET = 512
+
 # Default RPC ack window (mirrors CONNECT_TIMEOUT_SECONDS) when a caller does
 # not pass its own timeout_s.
 DEFAULT_RPC_TIMEOUT_S = 10.0
@@ -274,16 +283,20 @@ class _Lane:
 			self.state = "quarantined"
 			return "quarantine"
 
-	def drain(self) -> list[_LaneEvent]:
-		"""Pump-side: pop all currently-buffered events under the lane lock, then
-		release it BEFORE the caller applies them (so a slow callback never blocks
-		the reader's ``offer``)."""
+	def drain(self, max_events: int | None = None) -> list[_LaneEvent]:
+		"""Pump-side: pop up to ``max_events`` currently-buffered events (all when
+		None) under the lane lock, then release it BEFORE the caller applies them (so a
+		slow callback never blocks the reader's ``offer``). CDX-13: the bounded pop is
+		the per-lane quantum that keeps a hot lane from starving the others in one
+		``dispatch`` pass."""
 		with self.lock:
 			if not self.queue:
 				return []
-			events = list(self.queue)
-			self.queue.clear()
-			return events
+			if max_events is None or max_events >= len(self.queue):
+				events = list(self.queue)
+				self.queue.clear()
+				return events
+			return [self.queue.popleft() for _ in range(max_events)]
 
 
 # --------------------------------------------------------------------------- #
@@ -688,7 +701,15 @@ class RelayMux:
 		``block_s`` > 0 waits up to that long for the reader to signal work before
 		draining (so a driver loop need not busy-spin). Deferred quarantine
 		notifications (from precious-overflow on the reader) are delivered here
-		too, on this thread."""
+		too, on this thread.
+
+		CDX-13 — FAIR draining: round-robin passes over the lanes, each pass taking at
+		most ``LANE_QUANTUM`` events from a lane, capped at ``max_events`` (default
+		``DISPATCH_EVENT_BUDGET``) events overall per call. A hot lane can no longer
+		drain its whole 512-event backlog before a cold lane is serviced. Any residue
+		(budget tripped with work remaining) RE-ARMS the wake so the next dispatch
+		continues immediately — no event is stranded, just fairly deferred."""
+		budget = max_events if max_events is not None else DISPATCH_EVENT_BUDGET
 		if block_s > 0 and not self._has_work():
 			self._wake.wait(block_s)
 		self._wake.clear()
@@ -699,12 +720,30 @@ class RelayMux:
 			lanes = list(self._runs.values())
 
 		applied = 0
-		for lane in lanes:
-			for ev in lane.drain():
-				self._apply(lane, ev)
-				applied += 1
-				if max_events is not None and applied >= max_events:
-					return applied
+		# Round-robin passes: interleave the lanes a quantum at a time until nothing
+		# remains or the per-call budget is spent (fairness on the single reader).
+		while applied < budget:
+			progressed = False
+			for lane in lanes:
+				if applied >= budget:
+					break
+				take = min(LANE_QUANTUM, budget - applied)
+				drained = lane.drain(take)
+				if not drained:
+					continue
+				progressed = True
+				for ev in drained:
+					self._apply(lane, ev)
+					applied += 1
+					if applied >= budget:
+						break
+			if not progressed:
+				break
+
+		# CDX-13: if the budget was spent with buffered events still pending, re-arm the
+		# wake so the driver's next dispatch drains the residue at once (never stalls).
+		if applied >= budget and self._has_work():
+			self._wake.set()
 		return applied
 
 	def _apply(self, lane: _Lane, ev: _LaneEvent) -> None:

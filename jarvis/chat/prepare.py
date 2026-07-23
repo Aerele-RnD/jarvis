@@ -85,9 +85,15 @@ def run_prepare(run_id: str, relay_target_id: str | None = None) -> dict:
 	except Exception:
 		frappe.log_error(title="prepare.chat_asks_resolve", message=frappe.get_traceback())
 
-	# (#17) assistant placeholder — seq UNDER the conversation lock (R-1), then link.
+	# (#17) assistant placeholder — seq UNDER the conversation lock (R-1), then link
+	# via an ACTOR-fenced CAS (CDX-7): the attach proves this prepare still holds the
+	# preparing claim (state='preparing' AND version=V). A prepare that paused past a
+	# watchdog reclaim / cancel loses the CAS and must NOT attach a streaming
+	# placeholder to a re-queued/cancelled row — it cleans its own orphan + aborts.
 	assistant_msg = _create_placeholder_locked(conversation)
-	frappe.db.set_value(TURN, run_id, "assistant_message", assistant_msg, update_modified=False)
+	if not ts.attach_placeholder(run_id, version, assistant_msg):
+		_discard_orphan_placeholder(assistant_msg)
+		return {"ok": True, "skipped": "attach_lost"}
 	frappe.db.commit()
 
 	turn_start_ms = int(time.time() * 1000)
@@ -204,13 +210,19 @@ def run_prepare(run_id: str, relay_target_id: str | None = None) -> dict:
 		"context": context,
 		"attachments_raw": attachments,
 	}
-	frappe.db.set_value(TURN, run_id, "dispatch_payload", json.dumps(payload), update_modified=False)
+	# (CDX-7) store the handoff payload through an ACTOR-fenced CAS: a prepare that
+	# lost the preparing claim discards its payload (never stamping dispatch state onto
+	# a recovered/re-queued/cancelled row) + cleans its orphan placeholder + aborts.
+	if not ts.store_dispatch_payload(run_id, version, json.dumps(payload)):
+		_discard_orphan_placeholder(assistant_msg)
+		return {"ok": True, "skipped": "payload_lost"}
 	frappe.db.commit()
 
 	# (D2 #3) preparing -> ready.
 	if not ts.mark_ready(run_id, version):
 		# Lost (a watchdog reclaimed a slow prepare, or a cancel raced). The stale
-		# state wins; do not dispatch.
+		# state wins; do not dispatch — clean the orphan placeholder this prepare made.
+		_discard_orphan_placeholder(assistant_msg)
 		return {"ok": True, "skipped": "ready_lost"}
 	frappe.db.commit()
 
@@ -257,6 +269,31 @@ def _create_placeholder_locked(conversation: str) -> str:
 		return doc.name
 	finally:
 		ts.reset_lock_tracking()
+
+
+def _discard_orphan_placeholder(assistant_msg: str | None) -> None:
+	"""CDX-7: a prepare that LOST its actor claim (a watchdog reclaim / cancel bumped
+	the version between the claim and the attach/payload/ready CAS) must not leave the
+	streaming placeholder it just created dangling — nobody references it (run:start is
+	pump-owned at dispatch and never fired), so DELETE it. Best-effort; a delete
+	failure at worst leaves a hidden orphan the stale-scan/watchdog can still sweep."""
+	if not assistant_msg:
+		return
+	try:
+		frappe.db.rollback()  # drop any uncommitted work from the losing CAS
+		frappe.delete_doc(MSG, assistant_msg, ignore_permissions=True, force=True)
+		frappe.db.commit()
+	except Exception:
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
+		# Fall back to marking it inert (streaming off) so it never renders a spinner.
+		try:
+			frappe.db.set_value(MSG, assistant_msg, {"streaming": 0, "hidden": 1}, update_modified=False)
+			frappe.db.commit()
+		except Exception:
+			frappe.log_error(title="prepare.discard_orphan", message=frappe.get_traceback())
 
 
 def _prepare_error(run_id, version, assistant_msg, conversation, owner, error, *, exc=None) -> None:

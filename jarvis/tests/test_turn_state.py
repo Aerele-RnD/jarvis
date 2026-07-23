@@ -176,14 +176,18 @@ class TestLinearPathWinAndReplay(_TurnStateTestCase):
 		self.assertFalse(ts.mark_ready(rid, 1))
 		frappe.db.rollback()
 
-		# ready -> dispatching (pump; E FIRST stamped, no epoch in guard)
-		self.assertTrue(ts.confirm_dispatching(rid, 2, E))
+		# ready -> dispatching (pump; E FIRST stamped on the turn, but the CAS now proves
+		# the SHARD control row still holds epoch E, CDX-2). Put the control row at E so
+		# the EXISTS clause passes for this legal owner.
+		frappe.db.set_value(PUMP, self._target, "pump_epoch", E, update_modified=False)
+		frappe.db.commit()
+		self.assertTrue(ts.confirm_dispatching(rid, 2, E, self._target))
 		frappe.db.commit()
 		row = frappe.db.get_value(TURN, rid, ["state", "pump_epoch", "deadline_at"], as_dict=True)
 		self.assertEqual(row["state"], "dispatching")
 		self.assertEqual(row["pump_epoch"], E)
 		self.assertIsNotNone(row["deadline_at"])
-		self.assertFalse(ts.confirm_dispatching(rid, 2, E))
+		self.assertFalse(ts.confirm_dispatching(rid, 2, E, self._target))
 		frappe.db.rollback()
 
 		# dispatching -> streaming (pump, epoch-fenced)
@@ -238,8 +242,13 @@ class TestLinearPathWinAndReplay(_TurnStateTestCase):
 		# finalizing -> done is BLOCKED until every effect is done.
 		self.assertFalse(ts.finalize_done(rid, 8), "finalize blocked while effects pending")
 		frappe.db.rollback()
-		self.assertTrue(ts.complete_effect(rid, "terminal_publish"))
-		self.assertTrue(ts.complete_effect(rid, "auto_title"))
+		# CDX-4: claim (pending->running) then complete (running->done) with the token.
+		o1, t1 = ts.claim_effect(rid, "terminal_publish")
+		self.assertEqual(o1, "attempt")
+		self.assertTrue(ts.complete_effect(rid, "terminal_publish", t1))
+		o2, t2 = ts.claim_effect(rid, "auto_title")
+		self.assertEqual(o2, "attempt")
+		self.assertTrue(ts.complete_effect(rid, "auto_title", t2))
 		frappe.db.commit()
 		self.assertTrue(ts.finalize_done(rid, 8))
 		frappe.db.commit()
@@ -430,7 +439,10 @@ class TestIllegalCombinationsRejected(_TurnStateTestCase):
 			("claim_preparing", lambda: ts.claim_preparing("ts_bad", 5)),
 			("mark_ready", lambda: ts.mark_ready("ts_bad", 5)),
 			("prepare_errored", lambda: ts.prepare_errored("ts_bad", 5)),
-			("confirm_dispatching(wrong state)", lambda: ts.confirm_dispatching("ts_bad", 5, 3)),
+			(
+				"confirm_dispatching(wrong state)",
+				lambda: ts.confirm_dispatching("ts_bad", 5, 3, self._target),
+			),
 			("finalize_done(wrong state)", lambda: ts.finalize_done("ts_bad", 5)),
 			("cancel_queued(wrong state)", lambda: ts.cancel_queued("ts_bad", 5)),
 			("cancel_preparing_or_ready(wrong state)", lambda: ts.cancel_preparing_or_ready("ts_bad", 5)),
@@ -926,13 +938,17 @@ class TestEffectLedger(_TurnStateTestCase):
 	def test_claim_complete_and_all_done(self):
 		rid = self._mk_finalizing(("terminal_publish", "auto_title"))
 		self.assertFalse(ts.all_required_effects_done(rid))
-		self.assertEqual(ts.claim_effect(rid, "terminal_publish"), "attempt")
-		self.assertTrue(ts.complete_effect(rid, "terminal_publish"))
+		# CDX-4: claim returns (outcome, token); complete/release fence on the token.
+		o, tok = ts.claim_effect(rid, "terminal_publish")
+		self.assertEqual(o, "attempt")
+		self.assertEqual(frappe.db.get_value(EFFECT, f"{rid}::terminal_publish", "status"), "running")
+		self.assertTrue(ts.complete_effect(rid, "terminal_publish", tok))
 		frappe.db.commit()
-		self.assertEqual(ts.claim_effect(rid, "terminal_publish"), "done", "a done effect is skipped")
+		self.assertEqual(ts.claim_effect(rid, "terminal_publish")[0], "done", "a done effect is skipped")
 		self.assertFalse(ts.all_required_effects_done(rid), "auto_title still pending")
-		self.assertEqual(ts.claim_effect(rid, "auto_title"), "attempt")
-		self.assertTrue(ts.complete_effect(rid, "auto_title"))
+		o2, tok2 = ts.claim_effect(rid, "auto_title")
+		self.assertEqual(o2, "attempt")
+		self.assertTrue(ts.complete_effect(rid, "auto_title", tok2))
 		frappe.db.commit()
 		self.assertTrue(ts.all_required_effects_done(rid))
 		# finalize_done now succeeds.
@@ -940,18 +956,52 @@ class TestEffectLedger(_TurnStateTestCase):
 		frappe.db.commit()
 		self.assertEqual(self._state(rid), "done")
 
+	def test_exclusive_claim_blocks_second_finalizer(self):
+		# CDX-4: a live claim is EXCLUSIVE — a second finalizer sees 'busy', never
+		# runs the same effect twice (until the claim goes stale).
+		rid = self._mk_finalizing(("rich_outputs",))
+		o1, tok1 = ts.claim_effect(rid, "rich_outputs")
+		self.assertEqual(o1, "attempt")
+		frappe.db.commit()
+		o2, tok2 = ts.claim_effect(rid, "rich_outputs")
+		self.assertEqual(o2, "busy", "a live (non-stale) claim is not re-claimable")
+		self.assertIsNone(tok2)
+		# The loser cannot complete the winner's claim (token fence).
+		self.assertFalse(ts.complete_effect(rid, "rich_outputs", "not-the-token"))
+		self.assertTrue(ts.complete_effect(rid, "rich_outputs", tok1))
+		frappe.db.commit()
+		self.assertTrue(ts.all_required_effects_done(rid))
+
+	def test_release_returns_to_pending_for_retry(self):
+		# CDX-4: a FAILED attempt releases running->pending (attempts kept) so the next
+		# cycle re-claims and retries — never a silent permanent loss.
+		rid = self._mk_finalizing(("usage",))
+		o, tok = ts.claim_effect(rid, "usage")
+		self.assertEqual(o, "attempt")
+		self.assertTrue(ts.release_effect(rid, "usage", tok))
+		frappe.db.commit()
+		self.assertEqual(frappe.db.get_value(EFFECT, f"{rid}::usage", "status"), "pending")
+		self.assertEqual(int(frappe.db.get_value(EFFECT, f"{rid}::usage", "attempts")), 1, "attempt kept")
+		# A fresh claim retries it.
+		o2, tok2 = ts.claim_effect(rid, "usage")
+		self.assertEqual(o2, "attempt")
+		self.assertTrue(ts.complete_effect(rid, "usage", tok2))
+
 	def test_force_done_after_max_attempts(self):
 		rid = self._mk_finalizing(("rich_outputs",))
-		# Three failing attempts (each claim increments attempts, effect stays pending).
+		# Three failing attempts: claim (running) then RELEASE (running->pending, keeps
+		# the attempt increment) to simulate a failing effect each cycle.
 		for i in range(ts.FINALIZE_MAX_ATTEMPTS):
-			self.assertEqual(ts.claim_effect(rid, "rich_outputs"), "attempt", f"attempt {i + 1}")
-			frappe.db.commit()  # attempt persisted; effect NOT completed (simulated failure)
+			o, tok = ts.claim_effect(rid, "rich_outputs")
+			self.assertEqual(o, "attempt", f"attempt {i + 1}")
+			self.assertTrue(ts.release_effect(rid, "rich_outputs", tok))
+			frappe.db.commit()  # attempt persisted; effect back to pending (simulated failure)
 		self.assertEqual(
 			int(frappe.db.get_value(EFFECT, f"{rid}::rich_outputs", "attempts")), ts.FINALIZE_MAX_ATTEMPTS
 		)
 		self.assertFalse(ts.all_required_effects_done(rid), "still pending before force-done")
 		# The next claim FORCE-DONES it (budget exhausted) so the turn can finish.
-		self.assertEqual(ts.claim_effect(rid, "rich_outputs"), "force_done")
+		self.assertEqual(ts.claim_effect(rid, "rich_outputs")[0], "force_done")
 		frappe.db.commit()
 		self.assertEqual(frappe.db.get_value(EFFECT, f"{rid}::rich_outputs", "status"), "done")
 		self.assertTrue(ts.all_required_effects_done(rid), "force-done unblocks finalize")
@@ -959,9 +1009,45 @@ class TestEffectLedger(_TurnStateTestCase):
 		frappe.db.commit()
 		self.assertEqual(self._state(rid), "done")
 
+	def test_stale_running_claim_is_reclaimable(self):
+		# CDX-4: a running effect whose claimed_at is older than the stale bound (its
+		# finalizer crashed) is RECLAIMABLE by a fresh claim.
+		rid = self._mk_finalizing(("rich_outputs",))
+		o1, tok1 = ts.claim_effect(rid, "rich_outputs")
+		self.assertEqual(o1, "attempt")
+		frappe.db.commit()
+		# Backdate the claim past the stale bound (simulate the finalizer having died).
+		stale = frappe.utils.add_to_date(None, seconds=-(ts.EFFECT_CLAIM_STALE_S + 5))
+		frappe.db.set_value(EFFECT, f"{rid}::rich_outputs", "claimed_at", stale, update_modified=False)
+		frappe.db.commit()
+		o2, tok2 = ts.claim_effect(rid, "rich_outputs")
+		self.assertEqual(o2, "attempt", "a stale running claim is reclaimable")
+		self.assertNotEqual(tok1, tok2)
+		self.assertTrue(ts.complete_effect(rid, "rich_outputs", tok2))
+
+	def test_watchdog_effect_scan_finds_open_effect_turns(self):
+		# CDX-4: turns_with_open_effects surfaces a TERMINAL (errored) turn whose owed
+		# effects are still open, independent of the nonterminal-turn scan.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		rid = f"ts_openeff_{frappe.generate_hash(length=6)}"
+		self._mk_turn(conv, rid, seed, "errored", version=9)
+		ts.insert_required_effects(rid, ("terminal_publish", "macro_advance"))
+		frappe.db.commit()
+		self.assertIn(rid, ts.turns_with_open_effects(self._target))
+		self.assertIn(self._target, ts.shards_with_open_effects())
+		# A live (non-stale) running claim is EXCLUDED (its finalizer owns it).
+		o, tok = ts.claim_effect(rid, "terminal_publish")
+		ts.complete_effect(rid, "terminal_publish", tok)
+		o2, tok2 = ts.claim_effect(rid, "macro_advance")  # leave it running/live
+		frappe.db.commit()
+		self.assertNotIn(rid, ts.turns_with_open_effects(self._target), "live claim excluded")
+
 	def test_claim_unknown_effect_is_done(self):
 		rid = self._mk_finalizing(("terminal_publish",))
-		self.assertEqual(ts.claim_effect(rid, "not_required"), "done", "no such required row => nothing owed")
+		self.assertEqual(
+			ts.claim_effect(rid, "not_required")[0], "done", "no such required row => nothing owed"
+		)
 
 
 # --------------------------------------------------------------------------- #
@@ -1076,6 +1162,67 @@ class TestFencedPublish(_TurnStateTestCase):
 		with patch.object(ts, "publish_to_user", side_effect=RuntimeError("socket down")):
 			# Best-effort: a publish failure never propagates.
 			ts.publish_fenced("u@x", "run:end", conversation_id="c1", run_id="r1")
+
+	def test_publish_fenced_carries_pump_epoch(self):
+		"""CDX-3: a pump-owned payload carries pump_epoch (+ event_seq) so the client
+		fences a stale writer end-to-end."""
+		captured = []
+		with patch.object(ts, "publish_to_user", side_effect=lambda u, p: captured.append(p)):
+			ts.publish_fenced(
+				"u@x", "assistant:delta", conversation_id="c1", run_id="r1", event_seq=3, pump_epoch=9
+			)
+		self.assertEqual(captured[0]["pump_epoch"], 9)
+		self.assertEqual(captured[0]["event_seq"], 3)
+
+	def test_publish_fenced_belt_skips_stale_epoch(self):
+		"""CDX-3 belt: with pump_epoch + relay_target_id, a publish whose epoch is no
+		longer the shard's current epoch is skipped server-side."""
+		won, E = ts.lease_acquire(self._target, "owner")
+		self.assertTrue(won)
+		captured = []
+		with patch.object(ts, "publish_to_user", side_effect=lambda u, p: captured.append(p)):
+			ts.publish_fenced(
+				"u@x", "run:end", conversation_id="c", run_id="r", pump_epoch=E, relay_target_id=self._target
+			)
+			self.assertEqual(len(captured), 1)
+			frappe.db.set_value(PUMP, self._target, "pump_epoch", E + 5, update_modified=False)
+			frappe.db.commit()
+			ts.publish_fenced(
+				"u@x", "run:end", conversation_id="c", run_id="r", pump_epoch=E, relay_target_id=self._target
+			)
+			self.assertEqual(len(captured), 1, "belt-skips a stale-epoch publish")
+
+
+class TestLeaseHandoff(_TurnStateTestCase):
+	def test_lease_handoff_transfers_and_is_epoch_guarded(self):
+		"""CDX-1: the clean-hop atomic transfer makes the lease immediately acquirable
+		(even against a freshly-renewed lease), advances hop_counter, and a stale
+		outgoing hop (mismatched epoch) transfers nothing."""
+		won, E = ts.lease_acquire(self._target, "hopA")
+		self.assertTrue(won)
+		self.assertTrue(ts.lease_renew(self._target, E))  # a valid ~now+30s lease
+		self.assertTrue(ts.lease_handoff(self._target, E, 5, "succ-job"))
+		row = frappe.db.get_value(
+			PUMP, self._target, ["lease_expires_at", "hop_counter", "lease_holder"], as_dict=True
+		)
+		self.assertEqual(int(row["hop_counter"]), 5)
+		self.assertEqual(row["lease_holder"], "succ-job")
+		self.assertLess(
+			frappe.utils.get_datetime(row["lease_expires_at"]),
+			frappe.utils.get_datetime(ts._now()),
+			"lease made immediately acquirable",
+		)
+		# A successor acquires at once, epoch E+1.
+		won2, E2 = ts.lease_acquire(self._target, "succ")
+		self.assertTrue(won2)
+		self.assertEqual(E2, E + 1)
+		# A stale outgoing hop (still at epoch E) transfers NOTHING and bumps no counter.
+		self.assertFalse(ts.lease_handoff(self._target, E, 6, "succ2"))
+		self.assertEqual(
+			int(frappe.db.get_value(PUMP, self._target, "hop_counter")),
+			5,
+			"stale handoff does not bump the counter",
+		)
 
 
 # --------------------------------------------------------------------------- #

@@ -40,10 +40,13 @@ MSG = "Jarvis Chat Message"
 CONV = "Jarvis Conversation"
 
 # The owed-enrichment set fixed at settlement (OAR-9). A relay:final success owes
-# the full set; an errored/cancelled terminal owes only the macro-advance +
-# telemetry hooks (there is no rich output/title/usage to enrich, and its reply
-# is already terminal — finalize NEVER un-settles it).
+# the full set; an errored/cancelled terminal owes the macro-advance + telemetry
+# hooks (there is no rich output/title/usage to enrich, and its reply is already
+# terminal — finalize NEVER un-settles it). BOTH sets owe terminal_publish (CDX-12 /
+# R-5): the idempotent terminal re-publish backstop so a lost settlement terminal
+# (run:end / run:error) is redelivered off the durable row, on success AND error.
 FINAL_EFFECTS = (
+	"terminal_publish",
 	"rich_outputs",
 	"usage",
 	"chat_asks",
@@ -52,7 +55,7 @@ FINAL_EFFECTS = (
 	"wiki_nudge",
 	"telemetry_flush",
 )
-TERMINAL_EFFECTS = ("macro_advance", "telemetry_flush")
+TERMINAL_EFFECTS = ("terminal_publish", "macro_advance", "telemetry_flush")
 
 
 def invoke_settlement(
@@ -155,7 +158,9 @@ def invoke_settlement(
 
 	frappe.db.commit()  # slot released; the NEXT turn can be promoted
 
-	# S5 — authoritative fenced terminal event, ONLY after the winning commit.
+	# S5 — authoritative fenced terminal event, ONLY after the winning commit. CDX-3:
+	# the terminal carries pump_epoch so the client permanently blocks any later
+	# lower-epoch straggler (a stale pump's late delta / run:start) for this turn.
 	if owner:
 		ts.publish_fenced(
 			owner,
@@ -163,6 +168,8 @@ def invoke_settlement(
 			conversation_id=conversation,
 			run_id=run_id,
 			message_id=am,
+			pump_epoch=epoch,
+			relay_target_id=relay_target_id,
 			**pub_extra,
 		)
 

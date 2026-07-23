@@ -4022,11 +4022,50 @@ const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
-// Pump streaming (Relay Pump): the fenced assistant:delta carries (turn_id, event_seq).
-// A replayed/duplicate frame (a re-attach re-streaming, or a double publish) has an
-// event_seq <= the last one applied for this message — skip it so the cumulative
-// mirror never regresses. Keyed by message_id (the assistant row the deltas target).
-const lastDeltaSeq = ref({}); // { [message_id]: event_seq }
+// Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3). Every pump-owned
+// realtime event carries (turn_id, pump_epoch, event_seq). We retain the GREATEST
+// accepted (epoch, seq) per message plus the epoch at which a TERMINAL was accepted,
+// and ignore any straggler from a superseded writer:
+//   * a LOWER epoch than the greatest accepted (a pump that lost the lease),
+//   * an equal-epoch lower/equal seq (a replayed/duplicate delta frame),
+//   * ANY event below the epoch of an already-accepted terminal (a stale delta /
+//     run:start that would otherwise re-open a completed reply — the bug the old
+//     terminal reset caused).
+// Legacy transport events (no pump_epoch) BYPASS the fence entirely (unchanged).
+// Keyed by message_id (stable per turn; the pump keeps the same run_id/message_id
+// across hops and only bumps pump_epoch on a takeover).
+const eventFence = ref({}); // { [message_id]: { epoch, seq, terminated } }
+function pumpFenceReject(p) {
+	if (p.pump_epoch == null || !p.message_id) return false; // legacy / non-pump -> accept
+	const f = eventFence.value[p.message_id];
+	if (!f) return false;
+	const e = p.pump_epoch;
+	if (f.terminated != null && e < f.terminated) return true; // after a higher-epoch terminal
+	if (f.epoch != null && e < f.epoch) return true; // superseded writer
+	if (
+		f.epoch != null &&
+		e === f.epoch &&
+		p.event_seq != null &&
+		f.seq != null &&
+		p.event_seq <= f.seq
+	)
+		return true; // duplicate/older frame at the same epoch
+	return false;
+}
+function pumpFenceAccept(p, terminal) {
+	if (p.pump_epoch == null || !p.message_id) return;
+	const prev = eventFence.value[p.message_id] || { epoch: null, seq: null, terminated: null };
+	let { epoch, seq, terminated } = prev;
+	const e = p.pump_epoch;
+	if (epoch == null || e > epoch) {
+		epoch = e;
+		seq = p.event_seq != null ? p.event_seq : null; // reset the seq watermark on a new (higher) epoch
+	} else if (e === epoch && p.event_seq != null) {
+		seq = seq == null ? p.event_seq : Math.max(seq, p.event_seq);
+	}
+	if (terminal) terminated = terminated == null ? e : Math.max(terminated, e);
+	eventFence.value[p.message_id] = { epoch, seq, terminated };
+}
 // SUX-7: a settled reply whose enrichment (canvas/attachments/title) is still running.
 // run:end carries enrichment_pending; message:enriched clears it. Drives a subtle
 // "finishing…" affordance so a late pop-in is signalled, not silent.
@@ -7000,6 +7039,9 @@ function onEvent(p) {
 			// the user behind a locked spinner: unlock the composer and show a
 			// distinct "still working" banner. The answer lands later via the
 			// recovery path (assistant:delta + run:end, run_id "recovered").
+			// CDX-3: a stale-epoch (or post-terminal) recovering banner is ignored.
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, false);
 			recovering.value = { message_id: p.message_id, reason: p.reason || "interrupted" };
 			waiting.value = false;
 			sending.value = false;
@@ -7014,6 +7056,10 @@ function onEvent(p) {
 			if (p.status === "waking") statusPhase.value = "waking";
 			break;
 		case "run:start":
+			// CDX-3: a stale-epoch run:start (a pump that lost the lease, or one that
+			// arrives after a higher-epoch terminal) must not re-lock a completed reply.
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, false);
 			currentRunId.value = p.run_id;
 			currentMsgId.value = p.message_id;
 			recovering.value = null;
@@ -7057,15 +7103,12 @@ function onEvent(p) {
 			}, 3500);
 			break;
 		case "assistant:delta": {
-			// Relay-Pump dedupe guard: skip a replayed/out-of-order frame. The pump
-			// publishes a fenced (turn_id, event_seq); a re-attach that re-streams, or
-			// a double publish, carries a seq <= the last one applied for this row.
-			// (Legacy deltas carry no event_seq → always applied, unchanged.)
-			if (p.event_seq != null && p.message_id) {
-				const seen = lastDeltaSeq.value[p.message_id];
-				if (seen != null && p.event_seq <= seen) break;
-				lastDeltaSeq.value[p.message_id] = p.event_seq;
-			}
+			// CDX-3 end-to-end fence: skip a superseded writer's frame (lower epoch),
+			// a replayed/out-of-order frame (equal epoch, seq <= the last applied), or
+			// a straggler after a higher-epoch terminal. Legacy deltas (no pump_epoch)
+			// bypass and are always applied, unchanged.
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, false);
 			waiting.value = false;
 			statusPhase.value = null;
 			recovering.value = null;
@@ -7082,6 +7125,8 @@ function onEvent(p) {
 			break;
 		}
 		case "tool:start": {
+			if (pumpFenceReject(p)) break; // CDX-3 (epoch-less legacy tool events bypass)
+			pumpFenceAccept(p, false);
 			const id = p.tool_call_id || `${p.tool_name}-${activeTools.value.length}`;
 			activeTools.value = [
 				...activeTools.value,
@@ -7093,6 +7138,8 @@ function onEvent(p) {
 			break;
 		}
 		case "tool:end": {
+			if (pumpFenceReject(p)) break; // CDX-3 (epoch-less legacy tool events bypass)
+			pumpFenceAccept(p, false);
 			const t = activeTools.value.find((x) => x.id === p.tool_call_id);
 			if (t) t.status = p.status || "completed";
 			// No tool running anymore and no text yet → the model is reading
@@ -7111,6 +7158,12 @@ function onEvent(p) {
 			break;
 		}
 		case "run:end": {
+			// CDX-3: fence a stale terminal (a superseded writer's late run:end) — it
+			// must not clear a fresher run's spinner. Accept marks this message
+			// terminated at pump_epoch E so ANY later lower-epoch straggler is blocked
+			// PERMANENTLY (the old `lastDeltaSeq = undefined` reset re-opened that window).
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, true);
 			// Defensive: if a promoted turn's run:start was missed, retire the chip.
 			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			const m = messages.value.find((x) => x.name === p.message_id);
@@ -7126,7 +7179,9 @@ function onEvent(p) {
 			if (p.message_id) {
 				if (p.enrichment_pending)
 					enrichmentPending.value = new Set(enrichmentPending.value).add(p.message_id);
-				lastDeltaSeq.value[p.message_id] = undefined; // free the dedupe slot
+				// NB: the CDX-3 fence entry is deliberately NOT cleared here — the
+				// terminated-epoch marker must persist to permanently block a later
+				// lower-epoch straggler (clearing it re-opened the stale-delta window).
 			}
 			// Stamp metrics keyed by message_id so they survive the reload below.
 			if (p.message_id) {
@@ -7205,6 +7260,10 @@ function onEvent(p) {
 			break;
 		}
 		case "run:error":
+			// CDX-3: a terminal — fence a superseded writer's late error and mark this
+			// message terminated at pump_epoch E (blocks later lower-epoch stragglers).
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, true);
 			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			if (p.message_id) {
 				errorMeta.value = {
@@ -7253,29 +7312,37 @@ function stopRun() {
 	notify("Stopped.");
 }
 
-// Phase-0 admission: cancel a turn that is still QUEUED (behind others, not yet
-// dispatched). Optimistically retires the chip; the server CASes queued ->
-// cancelled and publishes turn:cancelled to reconcile other tabs.
+// Cancel a pre-dispatch turn (queued OR the pump's preparing/ready window). CDX-8:
+// the server ROUTES BY STATE (queued -> cancel_queued clearing the reserved credit;
+// preparing/ready -> cancel_preparing_or_ready + placeholder cleanup) and returns
+// which path won. The UI KEEPS the chip + composer lock until the server CONFIRMS —
+// NO optimistic clear, so a failed/errored cancel never removes the chip while work
+// continues invisibly (the reserved-credit leak the old optimistic clear masked).
 async function cancelQueued() {
 	const q = queuedTurn.value;
 	if (!q) return;
-	queuedTurn.value = null;
-	sending.value = false;
-	waiting.value = false;
 	try {
 		const r = await api.cancelQueuedTurn(q.run_id);
-		if (r && r.ok === false) {
-			// It already started (a slot freed the instant we clicked). We
-			// optimistically cleared sending/waiting above; re-lock the composer so
-			// it reflects the now-streaming reply (run:end resets it) — otherwise the
-			// composer stays enabled during a live turn (SUXI-6).
-			sending.value = true;
-			notify(r.reason || "That reply already started.", { type: "info" });
-		} else {
+		if (r && r.ok) {
+			// Confirmed cancelled (queued or preparing/ready path). Retire the chip +
+			// unlock the composer, and let turn:cancelled reconcile other tabs.
+			if (queuedTurn.value && queuedTurn.value.run_id === q.run_id) queuedTurn.value = null;
+			sending.value = false;
+			waiting.value = false;
 			// SUXI-7: route the toast through the state->copy table.
 			notify(`${TURN_STATE_COPY.cancelled()}.`);
+		} else {
+			// It already started (a slot freed the instant we clicked). Drop the stale
+			// chip but KEEP the composer locked for the now-streaming reply (run:end
+			// resets it) — otherwise the composer would enable during a live turn.
+			if (queuedTurn.value && queuedTurn.value.run_id === q.run_id) queuedTurn.value = null;
+			sending.value = true;
+			waiting.value = true;
+			notify((r && r.reason) || "That reply already started.", { type: "info" });
 		}
 	} catch (e) {
+		// Server state UNKNOWN (network/500): KEEP the chip + lock so the user can retry
+		// the cancel. No optimistic clear on failure (CDX-8).
 		notifyActionError("Couldn't cancel the queued message", e);
 	}
 }

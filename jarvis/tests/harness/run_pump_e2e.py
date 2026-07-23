@@ -224,6 +224,11 @@ class E2E:
 		deps.make_mux = make_mux
 		deps.dispatch_prepare = dispatch_prepare
 		deps.enqueue_finalize = enqueue_finalize
+		# The e2e drives each hop MANUALLY (run_pump_hop below), so the successor a
+		# transport-exit / handoff enqueues must NOT go to a real RQ worker — no-op it.
+		# CDX-1 succession is exercised by the REAL atomic lease transfer (which
+		# force-releases the lease), NOT by a manual lease expiry (see hop1->hop2).
+		deps.enqueue_pump_job = lambda **kw: None
 		# invoke_settlement / snapshot / apply_tool keep their real defaults.
 		return deps
 
@@ -328,17 +333,14 @@ class E2E:
 			partial = self.frappe.db.get_value(MSG, amsg, "content") if amsg else ""
 			log(f"  hop1 exit={out1.get('exit')} state={st1} partial_len={len(partial or '')}")
 
-			# Takeover is bounded by the lease TTL (LEASE_TTL_S=30s): a fresh pump can
-			# acquire only once the streaming hop's lease lapses. Simulate that lapse so
-			# the e2e does not sleep 30s (faithful — the real takeover gap is <=LEASE_TTL_S).
-			self.frappe.db.set_value(
-				PUMP,
-				self.target,
-				"lease_expires_at",
-				self.frappe.utils.add_to_date(None, seconds=-1),
-				update_modified=False,
-			)
-			self.frappe.db.commit()
+			# CDX-1: do NOT manually expire the lease here — that bypassed the
+			# clean-handoff race and hid the stranded-turn defect. HOP 1 exited via
+			# ``transport_closed`` (the socket died mid-stream), whose exit path now
+			# performs the REAL epoch-guarded atomic lease RELEASE (force-expire +
+			# hop_counter bump + successor enqueue). So the lease is already acquirable
+			# and HOP 2 takes over through the genuine succession path. We only clear
+			# the fast NO-OP redis mirror belt-and-suspenders (the manual run below
+			# calls lease_acquire directly, which ignores the mirror anyway).
 			pump._clear_lease_mirror(self.target)
 
 			# HOP 2: reconnect (fresh lease, fresh socket). reconcile-on-start sees the
