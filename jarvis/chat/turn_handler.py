@@ -413,6 +413,20 @@ def _org_locale_clause() -> str:
 	return ("; " + "; ".join(parts)) if parts else ""
 
 
+def _assistant_name_clause(settings) -> str:
+	"""Whitelabel assistant name folded into the turn's trusted [Context:] line
+	so the agent refers to itself by the customer's chosen name. "" when unset
+	(blank tenants pay zero per-turn tokens, like _org_locale_clause). Sanitized
+	like the model-text notes clause - customer free-text inside a trusted
+	bracket, so disarm brackets/backticks/newlines and cap length (validate()
+	already caps at 40; belt and braces)."""
+	name = (getattr(settings, "agent_name", None) or "").strip()
+	if not name:
+		return ""
+	safe = _safe_label_name(name).replace("[", "(").replace("]", ")")[:40]
+	return f"; assistant name: {safe}"
+
+
 def _advance_macro(conversation_id: str, *, errored: bool) -> None:
 	"""Chaining hook for the macro engine: if this conversation is a running
 	macro, advance it (enqueue the next step, or finish). Best-effort — a macro
@@ -570,6 +584,9 @@ def handle_chat_send(payload: dict) -> None:
 	# Org locale (default Company country/currency + site date/number/tz) so the
 	# agent formats for the org's region instead of defaulting to US conventions.
 	locale_clause = _org_locale_clause()
+	# Whitelabel assistant name (Phase 3): folded into the trusted [Context:] line
+	# so the agent refers to itself by the customer's chosen name. "" when unset.
+	assistant_name_clause = _assistant_name_clause(settings)
 	# Personal custom skills + org wiki notes (voice & wiki feature). Both
 	# clauses are best-effort ("" on any failure — a clause bug must never
 	# break a turn) and size-capped (~700 chars combined). Lazy imports so a
@@ -649,7 +666,7 @@ def handle_chat_send(payload: dict) -> None:
 		# (skill_clause) stays intentional and is not demoted. The
 		# customizations clause is org-level too, so it sits with the org
 		# clauses - before personal, which stays last.
-		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
+		f"[Context: today is {today}{locale_clause}{assistant_name_clause}; chat user: {chat_user}"
 		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}"
 		f"{wiki_notes_clause}{custom_site_clause}{personal_clause}{notes_clause}]"
 		f"{ground_block}"

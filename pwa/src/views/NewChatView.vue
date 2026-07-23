@@ -1,6 +1,7 @@
 <script setup>
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from "vue";
 import BrandMark from "../components/BrandMark.vue";
+import { agentName } from "@/branding";
 import { useRouter } from "vue-router";
 import * as api from "../api";
 import { store } from "../store";
@@ -272,7 +273,7 @@ onUnmounted(() => attachments.value.forEach((a) => a.preview && URL.revokeObject
 				ref="inputEl"
 				v-model="input"
 				rows="1"
-				placeholder="Message Jarvis…"
+				:placeholder="`Message ${agentName}…`"
 				@input="autoGrow"
 				@keydown="onKeydown"
 			/>
@@ -412,7 +413,7 @@ onUnmounted(() => attachments.value.forEach((a) => a.preview && URL.revokeObject
 				<div class="jv-sep" />
 
 				<div class="jv-msheet-sub">Effort</div>
-				<div class="jv-msheet-hint">How much Jarvis thinks before it acts.</div>
+				<div class="jv-msheet-hint">How much {{ agentName }} thinks before it acts.</div>
 				<div class="jv-seg">
 					<button
 						v-for="e in EFFORT"

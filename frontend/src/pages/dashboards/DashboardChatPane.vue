@@ -4,7 +4,9 @@
 		<div class="flex shrink-0 items-start justify-between gap-2 border-b px-4 py-3">
 			<div class="flex min-w-0 flex-col gap-0.5">
 				<span class="text-base font-semibold text-ink-gray-9">Describe a dashboard</span>
-				<span class="text-p-sm text-ink-gray-6">Jarvis draws it on the canvas above</span>
+				<span class="text-p-sm text-ink-gray-6"
+					>{{ agentName }} draws it on the canvas above</span
+				>
 			</div>
 			<div class="flex shrink-0 items-center gap-1">
 				<Button
@@ -188,6 +190,7 @@ import { renderMarkdown } from "@/markdown";
 import { session } from "@/data/session";
 import { sendDashboardChat, getDashboardConversation } from "@/api/dashboards";
 import { listPendingConfirmations, confirmTool, dismissTool } from "@/api";
+import { agentName } from "@/branding";
 
 // get_dashboards_caps payload (creatable_scopes/manageable_roles feed the save
 // dialog; stt_enabled - when the backend sends it - gates the mic)

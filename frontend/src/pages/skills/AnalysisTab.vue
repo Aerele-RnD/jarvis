@@ -273,8 +273,8 @@
 								Personalisation questions
 							</div>
 							<div class="mt-0.5 text-sm text-ink-gray-6">
-								Configure what Jarvis asks your team — org-wide, per role, or one
-								person at a time — on the Personalise tab.
+								Configure what {{ agentName }} asks your team — org-wide, per role,
+								or one person at a time — on the Personalise tab.
 							</div>
 						</div>
 						<Button
@@ -321,6 +321,7 @@ import {
 	setLearningSettings,
 	getLearningStatus,
 } from "@/api/learning";
+import { agentName } from "@/branding";
 
 const emit = defineEmits(["changed"]);
 const router = useRouter();

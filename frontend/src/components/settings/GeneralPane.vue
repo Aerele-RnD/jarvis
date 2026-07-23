@@ -72,7 +72,8 @@
 		<div class="jv-set-row">
 			<span
 				>Notify when a reply is ready<br /><span class="jv-set-sub"
-					>Browser notification when Jarvis finishes while you're in another tab</span
+					>Browser notification when {{ agentName }} finishes while you're in another
+					tab</span
 				></span
 			>
 			<button
@@ -142,6 +143,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useShellStore } from "@/stores/shell";
 import * as api from "@/api";
+import { agentName } from "@/branding";
 
 const store = useShellStore();
 

@@ -6,7 +6,7 @@
 					<!-- brand header: JarvisMark + name + per-step subtitle (preview .brand) -->
 					<div class="jv-ob-brand">
 						<JarvisMark :size="30" :radius="8" />
-						<span class="jv-ob-brand-name">Jarvis</span>
+						<span class="jv-ob-brand-name">{{ agentName }}</span>
 						<span class="jv-ob-brand-sub">{{ frameSub }}</span>
 					</div>
 
@@ -162,8 +162,8 @@
 								<div class="jv-ob-head">
 									<h1>Your details</h1>
 									<p>
-										We'll set Jarvis up for this workspace and send receipts
-										here.
+										We'll set {{ agentName }} up for this workspace and send
+										receipts here.
 									</p>
 								</div>
 								<div class="jv-ob-form">
@@ -304,8 +304,8 @@
 													? "Auto-pay authorized — nothing charged until your trial ends."
 													: "Payment received."
 											}}
-											We're provisioning your Jarvis workspace. This usually
-											takes under a minute…
+											We're provisioning your {{ agentName }} workspace. This
+											usually takes under a minute…
 										</p>
 									</div>
 									<div
@@ -467,7 +467,7 @@
 							<div class="jv-ob-body">
 								<div v-show="state.finishing">
 									<div class="jv-ob-head">
-										<h1>Setting up Jarvis</h1>
+										<h1>Setting up {{ agentName }}</h1>
 										<p>
 											{{
 												state.finishSubtitle ||
@@ -481,10 +481,10 @@
 								</div>
 								<div v-show="!state.finishing">
 									<div class="jv-ob-head">
-										<h1>Give Jarvis a brain</h1>
+										<h1>Give {{ agentName }} a brain</h1>
 										<p>
-											Pick which AI powers Jarvis. You can change this
-											anytime in Settings → AI models.
+											Pick which AI powers {{ agentName }}. You can change
+											this anytime in Settings → AI models.
 										</p>
 									</div>
 									<div class="jv-ob-connect">
@@ -507,7 +507,7 @@
 												class="jv-ob-btn jv-ob-btn-primary"
 												@click="forceContinue"
 											>
-												Continue to Jarvis
+												Continue to {{ agentName }}
 											</button>
 										</template>
 									</Banner>
@@ -557,7 +557,8 @@
 								<div class="jv-ob-head">
 									<h1>Connect your openclaw</h1>
 									<p>
-										Point Jarvis at <b>your own</b> openclaw server. Jarvis
+										Point {{ agentName }} at <b>your own</b> openclaw server.
+										{{ agentName }}
 										connects over HTTP with a bearer token. No Aerele
 										persona/skills. Validate first, then connect.
 									</p>
@@ -702,7 +703,7 @@
 												class="jv-ob-btn jv-ob-btn-primary"
 												@click="forceContinue"
 											>
-												Continue to Jarvis
+												Continue to {{ agentName }}
 											</button>
 										</template>
 									</Banner>
@@ -779,6 +780,7 @@ import {
 	syncConnection,
 } from "@/api";
 import { errMessage as errMsg } from "@/lib/errors";
+import { agentName } from "@/branding";
 
 const { effectiveDark: dark, paletteVars } = useJarvisTheme();
 
@@ -804,7 +806,7 @@ const FRAME_SUBS = {
 	plan: "Choose your plan",
 	details: "Your details",
 	pay: "Review & pay",
-	connect: "Give Jarvis a brain",
+	connect: `Give ${agentName} a brain`,
 	selfhost: "Self-hosted setup",
 };
 
@@ -1246,10 +1248,10 @@ async function openCheckout(d) {
 	// razorpay_subscription_id; finishPayment forwards whichever is present.
 	const rzOpts = {
 		key: d.razorpay_key_id,
-		name: "Jarvis",
+		name: agentName,
 		description: d.razorpay_subscription_id
-			? "Jarvis subscription (auto-pay after trial)"
-			: "Jarvis subscription",
+			? `${agentName} subscription (auto-pay after trial)`
+			: `${agentName} subscription`,
 		handler: (res) => {
 			state.payBusy = true;
 			finishPayment({
@@ -1392,7 +1394,7 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 		const status = ((terminal && terminal.last_sync_status) || "").trim();
 		if (status.startsWith("failed") || status.startsWith("skipped")) {
 			state.finishing = false;
-			state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`;
+			state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to ${agentName} and retry from Settings.`;
 			return;
 		}
 	}
@@ -1405,8 +1407,7 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 		return;
 	}
 	state.finishing = false;
-	state.finishNote =
-		"Still finishing setup. This can take a few seconds. You can continue to Jarvis now, or wait and try again.";
+	state.finishNote = `Still finishing setup. This can take a few seconds. You can continue to ${agentName} now, or wait and try again.`;
 }
 
 // ---- Connect (renders <LlmPoolEditor>) - the component itself owns
