@@ -22,7 +22,10 @@ const CONTROL_FENCES = [
 export function stripControlBlocks(src) {
   let t = String(src == null ? "" : src);
   for (const name of CONTROL_FENCES) {
-    t = t.replace(new RegExp("```" + name + "[ \\t]*\\n[\\s\\S]*?```", "g"), "");
+    t = t.replace(
+      new RegExp("```" + name + "[ \\t]*\\n[\\s\\S]*?```", "g"),
+      ""
+    );
   }
   t = t.replace(/```mermaid[ \t]*\n[ \t]*xychart-beta[\s\S]*?```/g, "");
   return t.replace(/\n{3,}/g, "\n\n").trim();

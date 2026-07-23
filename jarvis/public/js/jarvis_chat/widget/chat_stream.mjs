@@ -43,7 +43,11 @@ export function applyEvent(state, payload) {
   switch (p.kind) {
     case "run:start":
       s.busy = false;
-      s.live = { runId: p.run_id || "", messageId: p.message_id || "", text: "" };
+      s.live = {
+        runId: p.run_id || "",
+        messageId: p.message_id || "",
+        text: "",
+      };
       return s;
 
     case "assistant:delta":
@@ -74,7 +78,11 @@ export function applyEvent(state, payload) {
       // panel would sit on "Jarvis is replying..." forever.
       if (!p.token) return s;
       if (s.pending.some((x) => x.token === p.token)) return s;
-      s.pending.push({ token: p.token, tool: p.tool || "", summary: p.summary || "" });
+      s.pending.push({
+        token: p.token,
+        tool: p.tool || "",
+        summary: p.summary || "",
+      });
       return s;
 
     case "action:resolved":

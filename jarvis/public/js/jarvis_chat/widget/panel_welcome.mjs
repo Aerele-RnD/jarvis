@@ -19,7 +19,9 @@ export function greetingFor(hour) {
 // like a person talking rather than a database row.
 export function greetingLine(hour, name) {
   const g = greetingFor(hour);
-  const first = String(name || "").trim().split(/\s+/)[0];
+  const first = String(name || "")
+    .trim()
+    .split(/\s+/)[0];
   return first ? `${g}, ${first}` : g;
 }
 
@@ -31,22 +33,40 @@ export function suggestionsFor(ctx) {
 
   if (label && label.doctype && label.name) {
     return [
-      { title: "Explain this record", prompt: "Summarise this record and flag anything unusual." },
-      { title: "Find what is linked", prompt: "What documents are linked to this one?" },
-      { title: "Suggest next steps", prompt: "What should I do next with this record?" },
+      {
+        title: "Explain this record",
+        prompt: "Summarise this record and flag anything unusual.",
+      },
+      {
+        title: "Find what is linked",
+        prompt: "What documents are linked to this one?",
+      },
+      {
+        title: "Suggest next steps",
+        prompt: "What should I do next with this record?",
+      },
     ];
   }
 
   if (label && (label.doctype || label.report_name)) {
     return [
-      { title: "Analyse data", prompt: "Which of these need my attention first?" },
+      {
+        title: "Analyse data",
+        prompt: "Which of these need my attention first?",
+      },
       { title: "Summarise", prompt: "Summarise what I am looking at." },
-      { title: "Find outliers", prompt: "Is anything here unusual or out of place?" },
+      {
+        title: "Find outliers",
+        prompt: "Is anything here unusual or out of place?",
+      },
     ];
   }
 
   return [
-    { title: "Analyse data", prompt: "Which sales orders are overdue this month?" },
+    {
+      title: "Analyse data",
+      prompt: "Which sales orders are overdue this month?",
+    },
     { title: "Take an action", prompt: "Draft a document for me to review." },
     { title: "Search records", prompt: "Search for a customer or contact." },
   ];

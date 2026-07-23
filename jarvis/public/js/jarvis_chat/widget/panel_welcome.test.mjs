@@ -35,9 +35,18 @@ test("suggestionsFor: a record gets record-scoped prompts", () => {
 });
 
 test("suggestionsFor: a list or report gets collection-scoped prompts", () => {
-  assert.equal(suggestionsFor({ doctype: "Sales Invoice" })[0].title, "Analyse data");
-  assert.equal(suggestionsFor({ report_name: "Accounts Receivable" })[0].title, "Analyse data");
-  assert.equal(suggestionsFor({ doctype: "Sales Invoice" })[0].prompt, "Which of these need my attention first?");
+  assert.equal(
+    suggestionsFor({ doctype: "Sales Invoice" })[0].title,
+    "Analyse data"
+  );
+  assert.equal(
+    suggestionsFor({ report_name: "Accounts Receivable" })[0].title,
+    "Analyse data"
+  );
+  assert.equal(
+    suggestionsFor({ doctype: "Sales Invoice" })[0].prompt,
+    "Which of these need my attention first?"
+  );
 });
 
 test("suggestionsFor: no context falls back to the general starting points", () => {

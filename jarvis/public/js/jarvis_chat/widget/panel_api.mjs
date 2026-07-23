@@ -14,7 +14,8 @@ function call(method, args) {
 
 export const listConversations = () => call(CHAT + "list_conversations");
 
-export const getConversation = (conversation) => call(CHAT + "get_conversation", { conversation });
+export const getConversation = (conversation) =>
+  call(CHAT + "get_conversation", { conversation });
 
 // An empty `conversation` is allowed: the backend creates (or focuses) the
 // user's empty conversation and returns its id as `conversation_id`, which

@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PANEL_W, PANEL_MAX_H, GAP, MARGIN, panelLayout } from "./panel_anchor.mjs";
+import {
+  PANEL_W,
+  PANEL_MAX_H,
+  GAP,
+  MARGIN,
+  panelLayout,
+} from "./panel_anchor.mjs";
 
 // A roomy desktop viewport with a 48px Desk navbar.
 const VP = { vw: 1440, vh: 900, top: 48 };

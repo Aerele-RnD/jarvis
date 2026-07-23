@@ -19,7 +19,8 @@ export function resolveDark(theme, mode, prefersDark) {
   const m = String(mode || "").toLowerCase();
   if (m === "dark") return true;
   if (m === "light") return false;
-  if (m === "automatic" || m === "auto" || m === "") return Boolean(prefersDark);
+  if (m === "automatic" || m === "auto" || m === "")
+    return Boolean(prefersDark);
   return false;
 }
 
@@ -28,7 +29,8 @@ export function isDarkNow() {
   const root = document.documentElement;
   let prefers = false;
   try {
-    prefers = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches || false;
+    prefers =
+      window.matchMedia?.("(prefers-color-scheme: dark)")?.matches || false;
   } catch (e) {
     prefers = false;
   }
@@ -45,7 +47,10 @@ export function watchTheme(onChange) {
   const root = document.documentElement;
   const fire = () => onChange(isDarkNow());
   const obs = new MutationObserver(fire);
-  obs.observe(root, { attributes: true, attributeFilter: ["data-theme", "data-theme-mode"] });
+  obs.observe(root, {
+    attributes: true,
+    attributeFilter: ["data-theme", "data-theme-mode"],
+  });
 
   let mq = null;
   try {

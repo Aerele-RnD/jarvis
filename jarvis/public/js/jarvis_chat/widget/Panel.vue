@@ -16,24 +16,62 @@
 			<div class="jvp-head">
 				<div class="jvp-avatar">
 					<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
-						<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
+						<path
+							d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+						/>
 					</svg>
 					<i class="jvp-online" aria-hidden="true"></i>
 				</div>
 				<div class="jvp-title">Jarvis</div>
 				<div class="jvp-actions">
-					<button class="jvp-ib" type="button" aria-label="New chat" @click="startNewChat">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+					<button
+						class="jvp-ib"
+						type="button"
+						aria-label="New chat"
+						@click="startNewChat"
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<path d="M12 5v14M5 12h14" />
 						</svg>
 					</button>
-					<button class="jvp-ib" type="button" aria-label="Open full chat" @click="$emit('open-full')">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+					<button
+						class="jvp-ib"
+						type="button"
+						aria-label="Open full chat"
+						@click="$emit('open-full')"
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<path d="M15 3h6v6M21 3l-7 7M10 21H4v-6M4 21l7-7" />
 						</svg>
 					</button>
-					<button class="jvp-ib" type="button" aria-label="Close" @click="$emit('close')">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+					<button
+						class="jvp-ib"
+						type="button"
+						aria-label="Close"
+						@click="$emit('close')"
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<path d="M18 6 6 18M6 6l12 12" />
 						</svg>
 					</button>
@@ -41,13 +79,35 @@
 			</div>
 
 			<div v-if="contextText" class="jvp-ctx">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.6"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
 					<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
 					<path d="M14 2v6h6" />
 				</svg>
-				<div class="jvp-ctx-txt">Viewing <b>{{ contextText }}</b></div>
-				<button class="jvp-ib jvp-ib--sm" type="button" aria-label="Stop using this page as context" @click="$emit('dismiss-context')">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+				<div class="jvp-ctx-txt">
+					Viewing <b>{{ contextText }}</b>
+				</div>
+				<button
+					class="jvp-ib jvp-ib--sm"
+					type="button"
+					aria-label="Stop using this page as context"
+					@click="$emit('dismiss-context')"
+				>
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.6"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
 						<path d="M18 6 6 18M6 6l12 12" />
 					</svg>
 				</button>
@@ -62,10 +122,15 @@
 				</div>
 
 				<!-- Welcome: brand mark, greeting, and starting points. -->
-				<div v-else-if="!shownMessages.length && !stream.live && !thinking" class="jvp-welcome">
+				<div
+					v-else-if="!shownMessages.length && !stream.live && !thinking"
+					class="jvp-welcome"
+				>
 					<div class="jvp-hero">
 						<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
-							<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
+							<path
+								d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+							/>
 						</svg>
 					</div>
 					<div class="jvp-greet">{{ greeting }}</div>
@@ -85,8 +150,19 @@
 							type="button"
 							@click="useSuggestion(s.prompt)"
 						>
-							<span class="jvp-card-ic" :class="`jvp-card-ic--${i % 4}`" aria-hidden="true">
-								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+							<span
+								class="jvp-card-ic"
+								:class="`jvp-card-ic--${i % 4}`"
+								aria-hidden="true"
+							>
+								<svg
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.7"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
 									<path :d="CARD_ICONS[i % CARD_ICONS.length]" />
 								</svg>
 							</span>
@@ -105,7 +181,11 @@
 						</div>
 						<div v-else class="jvp-row">
 							<div class="jvp-m-avatar" aria-hidden="true">
-								<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+								<svg viewBox="0 0 24 24" fill="#fff">
+									<path
+										d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+									/>
+								</svg>
 							</div>
 							<div class="jvp-m-bot jv-md" v-html="renderReply(m.content)"></div>
 						</div>
@@ -113,7 +193,11 @@
 
 					<div v-if="stream.live && stream.live.text" class="jvp-row">
 						<div class="jvp-m-avatar" aria-hidden="true">
-							<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+							<svg viewBox="0 0 24 24" fill="#fff">
+								<path
+									d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+								/>
+							</svg>
 						</div>
 						<div class="jvp-m-bot jv-md" v-html="renderReply(stream.live.text)"></div>
 					</div>
@@ -122,26 +206,48 @@
 					     spinner, so the user knows the turn was accepted. -->
 					<div v-else-if="thinking" class="jvp-row">
 						<div class="jvp-m-avatar" aria-hidden="true">
-							<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+							<svg viewBox="0 0 24 24" fill="#fff">
+								<path
+									d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+								/>
+							</svg>
 						</div>
-						<div class="jvp-think" role="status" aria-live="polite" aria-label="Jarvis is typing">
-							<span class="jvp-think-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+						<div
+							class="jvp-think"
+							role="status"
+							aria-live="polite"
+							aria-label="Jarvis is typing"
+						>
+							<span class="jvp-think-dots" aria-hidden="true"
+								><i></i><i></i><i></i
+							></span>
 						</div>
 					</div>
 
 					<div v-if="loadError && shownMessages.length" class="jvp-inline-err">
 						<span class="jvp-err">{{ loadError }}</span>
-						<button class="jvp-btn-subtle" type="button" @click="retryLast">Retry</button>
+						<button class="jvp-btn-subtle" type="button" @click="retryLast">
+							Retry
+						</button>
 					</div>
 				</div>
 			</div>
 
 			<div v-if="stream.pending.length" class="jvp-pending">
 				<div v-for="p in stream.pending" :key="p.token" class="jvp-pending-row">
-					<div class="jvp-pending-txt">{{ p.summary || "Jarvis wants to make a change." }}</div>
+					<div class="jvp-pending-txt">
+						{{ p.summary || "Jarvis wants to make a change." }}
+					</div>
 					<div class="jvp-pending-acts">
-						<button class="jvp-btn-subtle" type="button" @click="$emit('open-full')">Review in full chat</button>
-						<button class="jvp-btn-solid" type="button" :disabled="resolving === p.token" @click="resolvePending(p.token)">
+						<button class="jvp-btn-subtle" type="button" @click="$emit('open-full')">
+							Review in full chat
+						</button>
+						<button
+							class="jvp-btn-solid"
+							type="button"
+							:disabled="resolving === p.token"
+							@click="resolvePending(p.token)"
+						>
 							{{ resolving === p.token ? "Confirming…" : "Confirm" }}
 						</button>
 					</div>
@@ -152,12 +258,33 @@
 				<!-- attached files, above the input -->
 				<div v-if="attachments.length" class="jvp-atts">
 					<span v-for="a in attachments" :key="a.file_url" class="jvp-att">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.7"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+							<path d="M14 2v6h6" />
 						</svg>
 						<span class="jvp-att-n">{{ a.file_name }}</span>
-						<button class="jvp-att-x" type="button" :aria-label="`Remove ${a.file_name}`" @click="removeAttachment(a.file_url)">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+						<button
+							class="jvp-att-x"
+							type="button"
+							:aria-label="`Remove ${a.file_name}`"
+							@click="removeAttachment(a.file_url)"
+						>
+							<svg
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.8"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
 								<path d="M18 6 6 18M6 6l12 12" />
 							</svg>
 						</button>
@@ -166,7 +293,10 @@
 
 				<input ref="fileEl" type="file" multiple hidden @change="onFilePicked" />
 
-				<div class="jvp-comp" :class="{ 'jvp-comp--focus': composerFocused, 'jvp-comp--rec': recording }">
+				<div
+					class="jvp-comp"
+					:class="{ 'jvp-comp--focus': composerFocused, 'jvp-comp--rec': recording }"
+				>
 					<button
 						class="jvp-cib"
 						type="button"
@@ -174,15 +304,26 @@
 						:disabled="uploading"
 						@click="pickFile"
 					>
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-							<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.9l8.5-8.5" />
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.7"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path
+								d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.9l8.5-8.5"
+							/>
 						</svg>
 					</button>
 					<textarea
 						class="jvp-comp-text"
 						ref="textareaEl"
 						rows="1"
-						:placeholder="contextText ? `Ask about ${contextText}…` : 'Ask Jarvis anything…'"
+						:placeholder="
+							contextText ? `Ask about ${contextText}…` : 'Ask Jarvis anything…'
+						"
 						v-model="draft"
 						@focus="composerFocused = true"
 						@blur="composerFocused = false"
@@ -198,18 +339,56 @@
 						:disabled="transcribing"
 						@click="toggleVoice"
 					>
-						<svg v-if="!recording" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-							<rect x="9" y="2" width="6" height="11" rx="3" /><path d="M19 10a7 7 0 0 1-14 0M12 17v5" />
+						<svg
+							v-if="!recording"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.7"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<rect x="9" y="2" width="6" height="11" rx="3" />
+							<path d="M19 10a7 7 0 0 1-14 0M12 17v5" />
 						</svg>
-						<span v-else class="jvp-wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+						<span v-else class="jvp-wave" aria-hidden="true"
+							><i></i><i></i><i></i><i></i
+						></span>
 					</button>
-					<button v-if="stream.live" class="jvp-send jvp-send--stop" type="button" aria-label="Stop generating" @click="stop">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+					<button
+						v-if="stream.live"
+						class="jvp-send jvp-send--stop"
+						type="button"
+						aria-label="Stop generating"
+						@click="stop"
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.7"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<rect x="7" y="7" width="10" height="10" rx="2" />
 						</svg>
 					</button>
-					<button v-else class="jvp-send" type="button" aria-label="Send message" :disabled="!canSend" @click="send">
-						<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+					<button
+						v-else
+						class="jvp-send"
+						type="button"
+						aria-label="Send message"
+						:disabled="!canSend"
+						@click="send"
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="#fff"
+							stroke-width="1.8"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<path d="M12 19V5M5 12l7-7 7 7" />
 						</svg>
 					</button>
@@ -739,11 +918,19 @@ defineExpose({ load, startNewChat, convId });
 	outline: none;
 }
 @media (prefers-reduced-motion: no-preference) {
-	.jvp-panel { animation: jvp-in 120ms ease-out; }
+	.jvp-panel {
+		animation: jvp-in 120ms ease-out;
+	}
 }
 @keyframes jvp-in {
-	from { opacity: 0; transform: scale(0.98); }
-	to { opacity: 1; transform: scale(1); }
+	from {
+		opacity: 0;
+		transform: scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
 }
 
 /* ---- header ---- */
@@ -765,7 +952,10 @@ defineExpose({ load, startNewChat, convId });
 	display: grid;
 	place-items: center;
 }
-.jvp-avatar svg { width: 17px; height: 17px; }
+.jvp-avatar svg {
+	width: 17px;
+	height: 17px;
+}
 .jvp-online {
 	position: absolute;
 	right: -2px;
@@ -776,8 +966,17 @@ defineExpose({ load, startNewChat, convId });
 	background: #3ad07e;
 	border: 2px solid var(--jv-surface);
 }
-.jvp-title { flex: 1; font-size: 14.5px; font-weight: 600; color: var(--jv-ink); }
-.jvp-actions { display: flex; align-items: center; gap: 2px; }
+.jvp-title {
+	flex: 1;
+	font-size: 14.5px;
+	font-weight: 600;
+	color: var(--jv-ink);
+}
+.jvp-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
 .jvp-ib {
 	width: 29px;
 	height: 29px;
@@ -791,11 +990,26 @@ defineExpose({ load, startNewChat, convId });
 	place-items: center;
 	transition: background-color 0.12s ease, color 0.12s ease;
 }
-.jvp-ib:hover { background: var(--jv-chip-0); color: var(--jv-ink); }
-.jvp-ib:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 1px; }
-.jvp-ib svg { width: 16px; height: 16px; }
-.jvp-ib--sm { width: 24px; height: 24px; }
-.jvp-ib--sm svg { width: 14px; height: 14px; }
+.jvp-ib:hover {
+	background: var(--jv-chip-0);
+	color: var(--jv-ink);
+}
+.jvp-ib:focus-visible {
+	outline: 2px solid var(--jv-accent);
+	outline-offset: 1px;
+}
+.jvp-ib svg {
+	width: 16px;
+	height: 16px;
+}
+.jvp-ib--sm {
+	width: 24px;
+	height: 24px;
+}
+.jvp-ib--sm svg {
+	width: 14px;
+	height: 14px;
+}
 
 /* ---- context chip ---- */
 .jvp-ctx {
@@ -808,7 +1022,12 @@ defineExpose({ load, startNewChat, convId });
 	border-radius: 11px;
 	padding: 7px 8px 7px 10px;
 }
-.jvp-ctx svg { width: 15px; height: 15px; flex: none; color: var(--jv-ink-2); }
+.jvp-ctx svg {
+	width: 15px;
+	height: 15px;
+	flex: none;
+	color: var(--jv-ink-2);
+}
 .jvp-ctx-txt {
 	flex: 1;
 	min-width: 0;
@@ -818,7 +1037,10 @@ defineExpose({ load, startNewChat, convId });
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-.jvp-ctx-txt b { font-weight: 600; color: var(--jv-ink); }
+.jvp-ctx-txt b {
+	font-weight: 600;
+	color: var(--jv-ink);
+}
 
 /* ---- body ---- */
 .jvp-body {
@@ -840,8 +1062,16 @@ defineExpose({ load, startNewChat, convId });
 	color: var(--jv-ink-2);
 	font-size: 13.5px;
 }
-.jvp-err { font-size: 13px; color: var(--jv-danger); }
-.jvp-inline-err { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jvp-err {
+	font-size: 13px;
+	color: var(--jv-danger);
+}
+.jvp-inline-err {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
 
 /* ---- welcome ---- */
 .jvp-welcome {
@@ -860,7 +1090,10 @@ defineExpose({ load, startNewChat, convId });
 	place-items: center;
 	box-shadow: 0 14px 30px -10px rgba(106, 86, 232, 0.6);
 }
-.jvp-hero svg { width: 29px; height: 29px; }
+.jvp-hero svg {
+	width: 29px;
+	height: 29px;
+}
 .jvp-greet {
 	font-size: 22px;
 	font-weight: 700;
@@ -876,8 +1109,17 @@ defineExpose({ load, startNewChat, convId });
 	color: var(--jv-ink-2);
 	text-align: center;
 }
-.jvp-greet-sub b { font-weight: 600; color: var(--jv-ink); }
-.jvp-cards { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 28px; }
+.jvp-greet-sub b {
+	font-weight: 600;
+	color: var(--jv-ink);
+}
+.jvp-cards {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 100%;
+	margin-top: 28px;
+}
 .jvp-card {
 	display: flex;
 	align-items: flex-start;
@@ -891,8 +1133,13 @@ defineExpose({ load, startNewChat, convId });
 	cursor: pointer;
 	transition: border-color 0.12s ease, background-color 0.12s ease;
 }
-.jvp-card:hover { border-color: var(--jv-accent); }
-.jvp-card:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 1px; }
+.jvp-card:hover {
+	border-color: var(--jv-accent);
+}
+.jvp-card:focus-visible {
+	outline: 2px solid var(--jv-accent);
+	outline-offset: 1px;
+}
 .jvp-card-ic {
 	width: 30px;
 	height: 30px;
@@ -902,19 +1149,56 @@ defineExpose({ load, startNewChat, convId });
 	place-items: center;
 	color: var(--jv-ink);
 }
-.jvp-card-ic svg { width: 16px; height: 16px; }
-.jvp-card-ic--0 { background: var(--jv-chip-0); }
-.jvp-card-ic--1 { background: var(--jv-chip-1); }
-.jvp-card-ic--2 { background: var(--jv-chip-2); }
-.jvp-card-ic--3 { background: var(--jv-chip-3); }
-.jvp-card-txt { min-width: 0; overflow-wrap: anywhere; }
-.jvp-card-t { display: block; font-size: 13.5px; font-weight: 600; color: var(--jv-ink); }
-.jvp-card-p { display: block; font-size: 12.5px; color: var(--jv-ink-2); margin-top: 2px; line-height: 1.4; }
+.jvp-card-ic svg {
+	width: 16px;
+	height: 16px;
+}
+.jvp-card-ic--0 {
+	background: var(--jv-chip-0);
+}
+.jvp-card-ic--1 {
+	background: var(--jv-chip-1);
+}
+.jvp-card-ic--2 {
+	background: var(--jv-chip-2);
+}
+.jvp-card-ic--3 {
+	background: var(--jv-chip-3);
+}
+.jvp-card-txt {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.jvp-card-t {
+	display: block;
+	font-size: 13.5px;
+	font-weight: 600;
+	color: var(--jv-ink);
+}
+.jvp-card-p {
+	display: block;
+	font-size: 12.5px;
+	color: var(--jv-ink-2);
+	margin-top: 2px;
+	line-height: 1.4;
+}
 
 /* ---- messages ---- */
-.jvp-msgs { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.jvp-row { display: flex; gap: 9px; align-items: flex-start; min-width: 0; }
-.jvp-row--user { justify-content: flex-end; }
+.jvp-msgs {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	min-width: 0;
+}
+.jvp-row {
+	display: flex;
+	gap: 9px;
+	align-items: flex-start;
+	min-width: 0;
+}
+.jvp-row--user {
+	justify-content: flex-end;
+}
 .jvp-m-avatar {
 	width: 27px;
 	height: 27px;
@@ -925,7 +1209,10 @@ defineExpose({ load, startNewChat, convId });
 	place-items: center;
 	margin-top: 2px;
 }
-.jvp-m-avatar svg { width: 15px; height: 15px; }
+.jvp-m-avatar svg {
+	width: 15px;
+	height: 15px;
+}
 .jvp-m-user {
 	max-width: 270px;
 	background: var(--jv-grad);
@@ -953,22 +1240,45 @@ defineExpose({ load, startNewChat, convId });
 
 /* ---- rendered markdown inside an assistant bubble ----
    :deep because the HTML comes from v-html and carries no scope id. */
-.jv-md :deep(.jv-md-p) { margin: 0 0 8px; }
-.jv-md :deep(.jv-md-p:last-child) { margin-bottom: 0; }
+.jv-md :deep(.jv-md-p) {
+	margin: 0 0 8px;
+}
+.jv-md :deep(.jv-md-p:last-child) {
+	margin-bottom: 0;
+}
 .jv-md :deep(.jv-md-h) {
 	margin: 12px 0 6px;
 	font-size: 14px;
 	font-weight: 600;
 	color: var(--jv-ink);
 }
-.jv-md :deep(.jv-md-h:first-child) { margin-top: 0; }
-.jv-md :deep(.jv-md-list) { margin: 0 0 8px; padding-left: 18px; }
-.jv-md :deep(.jv-md-list:last-child) { margin-bottom: 0; }
-.jv-md :deep(.jv-md-list li) { margin: 3px 0; }
-.jv-md :deep(.jv-md-list li::marker) { color: var(--jv-ink-3); }
-.jv-md :deep(strong) { font-weight: 600; color: var(--jv-ink); }
-.jv-md :deep(.jv-md-link) { color: var(--jv-accent); text-decoration: none; }
-.jv-md :deep(.jv-md-link:hover) { text-decoration: underline; }
+.jv-md :deep(.jv-md-h:first-child) {
+	margin-top: 0;
+}
+.jv-md :deep(.jv-md-list) {
+	margin: 0 0 8px;
+	padding-left: 18px;
+}
+.jv-md :deep(.jv-md-list:last-child) {
+	margin-bottom: 0;
+}
+.jv-md :deep(.jv-md-list li) {
+	margin: 3px 0;
+}
+.jv-md :deep(.jv-md-list li::marker) {
+	color: var(--jv-ink-3);
+}
+.jv-md :deep(strong) {
+	font-weight: 600;
+	color: var(--jv-ink);
+}
+.jv-md :deep(.jv-md-link) {
+	color: var(--jv-accent);
+	text-decoration: none;
+}
+.jv-md :deep(.jv-md-link:hover) {
+	text-decoration: underline;
+}
 .jv-md :deep(.jv-md-code) {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 12px;
@@ -1020,7 +1330,9 @@ defineExpose({ load, startNewChat, convId });
 	background: var(--jv-chip-0);
 	font-size: 11.5px;
 }
-.jv-md :deep(.jv-md-table tr:last-child td) { border-bottom: none; }
+.jv-md :deep(.jv-md-table tr:last-child td) {
+	border-bottom: none;
+}
 .jv-md :deep(.jv-md-table td[align="right"]),
 .jv-md :deep(.jv-md-table th[align="right"]) {
 	text-align: right;
@@ -1038,26 +1350,71 @@ defineExpose({ load, startNewChat, convId });
 	padding: 11px 13px;
 	color: var(--jv-ink-2);
 }
-.jvp-think-dots { display: inline-flex; align-items: flex-end; gap: 3px; height: 10px; }
-.jvp-think-dots i { width: 5px; height: 5px; border-radius: 999px; background: var(--jv-accent); opacity: 0.35; }
+.jvp-think-dots {
+	display: inline-flex;
+	align-items: flex-end;
+	gap: 3px;
+	height: 10px;
+}
+.jvp-think-dots i {
+	width: 5px;
+	height: 5px;
+	border-radius: 999px;
+	background: var(--jv-accent);
+	opacity: 0.35;
+}
 @media (prefers-reduced-motion: no-preference) {
-	.jvp-think-dots i { animation: jvp-dot 1.2s infinite ease-in-out; }
-	.jvp-think-dots i:nth-child(2) { animation-delay: 0.15s; }
-	.jvp-think-dots i:nth-child(3) { animation-delay: 0.3s; }
+	.jvp-think-dots i {
+		animation: jvp-dot 1.2s infinite ease-in-out;
+	}
+	.jvp-think-dots i:nth-child(2) {
+		animation-delay: 0.15s;
+	}
+	.jvp-think-dots i:nth-child(3) {
+		animation-delay: 0.3s;
+	}
 }
 @keyframes jvp-dot {
-	0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
-	40% { transform: translateY(-5px); opacity: 1; }
+	0%,
+	80%,
+	100% {
+		transform: translateY(0);
+		opacity: 0.35;
+	}
+	40% {
+		transform: translateY(-5px);
+		opacity: 1;
+	}
 }
 
 /* ---- pending write confirmation ---- */
-.jvp-pending { flex: none; border-top: 1px solid var(--jv-rule); padding: 11px 15px; }
-.jvp-pending-row { display: flex; flex-direction: column; gap: 9px; }
-.jvp-pending-txt { font-size: 13px; line-height: 1.45; color: var(--jv-ink); }
-.jvp-pending-acts { display: flex; gap: 8px; justify-content: flex-end; }
+.jvp-pending {
+	flex: none;
+	border-top: 1px solid var(--jv-rule);
+	padding: 11px 15px;
+}
+.jvp-pending-row {
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+}
+.jvp-pending-txt {
+	font-size: 13px;
+	line-height: 1.45;
+	color: var(--jv-ink);
+}
+.jvp-pending-acts {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+}
 
 /* ---- composer ---- */
-.jvp-foot { flex: none; padding: 12px 15px 14px; border-top: 1px solid var(--jv-rule); }
+.jvp-foot {
+	flex: none;
+	padding: 12px 15px 14px;
+	border-top: 1px solid var(--jv-rule);
+}
 .jvp-comp {
 	display: flex;
 	align-items: flex-end;
@@ -1068,7 +1425,8 @@ defineExpose({ load, startNewChat, convId });
 	background: var(--jv-comp-bg);
 	transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.jvp-comp--focus, .jvp-comp:focus-within {
+.jvp-comp--focus,
+.jvp-comp:focus-within {
 	border-color: var(--jv-accent);
 	box-shadow: 0 0 0 3px rgba(106, 86, 232, 0.12);
 }
@@ -1086,7 +1444,9 @@ defineExpose({ load, startNewChat, convId });
 	max-height: 120px;
 	outline: none;
 }
-.jvp-comp-text::placeholder { color: var(--jv-ink-3); }
+.jvp-comp-text::placeholder {
+	color: var(--jv-ink-3);
+}
 .jvp-send {
 	width: 33px;
 	height: 33px;
@@ -1099,15 +1459,38 @@ defineExpose({ load, startNewChat, convId });
 	cursor: pointer;
 	transition: opacity 0.12s ease;
 }
-.jvp-send svg { width: 17px; height: 17px; }
-.jvp-send:hover { opacity: 0.9; }
-.jvp-send:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 2px; }
-.jvp-send[disabled] { background: var(--jv-chip-0); cursor: not-allowed; }
-.jvp-send[disabled] svg { stroke: var(--jv-ink-3); }
-.jvp-send--stop { background: var(--jv-chip-0); color: var(--jv-ink); }
-.jvp-send--stop svg { stroke: currentColor; }
+.jvp-send svg {
+	width: 17px;
+	height: 17px;
+}
+.jvp-send:hover {
+	opacity: 0.9;
+}
+.jvp-send:focus-visible {
+	outline: 2px solid var(--jv-accent);
+	outline-offset: 2px;
+}
+.jvp-send[disabled] {
+	background: var(--jv-chip-0);
+	cursor: not-allowed;
+}
+.jvp-send[disabled] svg {
+	stroke: var(--jv-ink-3);
+}
+.jvp-send--stop {
+	background: var(--jv-chip-0);
+	color: var(--jv-ink);
+}
+.jvp-send--stop svg {
+	stroke: currentColor;
+}
 /* attachments + inline composer buttons */
-.jvp-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.jvp-atts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 8px;
+}
 .jvp-att {
 	display: inline-flex;
 	align-items: center;
@@ -1120,43 +1503,118 @@ defineExpose({ load, startNewChat, convId });
 	color: var(--jv-ink-2);
 	background: var(--jv-chip-0);
 }
-.jvp-att svg { width: 13px; height: 13px; flex: none; }
-.jvp-att-n { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jvp-att-x {
-	width: 18px; height: 18px; flex: none; border: none; background: transparent;
-	color: var(--jv-ink-2); cursor: pointer; display: grid; place-items: center; border-radius: 5px;
+.jvp-att svg {
+	width: 13px;
+	height: 13px;
+	flex: none;
 }
-.jvp-att-x:hover { color: var(--jv-ink); }
-.jvp-att-x svg { width: 12px; height: 12px; }
+.jvp-att-n {
+	max-width: 150px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.jvp-att-x {
+	width: 18px;
+	height: 18px;
+	flex: none;
+	border: none;
+	background: transparent;
+	color: var(--jv-ink-2);
+	cursor: pointer;
+	display: grid;
+	place-items: center;
+	border-radius: 5px;
+}
+.jvp-att-x:hover {
+	color: var(--jv-ink);
+}
+.jvp-att-x svg {
+	width: 12px;
+	height: 12px;
+}
 
 .jvp-cib {
-	width: 29px; height: 29px; flex: 0 0 auto; align-self: flex-end;
-	border: none; background: transparent; border-radius: 8px;
-	color: var(--jv-ink-2); cursor: pointer; display: grid; place-items: center;
+	width: 29px;
+	height: 29px;
+	flex: 0 0 auto;
+	align-self: flex-end;
+	border: none;
+	background: transparent;
+	border-radius: 8px;
+	color: var(--jv-ink-2);
+	cursor: pointer;
+	display: grid;
+	place-items: center;
 	transition: background-color 0.12s ease, color 0.12s ease;
 }
-.jvp-cib:hover:not([disabled]) { background: var(--jv-chip-0); color: var(--jv-ink); }
-.jvp-cib:focus-visible { outline: 2px solid var(--jv-accent); outline-offset: 1px; }
-.jvp-cib[disabled] { opacity: 0.5; cursor: not-allowed; }
-.jvp-cib svg { width: 17px; height: 17px; }
-.jvp-cib--rec { color: var(--jv-accent); }
-.jvp-comp--rec { border-color: var(--jv-accent); }
+.jvp-cib:hover:not([disabled]) {
+	background: var(--jv-chip-0);
+	color: var(--jv-ink);
+}
+.jvp-cib:focus-visible {
+	outline: 2px solid var(--jv-accent);
+	outline-offset: 1px;
+}
+.jvp-cib[disabled] {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+.jvp-cib svg {
+	width: 17px;
+	height: 17px;
+}
+.jvp-cib--rec {
+	color: var(--jv-accent);
+}
+.jvp-comp--rec {
+	border-color: var(--jv-accent);
+}
 
 /* live level bars while recording */
-.jvp-wave { display: inline-flex; align-items: center; gap: 2px; height: 15px; }
-.jvp-wave i { width: 2.5px; height: 100%; border-radius: 2px; background: var(--jv-accent); transform: scaleY(0.3); }
+.jvp-wave {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	height: 15px;
+}
+.jvp-wave i {
+	width: 2.5px;
+	height: 100%;
+	border-radius: 2px;
+	background: var(--jv-accent);
+	transform: scaleY(0.3);
+}
 @media (prefers-reduced-motion: no-preference) {
-	.jvp-wave i { animation: jvp-wave 0.9s infinite ease-in-out; }
-	.jvp-wave i:nth-child(2) { animation-delay: 0.15s; }
-	.jvp-wave i:nth-child(3) { animation-delay: 0.3s; }
-	.jvp-wave i:nth-child(4) { animation-delay: 0.45s; }
+	.jvp-wave i {
+		animation: jvp-wave 0.9s infinite ease-in-out;
+	}
+	.jvp-wave i:nth-child(2) {
+		animation-delay: 0.15s;
+	}
+	.jvp-wave i:nth-child(3) {
+		animation-delay: 0.3s;
+	}
+	.jvp-wave i:nth-child(4) {
+		animation-delay: 0.45s;
+	}
 }
 @keyframes jvp-wave {
-	0%, 100% { transform: scaleY(0.3); }
-	50% { transform: scaleY(1); }
+	0%,
+	100% {
+		transform: scaleY(0.3);
+	}
+	50% {
+		transform: scaleY(1);
+	}
 }
 
-.jvp-foot-note { text-align: center; font-size: 11px; color: var(--jv-ink-3); margin-top: 8px; }
+.jvp-foot-note {
+	text-align: center;
+	font-size: 11px;
+	color: var(--jv-ink-3);
+	margin-top: 8px;
+}
 
 /* ---- buttons ---- */
 .jvp-btn-subtle {
@@ -1170,7 +1628,9 @@ defineExpose({ load, startNewChat, convId });
 	font-size: 13px;
 	cursor: pointer;
 }
-.jvp-btn-subtle:hover { background: var(--jv-chip-0); }
+.jvp-btn-subtle:hover {
+	background: var(--jv-chip-0);
+}
 .jvp-btn-solid {
 	height: 29px;
 	padding: 0 13px;
@@ -1183,5 +1643,8 @@ defineExpose({ load, startNewChat, convId });
 	font-weight: 600;
 	cursor: pointer;
 }
-.jvp-btn-solid[disabled] { opacity: 0.6; cursor: not-allowed; }
+.jvp-btn-solid[disabled] {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
 </style>

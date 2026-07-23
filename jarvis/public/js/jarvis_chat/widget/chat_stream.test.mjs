@@ -64,20 +64,36 @@ test("run:start opens a live turn and clears busy", () => {
 });
 
 test("assistant:delta ASSIGNS cumulative text, never appends", () => {
-  let s = applyEvent(emptyStream(), { kind: "run:start", run_id: "r1", message_id: "m1" });
+  let s = applyEvent(emptyStream(), {
+    kind: "run:start",
+    run_id: "r1",
+    message_id: "m1",
+  });
   s = applyEvent(s, { kind: "assistant:delta", run_id: "r1", text: "Hello" });
-  s = applyEvent(s, { kind: "assistant:delta", run_id: "r1", text: "Hello there" });
+  s = applyEvent(s, {
+    kind: "assistant:delta",
+    run_id: "r1",
+    text: "Hello there",
+  });
   assert.equal(s.live.text, "Hello there");
 });
 
 test("assistant:delta with no prior run:start still opens a live turn", () => {
-  const s = applyEvent(emptyStream(), { kind: "assistant:delta", run_id: "r1", text: "Hi" });
+  const s = applyEvent(emptyStream(), {
+    kind: "assistant:delta",
+    run_id: "r1",
+    text: "Hi",
+  });
   assert.equal(s.live.text, "Hi");
   assert.equal(s.live.runId, "r1");
 });
 
 test("assistant:delta keeps a known message id when a later frame omits it", () => {
-  let s = applyEvent(emptyStream(), { kind: "run:start", run_id: "r1", message_id: "m1" });
+  let s = applyEvent(emptyStream(), {
+    kind: "run:start",
+    run_id: "r1",
+    message_id: "m1",
+  });
   s = applyEvent(s, { kind: "assistant:delta", run_id: "r1", text: "a" });
   assert.equal(s.live.messageId, "m1");
 });
@@ -91,7 +107,10 @@ test("run:end clears live and asks for a reload", () => {
 });
 
 test("run:error surfaces the message and reloads", () => {
-  const s = applyEvent(emptyStream(), { kind: "run:error", error: "The agent is unreachable." });
+  const s = applyEvent(emptyStream(), {
+    kind: "run:error",
+    error: "The agent is unreachable.",
+  });
   assert.equal(s.error, "The agent is unreachable.");
   assert.equal(s.live, null);
   assert.equal(s.busy, false);
@@ -117,16 +136,27 @@ test("action:pending queues a confirmation, ignoring duplicate tokens", () => {
     summary: "Create ToDo",
   });
   assert.equal(s.pending.length, 1);
-  assert.deepEqual(s.pending[0], { token: "t1", tool: "create_doc", summary: "Create ToDo" });
+  assert.deepEqual(s.pending[0], {
+    token: "t1",
+    tool: "create_doc",
+    summary: "Create ToDo",
+  });
 });
 
 test("action:pending without a token is ignored", () => {
-  const s = applyEvent(emptyStream(), { kind: "action:pending", summary: "no token" });
+  const s = applyEvent(emptyStream(), {
+    kind: "action:pending",
+    summary: "no token",
+  });
   assert.deepEqual(s.pending, []);
 });
 
 test("action:pending queues distinct tokens in arrival order", () => {
-  let s = applyEvent(emptyStream(), { kind: "action:pending", token: "t1", summary: "first" });
+  let s = applyEvent(emptyStream(), {
+    kind: "action:pending",
+    token: "t1",
+    summary: "first",
+  });
   s = applyEvent(s, { kind: "action:pending", token: "t2", summary: "second" });
   assert.deepEqual(
     s.pending.map((p) => p.token),
@@ -135,7 +165,11 @@ test("action:pending queues distinct tokens in arrival order", () => {
 });
 
 test("action:resolved drops the token", () => {
-  let s = applyEvent(emptyStream(), { kind: "action:pending", token: "t1", summary: "x" });
+  let s = applyEvent(emptyStream(), {
+    kind: "action:pending",
+    token: "t1",
+    summary: "x",
+  });
   s = applyEvent(s, { kind: "action:resolved", token: "t1" });
   assert.deepEqual(s.pending, []);
 });
@@ -163,13 +197,21 @@ test("applyEvent does not mutate the input state", () => {
   applyEvent(before, { kind: "run:start", run_id: "r1" });
   assert.equal(before.live, null);
 
-  const withPending = applyEvent(before, { kind: "action:pending", token: "t1", summary: "x" });
+  const withPending = applyEvent(before, {
+    kind: "action:pending",
+    token: "t1",
+    summary: "x",
+  });
   applyEvent(withPending, { kind: "action:resolved", token: "t1" });
   assert.equal(withPending.pending.length, 1);
 });
 
 test("live text survives an unrelated event", () => {
-  let s = applyEvent(emptyStream(), { kind: "assistant:delta", run_id: "r1", text: "partial" });
+  let s = applyEvent(emptyStream(), {
+    kind: "assistant:delta",
+    run_id: "r1",
+    text: "partial",
+  });
   s = applyEvent(s, { kind: "action:pending", token: "t1", summary: "x" });
   assert.equal(s.live.text, "partial");
 });
