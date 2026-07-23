@@ -2180,7 +2180,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function bindBilling() {
 		$body
-			.find("#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth, #ja-cta-downgrade, #ja-cta-keep")
+			.find(
+				"#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth, #ja-cta-downgrade, #ja-cta-keep"
+			)
 			.on("click", function () {
 				const action = $(this).data("action");
 				if (action === "upgrade") return openUpgradeModal();
@@ -2212,7 +2214,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			})
 			.catch((e) => {
 				setBusy("#ja-cta-keep", false);
-				$body.find("#ja-billing-err").text(e.message || "Couldn't cancel the plan switch.");
+				$body
+					.find("#ja-billing-err")
+					.text(e.message || "Couldn't cancel the plan switch.");
 			});
 	}
 
@@ -2245,9 +2249,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				<div class="ja-dn-price">${inr(p.price_inr)}<span class="jo-plan-cycle">${cycleLabel(
 					p.billing_cycle
 				)}</span></div>
-				<button class="ja-btn ja-btn-ghost ja-dn-pick" data-plan="${esc(
-					p.name
-				)}">Switch</button>
+				<button class="ja-btn ja-btn-ghost ja-dn-pick" data-plan="${esc(p.name)}">Switch</button>
 			</div>`;
 			})
 			.join("");
