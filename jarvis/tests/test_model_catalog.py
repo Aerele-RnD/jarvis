@@ -30,10 +30,23 @@ _PAYLOAD = [
 ]
 
 
+def _clear_model_catalog_cache():
+	"""Drop both Redis keys get_model_catalog uses.
+
+	Must run in tearDown as well as setUp. These are keys in the REAL per-site
+	cache, and the success key has a 6 hour TTL, so a test that leaves the fake
+	_PAYLOAD cached hands it to any later test (in this file or another module in
+	the same worker) that calls get_model_catalog without mocking. Clearing only
+	on the way in protects this class and poisons everyone after it.
+	"""
+	frappe.cache().delete_value(admin_client._MODEL_CATALOG_CACHE_KEY)
+	frappe.cache().delete_value(admin_client._MODEL_CATALOG_FAIL_KEY)
+
+
 class TestGetModelCatalog(FrappeTestCase):
 	def setUp(self):
-		frappe.cache().delete_value(admin_client._MODEL_CATALOG_CACHE_KEY)
-		frappe.cache().delete_value(admin_client._MODEL_CATALOG_FAIL_KEY)
+		_clear_model_catalog_cache()
+		self.addCleanup(_clear_model_catalog_cache)
 
 	def test_fetches_and_caches_admin_catalog(self):
 		with patch.object(admin_client, "_post_guest", return_value=_PAYLOAD) as gp:
@@ -117,3 +130,50 @@ class TestBundledCatalogMirrorsAdminSeed(FrappeTestCase):
 		g = next(p for p in BUNDLED_MODEL_CATALOG if p["provider_id"] == "google")
 		subs = [m["model_id"] for m in g["models"] if m["tier"] == "subscription"]
 		self.assertEqual(subs, ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"])
+
+
+class TestGetModelCatalogNeverRaises(FrappeTestCase):
+	"""The chat hot path (send_message) assumes this cannot raise."""
+
+	def setUp(self):
+		_clear_model_catalog_cache()
+		self.addCleanup(_clear_model_catalog_cache)
+
+	def test_a_redis_read_failure_degrades_instead_of_raising(self):
+		# The cache calls sit outside the inner try. Before this was guarded, a
+		# transient Redis blip during a cache READ propagated out of
+		# get_model_catalog into send_message, turning a hiccup into a 500 on
+		# every chat send.
+		#
+		# Patching frappe.cache also breaks anything else that touches the cache,
+		# which is the point: the guard must survive an unhealthy cache. It is
+		# also why the guard logs via frappe.logger() and not frappe.log_error --
+		# the latter writes an Error Log DOCUMENT and would raise from inside the
+		# handler here, defeating the guard entirely. This test caught exactly
+		# that.
+		from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
+
+		class _BoomCache:
+			def get_value(self, *a, **k):
+				raise ConnectionError("redis gone")
+
+			def set_value(self, *a, **k):
+				raise ConnectionError("redis gone")
+
+		with patch.object(admin_client.frappe, "cache", return_value=_BoomCache()):
+			out = admin_client.get_model_catalog()
+		self.assertEqual(out, BUNDLED_MODEL_CATALOG)
+
+	def test_a_redis_write_failure_still_returns_the_payload_or_bundle(self):
+		class _ReadOnlyCache:
+			def get_value(self, *a, **k):
+				return None
+
+			def set_value(self, *a, **k):
+				raise ConnectionError("redis read-only")
+
+		with patch.object(admin_client.frappe, "cache", return_value=_ReadOnlyCache()):
+			with patch.object(admin_client, "_post_guest", return_value=_PAYLOAD):
+				out = admin_client.get_model_catalog()
+		# The write failed, but the caller still gets a usable catalog.
+		self.assertTrue(isinstance(out, list) and out)

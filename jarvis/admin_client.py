@@ -270,8 +270,33 @@ _MODEL_CATALOG_TIMEOUT_S = 5
 
 def get_model_catalog() -> list:
 	"""Fetch the provider + model catalog from admin (guest-safe), cache it, and
-	fall back to the bundled default so the picker never hard-fails. Never raises,
-	and never blocks a chat turn for more than _MODEL_CATALOG_TIMEOUT_S."""
+	fall back to the bundled default so the picker never hard-fails.
+
+	NEVER raises, and never blocks a chat turn for more than
+	_MODEL_CATALOG_TIMEOUT_S. Callers on the chat hot path rely on both.
+	"""
+	from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
+
+	try:
+		return _fetch_model_catalog()
+	except Exception as e:
+		# The whole body is guarded, not just the HTTP call: the Redis
+		# get_value/set_value calls can raise too (a connection blip during a
+		# cache read), and this runs inside send_message. An unguarded cache
+		# error would turn a transient Redis hiccup into a 500 on every chat
+		# send, which is precisely the failure this function exists to avoid.
+		#
+		# frappe.logger(), NOT frappe.log_error: log_error writes an Error Log
+		# DOCUMENT, so it needs the DB (and the cache) to be healthy. This is the
+		# last-resort guard, reached exactly when infrastructure is unhealthy, so
+		# logging through it would raise from the handler and defeat the guard.
+		frappe.logger().warning("get_model_catalog degraded to the bundled catalog: %s", e)
+		return BUNDLED_MODEL_CATALOG
+
+
+def _fetch_model_catalog() -> list:
+	"""Cache-then-network body of get_model_catalog. May raise; the caller
+	converts any failure into the bundled fallback."""
 	from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
 
 	cache = frappe.cache()
@@ -293,14 +318,19 @@ def get_model_catalog() -> list:
 		# jarvis_admin_url raises requests.MissingSchema, which _do_post does not
 		# convert. Same reasoning as get_preset_catalog.
 		cache.set_value(_MODEL_CATALOG_FAIL_KEY, 1, expires_in_sec=_MODEL_CATALOG_FAIL_TTL_S)
-		frappe.log_error(title="get_model_catalog fell back to bundled")
+		frappe.log_error(title="get_model_catalog: admin unreachable")
 		return BUNDLED_MODEL_CATALOG
 	if isinstance(catalog, dict):
 		catalog = catalog.get("data") or []
 	if isinstance(catalog, list) and catalog:
 		cache.set_value(_MODEL_CATALOG_CACHE_KEY, catalog, expires_in_sec=_MODEL_CATALOG_TTL_S)
 		return catalog
+	# Admin answered but served nothing. Distinct from unreachable: log it
+	# separately so "admin is down" and "admin says zero enabled providers" are
+	# tellable apart in the logs. Still falls back, since an empty picker is
+	# worse for the customer than a slightly stale one.
 	cache.set_value(_MODEL_CATALOG_FAIL_KEY, 1, expires_in_sec=_MODEL_CATALOG_FAIL_TTL_S)
+	frappe.log_error(title="get_model_catalog: admin returned an empty catalog")
 	return BUNDLED_MODEL_CATALOG
 
 
