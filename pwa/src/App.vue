@@ -33,6 +33,13 @@ function notify(title, body, conversationId) {
 	}
 }
 
+// The conversation on screen right now, or "" everywhere else — /c/:id is the
+// only route that shows one.
+function openConversationId() {
+	const r = router.currentRoute.value;
+	return r.name === "Chat" ? String(r.params.id || "") : "";
+}
+
 // Chat-list-level realtime. The per-message stream is handled inside ChatView;
 // these kinds have to land even when the user is NOT in that chat, so they live
 // at the shell: a chat titles itself after its first turn, Jarvis can open a
@@ -47,9 +54,16 @@ function onEvent(p) {
 		store.applyRename(p.conversation_id, p.title);
 	} else if (p.kind === "conversation:new") {
 		store.loadConversations();
-	} else if (p.kind === "run:end" && !p.stopped && prefs.notifyDone) {
-		const title = store.conversations.find((c) => c.name === conv)?.title || "Jarvis";
-		notify("Jarvis finished", title, conv);
+	} else if (p.kind === "run:end" && !p.stopped) {
+		// A reply the user hasn't seen. Not gated on notifyDone: the dot is the
+		// quiet in-app signal, and someone who turned notifications off still
+		// wants to know which chat moved. Skip the chat that's already open —
+		// they're watching it arrive.
+		if (conv && conv !== openConversationId()) store.markUnread(conv);
+		if (prefs.notifyDone) {
+			const title = store.conversations.find((c) => c.name === conv)?.title || "Jarvis";
+			notify("Jarvis finished", title, conv);
+		}
 	} else if (p.kind === "action:pending" && prefs.notifyDecision) {
 		notify(
 			"Jarvis needs your approval",

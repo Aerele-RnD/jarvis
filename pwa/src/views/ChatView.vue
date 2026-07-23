@@ -476,6 +476,7 @@ watch(
 	() => props.id,
 	(id) => {
 		convId.value = id === "new" ? "" : id;
+		store.clearUnread(convId.value);
 		messages.value = [];
 		conversation.value = null;
 		pending.value = [];
@@ -490,6 +491,8 @@ watch(
 onMounted(async () => {
 	socket?.on("jarvis:event", onEvent);
 	window.addEventListener("jv:resync", onResync);
+	// Opening the chat IS reading it — drop the list's dot straight away.
+	store.clearUnread(convId.value);
 	if (!store.loaded) store.loadConversations();
 	load(true);
 	loadPending();

@@ -25,6 +25,8 @@ const rows = computed(() => {
 	return [...list].sort((a, b) => (b.starred || 0) - (a.starred || 0));
 });
 
+const isUnread = (c) => store.unread.has(c.name);
+
 // `last_active_at` — NOT `modified`. list_conversations doesn't return
 // `modified`, so reading it (as this screen used to) printed an empty timestamp
 // under every single chat.
@@ -124,6 +126,14 @@ onMounted(() => {
 						</div>
 						<div class="jv-row-time">{{ subtitle(c) }}</div>
 					</div>
+					<!-- Reserved lane, empty on read rows: the chevron must not shift
+					     column when a neighbour gains a dot. -->
+					<span
+						class="jv-row-dot"
+						:class="{ 'is-unread': isUnread(c) }"
+						:role="isUnread(c) ? 'img' : undefined"
+						:aria-label="isUnread(c) ? 'New reply' : undefined"
+					/>
 					<svg
 						class="jv-row-chev"
 						viewBox="0 0 24 24"
@@ -213,6 +223,19 @@ onMounted(() => {
 	margin-top: 3px;
 	font-size: 12px;
 	color: var(--ink5);
+}
+/* Unread marker. The lane is always present so the chevron holds its column;
+   only the fill appears. Solid accent, no pulse: a pulse reads as "working",
+   and this reply already finished. */
+.jv-row-dot {
+	width: 8px;
+	height: 8px;
+	flex: none;
+	border-radius: 50%;
+	background: transparent;
+}
+.jv-row-dot.is-unread {
+	background: var(--accent-solid);
 }
 .jv-row-chev {
 	width: 16px;
