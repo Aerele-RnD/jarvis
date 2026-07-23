@@ -3,30 +3,39 @@
 The chat dispatch path has THREE independent per-site controls:
 
   * ``jarvis_phase0_admission_enabled`` — Phase-0 durable admission (WP-0);
-  * ``jarvis_pump_enabled`` — the Relay Pump: unset/falsy = off, truthy = ACTIVE
-    (the pump owns new-turn dispatch), the sentinel ``'draining'`` = no NEW pump
-    admissions while the pump drains its existing Turn rows.
+  * ``jarvis_pump_enabled`` — the Relay Pump, Jarvis's DEFAULT managed transport:
+    UNSET / any truthy = ON (the pump owns new-turn dispatch), an EXPLICIT falsy
+    value (0 / "0" / false) = OFF / INERT (the kill switch — byte-identical legacy),
+    the sentinel ``'draining'`` = no NEW pump admissions while the pump drains its
+    existing Turn rows.
 
 This suite drives the SAME send scenario (one user message on a conversation,
 routed exactly as the api callers route it — ``turn_machine_enabled()`` →
 ``accept_or_queue`` else legacy ``_dispatch_turn``) through each cell of the
 matrix and asserts the cell-appropriate behaviour end to end:
 
-  (a) both OFF            -> pure legacy (no Turn row, byte-identical dispatch);
-  (b) admission ON only   -> Phase-0 exactly (admit CAS + legacy worker dispatch);
-  (c) pump ON             -> the full machine (queued -> ... -> done), with the
-                             admission semantics enforced INSIDE the machine;
-  (d) pump 'draining'     -> NEW turns route pure-legacy (no Turn row), the
-                             draining pump's in-flight Turn rows still complete,
-                             and Phase-0 promote/sweep step back (dual signal);
-  (e) pump ON -> OFF flip  -> an in-flight pump turn is NOT stranded: the pump
-                             watchdog + reconcile/settlement/finalize (all
-                             flag-agnostic) drive it to ``done``.
+  (a) ABSENT (default)      -> PUMP mode owns dispatch (the default-ON cell): a
+                               managed bench with the flag unset routes through the
+                               pump — proven against the REAL flag readers;
+  (b) EXPLICIT pump=0       -> inert / byte-identical legacy (the kill-switch
+                               differential): the REAL reader reports the pump off,
+                               ensure_pump + the watchdog no-op, no pump-owned writes;
+  (c) admission ON + pump=0 -> Phase-0 exactly (admit CAS + legacy worker dispatch);
+  (d) pump ACTIVE           -> the full machine (queued -> ... -> done), with the
+                               admission semantics enforced INSIDE the machine;
+  (e) pump 'draining'       -> NEW turns route pure-legacy (no Turn row), the
+                               draining pump's in-flight Turn rows still complete,
+                               and Phase-0 promote/sweep step back (dual signal);
+  (f) rollback ladder       -> draining drains in-flight to ``done`` (no strand); a
+                               HARD flip to explicit pump=0 is INERT (why the ladder
+                               is mandatory — the OARF-1 gate now keys on explicit-0).
 
-Flags are patched at the flag-FUNCTION seam (never written to site config), so
-the matrix is deterministic and leaves no durable state. The transport is WP-1b's
-in-process double + the ``_FakeSess`` pool double (the pump machinery, every CAS,
-prepare/settlement/finalize are REAL); the legacy ``_dispatch_turn`` is a recorder.
+Most cells patch the flag-FUNCTION seam (deterministic, no durable state); the
+default (a) + explicit-off (b/c) cells instead set the REAL ``frappe.conf`` flag so
+they exercise the actual absent-vs-explicit-0 reader (the kill switch). The
+transport is WP-1b's in-process double + the ``_FakeSess`` pool double (the pump
+machinery, every CAS, prepare/settlement/finalize are REAL); the legacy
+``_dispatch_turn`` is a recorder.
 """
 
 from __future__ import annotations
@@ -68,6 +77,22 @@ class _FlagMatrixCase(_PipelineCase):
 			patch.object(admission, "relay_target_id", lambda conversation=None: self._target),
 			patch.object(pump, "ensure_pump", self._ensure_rec),
 			patch.object(pump, "lpush_wake", lambda *a, **k: None),
+		):
+			yield
+
+	@contextmanager
+	def _explicit_pump_off(self):
+		"""Set the REAL kill switch (``jarvis_pump_enabled=0``) + pin the shard target,
+		WITHOUT patching the flag functions — so ``pump_mode_active`` /
+		``pump_configured`` / ``pump_draining`` / ``ensure_pump`` / ``watchdog`` all
+		compute the explicit-off (inert) branch through the actual conf reader. This is
+		the differential that proves absent (the new default = ON) ≠ explicit-0 (the
+		kill switch). ``ensure_pump``/``lpush_wake`` are NOT stubbed: on the explicit-0
+		Phase-0 path ``accept_or_queue`` never calls them, and the tests assert the REAL
+		``ensure_pump`` no-op directly."""
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_pump_enabled": 0}),
+			patch.object(admission, "relay_target_id", lambda conversation=None: self._target),
 		):
 			yield
 
@@ -114,7 +139,46 @@ class _FlagMatrixCase(_PipelineCase):
 
 
 # --------------------------------------------------------------------------- #
-# (a) both OFF — pure legacy, no Turn row
+# (a) ABSENT (default) — the pump is the DEFAULT transport, so unset ⇒ PUMP mode
+# --------------------------------------------------------------------------- #
+
+
+class TestDefaultAbsentIsPump(_FlagMatrixCase):
+	def test_absent_flag_defaults_to_pump_mode(self):
+		"""Default-ON inversion (new default cell): with ``jarvis_pump_enabled`` ABSENT
+		(patterntest's real conf) on a managed bench, the Relay Pump is the DEFAULT
+		transport. The REAL flag readers (no function patch) report the pump ACTIVE +
+		configured (not draining), ``turn_machine_enabled`` picks the machine, and a new
+		send is pump-owned — left ``queued`` (the pump promotes later), NO Phase-0 admit
+		CAS, NO legacy dispatch."""
+		self.assertIsNone(frappe.conf.get("jarvis_pump_enabled"), "precondition: flag absent")
+		self.assertTrue(admission.admission_enabled(), "precondition: admission on (patterntest)")
+		# Real readers: absent ⇒ ON on a managed bench (no function patch).
+		self.assertTrue(pump.pump_mode_active(), "absent ⇒ pump active (default-ON)")
+		self.assertTrue(pump.pump_configured(), "absent ⇒ pump configured (default-ON)")
+		self.assertFalse(pump.pump_draining(), "absent is NOT draining")
+		self.assertTrue(admission.turn_machine_enabled(), "absent ⇒ machine route (pump)")
+
+		conv = self._mk_conv()
+		rid = "fm_default"
+		# Keep the REAL readers; only pin the shard + stub the pump wake so the send is
+		# deterministic and enqueues no real hop.
+		with (
+			patch.object(admission, "relay_target_id", lambda conversation=None: self._target),
+			patch.object(pump, "ensure_pump", self._ensure_rec),
+			patch.object(pump, "lpush_wake", lambda *a, **k: None),
+		):
+			r = self._send(conv, rid)
+		self.assertEqual(r["route"], "machine")
+		self.assertTrue(r["res"].get("pump"), "absent flag ⇒ the pump branch owns dispatch")
+		self.assertEqual(self._state(rid), "queued", "pump-accept leaves the turn queued")
+		self.assertEqual(int(self._val(rid, "reserved")), 0, "no admit CAS on the pump path")
+		self.assertEqual(r["legacy"].count, 0, "the pump path NEVER calls the legacy dispatch")
+		self.assertGreaterEqual(self._ensure_rec.count, 1, "accept woke the pump (§8-E PRIMARY)")
+
+
+# --------------------------------------------------------------------------- #
+# fully-disabled config (pump OFF + admission OFF) — pure legacy, no Turn row
 # --------------------------------------------------------------------------- #
 
 
@@ -131,7 +195,7 @@ class TestBothOff(_FlagMatrixCase):
 
 
 # --------------------------------------------------------------------------- #
-# (b) admission ON, pump OFF — Phase 0 exactly
+# (b/c) EXPLICIT pump=0 + admission ON — the kill switch is inert = Phase 0 exactly
 # --------------------------------------------------------------------------- #
 
 
@@ -149,32 +213,51 @@ class TestAdmissionOnly(_FlagMatrixCase):
 		self.assertEqual(r["legacy"].count, 1, "Phase-0 dispatches via the LEGACY worker after commit")
 		self.assertEqual(int(self._val(rid, "reserved")), 1, "the dispatching row IS the reservation")
 
-	def test_watchdog_noop_with_phase0_rows_flag_off(self):
-		"""OARF-1 regression guard: on an admission-on / pump-OFF site (a shipped
-		Phase-0 mode) the pump watchdog is INERT even with live Phase-0 Turn rows —
-		it must NOT auto-start a pump hop over a Phase-0-owned row (dual-engine
-		ownership defeats the flag-off safety + rollback ladder). pump_configured()
-		reads the real conf (pump UNSET on patterntest) → the watchdog early-returns.
-		The symmetric positive case (pump configured) DOES revive the shard, proving
-		the gate is the only thing holding it back."""
+	def test_explicit_zero_kill_switch_inert_over_phase0_rows(self):
+		"""OARF-1 regression guard, re-based on the default-ON inversion (cells b/c):
+		an EXPLICIT ``jarvis_pump_enabled=0`` is the kill switch. Driven through the
+		REAL conf reader (NOT the function seam), the pump is inert on every predicate,
+		so an admission-on site is EXACTLY Phase-0 (admit CAS + legacy worker) and the
+		pump machinery writes nothing — ``ensure_pump`` no-ops (``not_configured``) and
+		the watchdog starts NO hop even over a live Phase-0 Turn row (dual-engine
+		ownership would defeat the kill switch + rollback ladder). ABSENCE is now the
+		DEFAULT (pump ON), so the off case MUST set the flag explicitly — the OARF-1
+		gate keys on explicit-0, not on absence. The symmetric positive case (pump
+		configured) DOES revive the shard, proving the gate is the only thing holding
+		it back."""
 		conv = self._mk_conv()
 		rid = "fm_b_wd"
-		with self._flags(pump_active=False, draining=False, admission_on=True, configured=False):
-			self._send(conv, rid)
-		self.assertEqual(self._state(rid), "dispatching", "a live Phase-0 Turn row exists")
+		with self._explicit_pump_off():
+			# Real readers: explicit-0 ⇒ inert on every predicate.
+			self.assertFalse(pump.pump_mode_active(), "explicit-0 ⇒ pump inactive")
+			self.assertFalse(pump.pump_configured(), "explicit-0 ⇒ pump NOT configured")
+			self.assertFalse(pump.pump_draining(), "explicit-0 is NOT draining")
+			# admission ON + pump explicit-0 ⇒ Phase-0 route (cell c).
+			self.assertTrue(admission.turn_machine_enabled(), "admission on + pump off ⇒ Phase-0")
+			r = self._send(conv, rid)
+			self.assertEqual(r["route"], "machine")
+			self.assertFalse(r["res"].get("pump"), "explicit-0: NOT the pump branch")
+			self.assertEqual(self._state(rid), "dispatching", "Phase-0 admit CAS queued->dispatching")
+			self.assertEqual(r["legacy"].count, 1, "Phase-0 dispatches via the LEGACY worker")
+			self.assertEqual(int(self._val(rid, "reserved")), 1, "the dispatching row IS the reservation")
 
-		# Flag OFF (real conf): the watchdog starts NO pump hop.
-		wd_off = pump.PumpDeps()
-		wd_off.enqueue_pump_job = _Recorder()
-		summary_off = pump.watchdog(deps=wd_off)
-		self.assertEqual(wd_off.enqueue_pump_job.count, 0, "flag-off watchdog enqueues NO hop")
-		self.assertEqual(summary_off["revived"], 0)
-		# The Phase-0 row is untouched by the (inert) watchdog.
-		self.assertEqual(self._state(rid), "dispatching")
+			# ensure_pump no-ops on the real explicit-0 reader (the kill switch).
+			self.assertEqual(
+				pump.ensure_pump(self._target),
+				{"enqueued": False, "reason": "not_configured"},
+				"explicit-0 ensure_pump is a total no-op",
+			)
+			# The watchdog starts NO hop even with the live Phase-0 dispatching row.
+			wd_off = pump.PumpDeps()
+			wd_off.enqueue_pump_job = _Recorder()
+			summary_off = pump.watchdog(deps=wd_off)
+			self.assertEqual(wd_off.enqueue_pump_job.count, 0, "explicit-0 watchdog enqueues NO hop")
+			self.assertEqual(summary_off["revived"], 0)
+			self.assertEqual(self._state(rid), "dispatching", "the Phase-0 row is untouched")
 
-		# Symmetric positive: configured -> the watchdog DOES revive live work.
-		# (No pump ever ran this test, so the shard control row's lease is vacant —
-		# ensure_pump takes the MariaDB revive path.)
+		# Symmetric positive: configured -> the watchdog DOES revive live work, proving
+		# the explicit-0 gate is the ONLY thing holding it back. (No pump ever ran this
+		# test, so the shard control row's lease is vacant — the MariaDB revive path.)
 		wd_on = pump.PumpDeps()
 		wd_on.enqueue_pump_job = _Recorder()
 		with patch.object(pump, "pump_configured", return_value=True):
@@ -373,10 +456,13 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 		self.assertEqual(self._state(rid), "done", "drained in-flight turn reached done — no strand")
 
 	def test_hard_flip_fully_off_watchdog_is_inert(self):
-		"""OARF-1: a HARD flip to fully-off (pump unset) makes the watchdog INERT —
-		it does NOT revive even an in-flight pump turn. This is why the rollback
-		ladder (enabled -> draining -> disabled) is mandatory: draining is what keeps
-		the no-strand guarantee, not fully-off."""
+		"""OARF-1: a HARD flip to fully-off makes the watchdog INERT — it does NOT
+		revive even an in-flight pump turn. Post default-ON inversion, "fully off" is
+		the EXPLICIT kill switch ``jarvis_pump_enabled=0`` (absence is now the DEFAULT =
+		ON), driven here through the REAL conf reader; the OARF-1 gate reads the SAME
+		explicit-0 rule the readers do. This is why the rollback ladder (enabled ->
+		draining -> disabled) is mandatory: draining is what keeps the no-strand
+		guarantee, not a hard flip to fully-off."""
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv)
 		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
@@ -407,10 +493,13 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 		frappe.db.commit()
 		pump._clear_lease_mirror(self._target)
 
-		# Fully OFF (real conf: pump unset) -> the watchdog early-returns; NO revive.
+		# Fully OFF via the EXPLICIT kill switch (real conf jarvis_pump_enabled=0) ->
+		# pump_configured() reads it and the watchdog early-returns; NO revive.
 		wd_deps = pump.PumpDeps()
 		wd_deps.enqueue_pump_job = _Recorder()
-		summary = pump.watchdog(deps=wd_deps)
-		self.assertEqual(wd_deps.enqueue_pump_job.count, 0, "fully-off watchdog starts NO hop")
+		with patch.dict(frappe.local.conf, {"jarvis_pump_enabled": 0}):
+			self.assertFalse(pump.pump_configured(), "explicit-0 ⇒ NOT configured (kill switch)")
+			summary = pump.watchdog(deps=wd_deps)
+		self.assertEqual(wd_deps.enqueue_pump_job.count, 0, "explicit-0 watchdog starts NO hop")
 		self.assertEqual(summary["revived"], 0)
 		self.assertEqual(self._state(rid), "terminal_observed", "the turn is left as-is (use the ladder)")

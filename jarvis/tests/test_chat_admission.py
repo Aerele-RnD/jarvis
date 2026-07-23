@@ -25,7 +25,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.chat import admission
+from jarvis.chat import admission, pump
 from jarvis.chat import api as chat_api
 
 CONV = "Jarvis Conversation"
@@ -92,9 +92,25 @@ class _AdmissionTestCase(FrappeTestCase):
 		self._flag_patch = patch.dict(frappe.local.conf, {admission.FLAG: 1})
 		self._flag_patch.start()
 		self.assertTrue(admission.admission_enabled())
+		# Pin the Relay Pump OFF at the FUNCTION seam for the whole Phase-0 suite. Since
+		# the default-ON pump inversion, an ABSENT `jarvis_pump_enabled` means the pump
+		# OWNS dispatch (accept_or_queue takes the pump branch — turns stay `queued`,
+		# promote/sweep step back), which would break these legacy-admission assertions.
+		# We patch the flag FUNCTIONS (module-level, so the value is visible in the
+		# worker THREADS the concurrency tests spawn — a patch.dict on the thread-local
+		# `frappe.local.conf` would not be), not the conf key.
+		self._pump_off_patches = [
+			patch.object(pump, "pump_mode_active", return_value=False),
+			patch.object(pump, "pump_configured", return_value=False),
+			patch.object(pump, "pump_draining", return_value=False),
+		]
+		for p in self._pump_off_patches:
+			p.start()
 		admission._ensure_control_row(admission.DEFAULT_RELAY_TARGET)
 
 	def tearDown(self):
+		for p in self._pump_off_patches:
+			p.stop()
 		self._flag_patch.stop()
 		_cleanup()
 		frappe.set_user(self._orig_user)

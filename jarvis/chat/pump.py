@@ -151,20 +151,56 @@ _sleep: Callable[[float], None] = time.sleep
 # Pump-mode routing flags (§10.9 — managed relay ONLY; self-host keeps legacy)
 # --------------------------------------------------------------------------- #
 #
-# Per-site flag `jarvis_pump_enabled` (frappe.conf): unset/falsy = off; a truthy
-# value = ON (the pump owns new-turn dispatch); the sentinel 'draining' = no NEW
-# pump admissions (new turns fall through to legacy) while the pump keeps draining
-# its existing Turn rows to terminal. Independent of `jarvis_phase0_admission_enabled`
+# The Relay Pump is Jarvis's DEFAULT managed transport, so the per-site flag
+# `jarvis_pump_enabled` (frappe.conf) reads ABSENCE as ON:
+#   * UNSET / None (the default) OR any truthy value  = ON — the pump owns new-turn
+#     dispatch. An under-provisioned site meets the pump BY DEFAULT (watch for the
+#     `provision_warning` telemetry / §8-I error log — see PUMP-RUNBOOK.md §6).
+#   * an EXPLICIT falsy value (0, "0", false, "off", "no", "")  = OFF / INERT — the
+#     kill switch: byte-identical legacy dispatch, and ensure_pump + the watchdog are
+#     a total no-op (OARF-1). ABSENCE is NEVER this opt-out.
+#   * the sentinel 'draining'  = no NEW pump admissions (new turns fall through to
+#     legacy) while the pump keeps draining its existing Turn rows to terminal.
+# All three predicates are ANDed with `not selfhost.is_self_hosted()` (§10.9 — the
+# default applies ONLY where the managed relay is the transport; self-host stays
+# legacy even with the flag unset). Independent of `jarvis_phase0_admission_enabled`
 # (pump ON implies admission semantics INSIDE the machine).
+#
+# `_pump_flag_explicit_off` is the ONE place the absent-vs-explicit-0 distinction is
+# decided, so every predicate below shares it verbatim — the kill switch means the
+# same thing to each (HARD invariant: absent and explicit-0 must never diverge in a
+# way that weakens the kill switch).
+
+# Explicit falsy conf values that DISABLE the pump (the kill switch). Note "0" is a
+# truthy Python string, so this set — not bare truthiness — is what makes a string
+# "0"/"false" count as off.
+_PUMP_EXPLICIT_OFF_VALUES = frozenset({"0", "false", "no", "off", ""})
+
+
+def _pump_flag_explicit_off(flag) -> bool:
+	"""True ONLY for an EXPLICIT falsy value of ``jarvis_pump_enabled`` (the kill
+	switch): ``0`` / ``"0"`` / ``False`` / ``"false"`` / ``"off"`` / ``"no"`` /
+	``""``. An ABSENT flag (``None``) is the managed DEFAULT (pump ON) and is NEVER
+	explicit-off — this is the ONE decision every predicate below shares verbatim."""
+	if flag is None:
+		return False
+	return str(flag).strip().lower() in _PUMP_EXPLICIT_OFF_VALUES
+
+
+def _pump_flag_draining(flag) -> bool:
+	"""True ONLY for the explicit ``'draining'`` sentinel (unaffected by default-ON)."""
+	return flag is not None and str(flag).strip().lower() == "draining"
 
 
 def pump_mode_active() -> bool:
 	"""True when the Relay Pump owns NEW turn dispatch on this bench: the per-site
-	``jarvis_pump_enabled`` flag is truthy AND not ``'draining'``, AND the transport
-	is managed relay (§10.9 — self-host turns keep the legacy worker-per-turn path
-	even when the flag is set). Cheap conf read + one selfhost check."""
+	``jarvis_pump_enabled`` flag is NOT an explicit-off kill switch AND not
+	``'draining'``, AND the transport is managed relay. The pump is the DEFAULT
+	transport, so an UNSET flag is ACTIVE — only an explicit ``0``/``false`` disables
+	it (§10.9 — self-host turns keep the legacy worker-per-turn path regardless).
+	Cheap conf read + one selfhost check."""
 	flag = frappe.conf.get("jarvis_pump_enabled")
-	if not flag or str(flag).strip().lower() == "draining":
+	if _pump_flag_explicit_off(flag) or _pump_flag_draining(flag):
 		return False
 	from jarvis import selfhost
 
@@ -174,9 +210,10 @@ def pump_mode_active() -> bool:
 def pump_draining() -> bool:
 	"""True when ``jarvis_pump_enabled == 'draining'`` on a managed bench: NO new
 	pump admissions (new turns fall through to the legacy path), while the pump keeps
-	draining its existing Turn-row turns to terminal (OAR-11 coexistence)."""
+	draining its existing Turn-row turns to terminal (OAR-11 coexistence). Draining is
+	ALWAYS an explicit sentinel, so the default-ON inversion does not touch it."""
 	flag = frappe.conf.get("jarvis_pump_enabled")
-	if not flag or str(flag).strip().lower() != "draining":
+	if not _pump_flag_draining(flag):
 		return False
 	from jarvis import selfhost
 
@@ -184,12 +221,15 @@ def pump_draining() -> bool:
 
 
 def pump_configured() -> bool:
-	"""True when the pump is turned on in ANY form (active OR draining) on a managed
-	bench. Once configured, the pump OWNS every ``Jarvis Chat Turn`` row, so Phase-0
-	admission's promote/sweep step back (they must never legacy-dispatch or reconcile
-	a pump-owned Turn row) — the coexistence discriminator that keeps the two
-	machines from fighting over the same rows."""
-	if not frappe.conf.get("jarvis_pump_enabled"):
+	"""True when the pump is on in ANY form (active OR draining) on a managed bench —
+	i.e. NOT the explicit-off kill switch. The pump is the DEFAULT transport, so an
+	UNSET flag IS configured; only an explicit falsy value (``0``/``"0"``/``false``)
+	makes it INERT (OARF-1: ``ensure_pump`` + ``watchdog`` no-op). Once configured, the
+	pump OWNS every ``Jarvis Chat Turn`` row, so Phase-0 admission's promote/sweep step
+	back (they must never legacy-dispatch or reconcile a pump-owned Turn row) — the
+	coexistence discriminator that keeps the two machines from fighting over the same
+	rows."""
+	if _pump_flag_explicit_off(frappe.conf.get("jarvis_pump_enabled")):
 		return False
 	from jarvis import selfhost
 
