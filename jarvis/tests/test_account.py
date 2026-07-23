@@ -157,7 +157,7 @@ class TestAdminChatGate(FrappeTestCase):
 		) as gc:
 			self.assertEqual(
 				account._admin_chat_gate(),
-				{"ready": False, "reason": "container_provisioning", "detail": ""},
+				{"ready": False, "reason": "container_provisioning", "detail": "", "billing_notice": {}},
 			)
 		# Uses the short 8s budget so a slow admin can't stall the SPA/boot path.
 		gc.assert_called_once_with(timeout_s=8)
@@ -180,6 +180,7 @@ class TestAdminChatGate(FrappeTestCase):
 					"ready": False,
 					"reason": "subscription_suspended",
 					"detail": "Your subscription has expired.",
+					"billing_notice": {},
 				},
 			)
 
@@ -189,19 +190,23 @@ class TestAdminChatGate(FrappeTestCase):
 		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Suspended"}):
 			self.assertEqual(
 				account._admin_chat_gate(),
-				{"ready": False, "reason": "subscription_suspended", "detail": ""},
+				{"ready": False, "reason": "subscription_suspended", "detail": "", "billing_notice": {}},
 			)
 
 	def test_allows_when_admin_ready(self):
 		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}):
-			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
+			self.assertEqual(
+				account._admin_chat_gate(), {"ready": True, "reason": None, "billing_notice": {}}
+			)
 
 	def test_v1_tolerant_when_key_absent(self):
 		# v1 admin (or a v2 not surfacing chat_readiness) → no opinion → allow.
 		with patch.object(
 			admin_client, "get_connection", return_value={"agent_url": "ws://x", "tenant_status": "running"}
 		):
-			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
+			self.assertEqual(
+				account._admin_chat_gate(), {"ready": True, "reason": None, "billing_notice": {}}
+			)
 
 	def test_fails_open_on_admin_error(self):
 		from jarvis.exceptions import AdminUnreachableError
@@ -209,10 +214,30 @@ class TestAdminChatGate(FrappeTestCase):
 		with patch.object(
 			admin_client, "get_connection", side_effect=AdminUnreachableError("admin is unreachable")
 		):
-			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
+			self.assertEqual(
+				account._admin_chat_gate(), {"ready": True, "reason": None, "billing_notice": {}}
+			)
 		# Fail-open verdict must NOT be negative-cached: a recovered admin is
 		# re-probed on the next call rather than being blocked for the TTL.
 		self.assertIsNone(frappe.cache().get_value(account._CHAT_GATE_CACHE_KEY))
+
+	def test_billing_notice_is_passed_through(self):
+		# The expiry banner rides this verdict; admin owns the wording, the gate
+		# only forwards it - on both the ready and the suspended paths.
+		notice = {"phase": "expiring", "admin_message": "ends soon", "member_message": "ask admin"}
+		with patch.object(
+			admin_client,
+			"get_connection",
+			return_value={"chat_readiness": "Ready", "billing_notice": notice},
+		):
+			self.assertEqual(account._admin_chat_gate()["billing_notice"], notice)
+		frappe.cache().delete_value(account._CHAT_GATE_CACHE_KEY)
+		with patch.object(
+			admin_client,
+			"get_connection",
+			return_value={"chat_readiness": "Suspended", "billing_notice": notice},
+		):
+			self.assertEqual(account._admin_chat_gate()["billing_notice"], notice)
 
 	def test_positive_verdict_is_cached(self):
 		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}) as gc:
