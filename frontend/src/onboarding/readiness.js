@@ -61,3 +61,9 @@ export async function needsOnboarding() {
 	if (isOnboardComplete(resp)) return false;
 	return NOT_ONBOARDED_REASONS.has(resp && resp.reason);
 }
+
+// Billing banner payload from the same memoized verdict - no extra round-trip.
+export async function billingNoticeOf() {
+	const r = await checkReady();
+	return (r && r.billing_notice) || {};
+}

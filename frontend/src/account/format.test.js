@@ -12,6 +12,7 @@ import {
 	cancellationNotice,
 	shortDate,
 	cancelPillLabel,
+	billingBanner,
 } from "./format.js";
 
 test("statusLabel: maps known states, passes through unknown", () => {
@@ -96,4 +97,42 @@ test("cancelPillLabel: glanceable end date, not the ambiguous 'Cancelling'", () 
 	assert.equal(cancelPillLabel("2026-08-21 12:56:09"), "Ends 21 Aug");
 	assert.equal(cancelPillLabel(""), "Ending");
 	assert.equal(cancelPillLabel(null), "Ending");
+});
+
+const _notice = (phase) => ({
+	phase,
+	admin_message: "ADMIN COPY",
+	member_message: "MEMBER COPY",
+});
+
+test("billingBanner: says nothing without a usable phase", () => {
+	assert.equal(billingBanner(null, true), null);
+	assert.equal(billingBanner({}, true), null);
+	assert.equal(billingBanner({ phase: "active" }, true), null);
+});
+
+test("billingBanner: picks the wording for whoever is looking", () => {
+	assert.equal(billingBanner(_notice("expiring"), true).message, "ADMIN COPY");
+	assert.equal(billingBanner(_notice("expiring"), false).message, "MEMBER COPY");
+});
+
+test("billingBanner: only offers Renew to someone who can renew", () => {
+	assert.equal(billingBanner(_notice("expired"), true).showRenew, true);
+	assert.equal(billingBanner(_notice("expired"), false).showRenew, false);
+});
+
+test("billingBanner: only the pre-expiry nudge is dismissible", () => {
+	// Grace is the last window in which paying still helps; expired blocks chat.
+	assert.equal(billingBanner(_notice("expiring"), true).dismissible, true);
+	assert.equal(billingBanner(_notice("grace"), true).dismissible, false);
+	assert.equal(billingBanner(_notice("expired"), true).dismissible, false);
+});
+
+test("billingBanner: tone escalates across the lifecycle", () => {
+	assert.equal(billingBanner(_notice("expiring"), true).type, "info");
+	assert.equal(billingBanner(_notice("grace"), true).type, "warning");
+});
+
+test("billingBanner: says nothing when this audience has no copy", () => {
+	assert.equal(billingBanner({ phase: "grace", admin_message: "x" }, false), null);
 });
