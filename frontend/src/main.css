@@ -80,3 +80,13 @@ body {
 	from { transform: scaleY(0); }
 	to { transform: scaleY(1); }
 }
+
+/* frappe-ui Dialog renders through DialogPortal into <body> with no z-index of
+   its own. #app is only `height: 100vh` so it creates no stacking context,
+   which means Sidebar.vue's z-10 / z-20 layers would paint straight over a
+   portaled dialog. 60 clears those (it is the value the old hand-rolled
+   .jv-settings-overlay used) and stays below the shell ConfirmDialog's 200,
+   which is what lets a confirm still open on top of the settings dialog. */
+.dialog-overlay {
+	z-index: 60;
+}
