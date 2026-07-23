@@ -1327,7 +1327,10 @@ const READINESS_POLL_INTERVAL_MS = 2500;
 // its usage limit...") rather than a generic "still finishing" shrug. Only a THROWN
 // error (network hiccup) is swallowed and ignored; a RETURNED {ready:false, ...} is a
 // real verdict and overwrites whatever came before it.
-async function waitUntilReady(attempts = READINESS_POLL_ATTEMPTS, delayMs = READINESS_POLL_INTERVAL_MS) {
+async function waitUntilReady(
+	attempts = READINESS_POLL_ATTEMPTS,
+	delayMs = READINESS_POLL_INTERVAL_MS
+) {
 	let last = { reason: null, detail: "" };
 	for (let i = 0; i < attempts; i++) {
 		try {

@@ -7429,7 +7429,8 @@ onMounted(async () => {
 			// provisioning stall or an out-of-quota LLM account has nothing to renew
 			// via US. Keep it scoped to an actual lapsed subscription; the other
 			// reason gets its own honest, CTA-less banner below.
-			suspendedNotice.value = r && r.reason === "subscription_suspended" ? suspensionNotice(r) : null;
+			suspendedNotice.value =
+				r && r.reason === "subscription_suspended" ? suspensionNotice(r) : null;
 		})
 		.catch(() => {});
 	// Same boot promise, the container_provisioning half: readinessDetailOf reads the

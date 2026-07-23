@@ -163,7 +163,9 @@ test("suspensionNotice: prefers admin's sentence, falls back when absent", () =>
 // reason away" bug this whole fix addresses.
 test("notReadyNote: prefers the backend's real detail", () => {
 	assert.equal(
-		notReadyNote("Your OpenAI account has reached its usage limit. It resets in about 27 hours."),
+		notReadyNote(
+			"Your OpenAI account has reached its usage limit. It resets in about 27 hours."
+		),
 		"Your OpenAI account has reached its usage limit. It resets in about 27 hours."
 	);
 });
@@ -183,14 +185,18 @@ test("notReadyNote: falls back to the generic copy only when detail is genuinely
 
 test("syncStatusNote: renders a real customer sentence directly, unwrapped", () => {
 	assert.equal(
-		syncStatusNote("failed: Your OpenAI account has reached its usage limit. It resets in about 27 hours."),
+		syncStatusNote(
+			"failed: Your OpenAI account has reached its usage limit. It resets in about 27 hours."
+		),
 		"Your OpenAI account has reached its usage limit. It resets in about 27 hours."
 	);
 });
 
 test("syncStatusNote: a skipped status with a real sentence is also unwrapped", () => {
 	assert.equal(
-		syncStatusNote("skipped: Your Google Gemini subscription was rejected. Reconnect the account."),
+		syncStatusNote(
+			"skipped: Your Google Gemini subscription was rejected. Reconnect the account."
+		),
 		"Your Google Gemini subscription was rejected. Reconnect the account."
 	);
 });

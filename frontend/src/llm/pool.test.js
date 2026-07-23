@@ -789,10 +789,10 @@ test("subscriptionAccountHealth: an unrecognised status is never 'ok' even in th
 
 test("dirtyAccountHealth: not dirty/pending -> passes the settled health through unchanged", () => {
 	assert.deepEqual(dirtyAccountHealth({ level: "ok" }, false), { level: "ok" });
-	assert.deepEqual(
-		dirtyAccountHealth({ level: "warn", label: "Not working" }, false),
-		{ level: "warn", label: "Not working" }
-	);
+	assert.deepEqual(dirtyAccountHealth({ level: "warn", label: "Not working" }, false), {
+		level: "warn",
+		label: "Not working",
+	});
 });
 
 test("dirtyAccountHealth: a settled 'ok' row goes to 'pending' (not 'neutral') while dirty - it was never broken", () => {

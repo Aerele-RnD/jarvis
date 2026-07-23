@@ -379,7 +379,9 @@ export function subscriptionAccountHealth(status, { knownGood = true, warningDet
 		return {
 			level: "warn",
 			label: "Not accepting requests",
-			title: warningDetail || "This account rejected a test request. Reconnect to restore chat.",
+			title:
+				warningDetail ||
+				"This account rejected a test request. Reconnect to restore chat.",
 		};
 	}
 	if (status === "verified") return { level: "ok" };
@@ -428,7 +430,6 @@ export function dirtyAccountHealth(settled, isDirtyOrPending) {
 	return {
 		level: "pending",
 		label: "Pending re-check",
-		title:
-			"This account was verified before your latest changes. It will be re-checked once they're applied.",
+		title: "This account was verified before your latest changes. It will be re-checked once they're applied.",
 	};
 }
