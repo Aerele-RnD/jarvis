@@ -70,9 +70,16 @@
 			</KvRow>
 		</div>
 
+		<!-- inline-flex + align-middle: a bare <kbd> is inline and the icon's svg
+		     does not sit on the text baseline inside one, which breaks the
+		     sentence onto a second line and strands the chip. The chips in the
+		     rows above are already inside flex containers, so only this one in
+		     running prose needs it. -->
 		<p class="mt-4 text-p-sm text-ink-gray-5">
 			Tip:
-			<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+			<kbd
+				class="inline-flex items-center rounded border bg-surface-gray-2 px-1.5 py-0.5 align-middle text-xs text-ink-gray-7"
+			>
 				<FeatherIcon name="arrow-up" class="size-3" />
 			</kbd>
 			at the start of an empty composer walks back through your earlier prompts in this chat.
