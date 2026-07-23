@@ -177,3 +177,114 @@ class TestGetModelCatalogNeverRaises(FrappeTestCase):
 				out = admin_client.get_model_catalog()
 		# The write failed, but the caller still gets a usable catalog.
 		self.assertTrue(isinstance(out, list) and out)
+
+
+def _clear_sub_model_cache():
+	"""frappe.local survives the whole test process; FrappeTestCase does not
+	reset it. A test that leaves patched rows cached poisons every later test,
+	including tests in OTHER files (CI's parallel runner sorts files
+	alphabetically)."""
+	if hasattr(frappe.local, "_jarvis_sub_models"):
+		delattr(frappe.local, "_jarvis_sub_models")
+
+
+class TestSubscriptionModelsMappings(FrappeTestCase):
+	def setUp(self):
+		_clear_model_catalog_cache()
+		_clear_sub_model_cache()
+		self.addCleanup(_clear_model_catalog_cache)
+		self.addCleanup(_clear_sub_model_cache)
+
+	def test_public_names_are_still_mappings(self):
+		from jarvis._subscription_models import DEFAULT_MODEL, SUBSCRIPTION_MODELS
+
+		for m in (SUBSCRIPTION_MODELS, DEFAULT_MODEL):
+			self.assertTrue(hasattr(m, "get"))
+			self.assertTrue(hasattr(m, "items"))
+			self.assertGreater(len(m), 0)
+
+	def test_kimi_uses_the_subscription_label_not_the_api_key_label(self):
+		# R1. oauth/api.py:_coerce_subscription_model looks up by this exact key.
+		from jarvis._subscription_models import DEFAULT_MODEL, SUBSCRIPTION_MODELS
+
+		self.assertIn("Kimi (Moonshot)", SUBSCRIPTION_MODELS)
+		self.assertNotIn("Moonshot (Kimi)", SUBSCRIPTION_MODELS)
+		self.assertEqual(DEFAULT_MODEL["Kimi (Moonshot)"], "kimi-k2.7-code")
+
+	def test_keys_exactly_match_todays_hardcoded_catalogue(self):
+		# The pinned regression the reviewer asked for: whatever the catalog says,
+		# the KEY SET must not move, or oauth/api.py and the desk tab break.
+		from jarvis._subscription_models import _SEED_SUBSCRIPTION_MODELS, SUBSCRIPTION_MODELS
+
+		self.assertEqual(set(SUBSCRIPTION_MODELS), set(_SEED_SUBSCRIPTION_MODELS))
+
+	def test_reads_values_from_the_catalog(self):
+		from jarvis import _subscription_models
+
+		payload = [
+			{
+				"provider_id": "openai",
+				"label": "OpenAI",
+				"subscription_label": "OpenAI",
+				"supports_subscription": True,
+				"models": [
+					{
+						"model_id": "gpt-9.9",
+						"label": "gpt-9.9",
+						"tier": "subscription",
+						"is_default": True,
+						"sort_order": 0,
+					}
+				],
+			}
+		]
+		with patch.object(admin_client, "get_model_catalog", return_value=payload):
+			_clear_sub_model_cache()
+			self.assertEqual(_subscription_models.SUBSCRIPTION_MODELS["OpenAI"], ["gpt-9.9"])
+			self.assertEqual(_subscription_models.DEFAULT_MODEL["OpenAI"], "gpt-9.9")
+
+	def test_api_key_only_provider_is_excluded(self):
+		from jarvis import _subscription_models
+
+		payload = [
+			{
+				"provider_id": "anthropic",
+				"label": "Anthropic",
+				"supports_subscription": False,
+				"models": [
+					{
+						"model_id": "claude-opus-4-8",
+						"label": "claude-opus-4-8",
+						"tier": "api_key",
+						"is_default": True,
+						"sort_order": 0,
+					}
+				],
+			}
+		]
+		with patch.object(admin_client, "get_model_catalog", return_value=payload):
+			_clear_sub_model_cache()
+			self.assertNotIn("Anthropic", _subscription_models.SUBSCRIPTION_MODELS)
+
+	def test_default_falls_back_to_first_row_when_none_flagged(self):
+		from jarvis import _subscription_models
+
+		payload = [
+			{
+				"provider_id": "openai",
+				"label": "OpenAI",
+				"supports_subscription": True,
+				"models": [
+					{
+						"model_id": "gpt-5.4",
+						"label": "gpt-5.4",
+						"tier": "subscription",
+						"is_default": False,
+						"sort_order": 0,
+					}
+				],
+			}
+		]
+		with patch.object(admin_client, "get_model_catalog", return_value=payload):
+			_clear_sub_model_cache()
+			self.assertEqual(_subscription_models.DEFAULT_MODEL["OpenAI"], "gpt-5.4")

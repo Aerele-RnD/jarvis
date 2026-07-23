@@ -1218,8 +1218,8 @@ def get_chat_ui_settings() -> dict:
 		"llm_auth_mode": settings.llm_auth_mode or "api_key",
 		"llm_provider": settings.llm_provider or "",
 		"llm_model": settings.llm_model or "",
-		"subscription_models": _SUBSCRIPTION_MODELS,
-		"default_models": _DEFAULT_MODEL,
+		"subscription_models": dict(_SUBSCRIPTION_MODELS),
+		"default_models": dict(_DEFAULT_MODEL),
 		# Model/provider/effort picker (see ChatView.vue). ``pool`` is the
 		# configured multi-provider catalogue; ``providers`` is empty for a
 		# single-provider customer and the UI hides the provider group then.

@@ -23,7 +23,18 @@ class TestSubscriptionCatalogue(unittest.TestCase):
 		self.assertIn(cat.DEFAULT_MODEL[GEMINI], cat.SUBSCRIPTION_MODELS[GEMINI])
 
 	def test_catalogue_values_are_json_serializable_lists(self):
-		json.dumps(cat.SUBSCRIPTION_MODELS)  # must not raise
+		# The catalogue is a lazy Mapping (spec 6.3 keeps the public name), so it
+		# must be dict()-wrapped before serialising. Asserting on the wrapped copy
+		# preserves this test's original intent (values are JSON-safe lists) and
+		# additionally locks the R9 rule: production serialises with orjson +
+		# frappe's json_handler, which turns a BARE Mapping into a list of its
+		# KEYS with no error raised.
+		import orjson
+		from frappe.utils.response import json_handler
+
+		json.dumps(dict(cat.SUBSCRIPTION_MODELS))  # must not raise
+		decoded = orjson.loads(orjson.dumps(dict(cat.SUBSCRIPTION_MODELS), default=json_handler))
+		self.assertIsInstance(decoded, dict, "catalogue must serialise to a JSON object")
 		for value in cat.SUBSCRIPTION_MODELS.values():
 			self.assertIsInstance(value, list)
 
