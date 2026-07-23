@@ -4022,7 +4022,10 @@ const liveStatus = computed(() => {
 // hiccup. Both mean "still working, in the background" — not an error.
 // Renew CTA → Settings ▸ Plan & billing, the only surface that takes payment.
 function goRenew() {
-	store.openSettings("plan");
+	// Straight to our renewal flow (the Desk billing page's Razorpay checkout),
+	// not the settings pane the customer would then have to click through. The
+	// Renew button only shows for someone who can actually renew.
+	window.location.assign("/app/jarvis-account?billing=1");
 }
 const recoveringLabel = computed(() =>
 	recovering.value && recovering.value.reason === "compacting"
