@@ -59,15 +59,21 @@
 				<template v-else>
 					<div class="mt-2 grid grid-cols-3 gap-4">
 						<div class="rounded-md border p-4">
-							<div class="text-2xl font-medium text-ink-gray-8">{{ usage.tokens_in }}</div>
+							<div class="text-2xl font-medium text-ink-gray-8">
+								{{ usage.tokens_in }}
+							</div>
 							<div class="mt-1 text-sm text-ink-gray-6">Tokens in</div>
 						</div>
 						<div class="rounded-md border p-4">
-							<div class="text-2xl font-medium text-ink-gray-8">{{ usage.tokens_out }}</div>
+							<div class="text-2xl font-medium text-ink-gray-8">
+								{{ usage.tokens_out }}
+							</div>
 							<div class="mt-1 text-sm text-ink-gray-6">Tokens out</div>
 						</div>
 						<div class="rounded-md border p-4">
-							<div class="text-2xl font-medium text-ink-gray-8">${{ usage.cost_usd }}</div>
+							<div class="text-2xl font-medium text-ink-gray-8">
+								${{ usage.cost_usd }}
+							</div>
 							<div class="mt-1 text-sm text-ink-gray-6">Cost</div>
 						</div>
 					</div>
@@ -106,9 +112,7 @@ const loading = ref(false);
 
 // SettingsPane renders the one error surface for the pane (design.md §4.1); the
 // usage card keeps only the Retry button, this supplies the message it retries.
-const errorMessage = computed(() =>
-	usageError.value ? "Usage is unavailable right now." : ""
-);
+const errorMessage = computed(() => (usageError.value ? "Usage is unavailable right now." : ""));
 
 const perModelSpec = computed(() =>
 	(usage.value.per_model || []).length ? perModelBarSpec(usage.value.per_model, "tokens") : null

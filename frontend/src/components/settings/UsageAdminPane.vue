@@ -30,10 +30,7 @@
 
 		<p v-else-if="loading && !users.length" class="text-p-base text-ink-gray-6">Loading…</p>
 
-		<div
-			v-else-if="!users.length"
-			class="flex flex-col items-center gap-2 py-12 text-center"
-		>
+		<div v-else-if="!users.length" class="flex flex-col items-center gap-2 py-12 text-center">
 			<FeatherIcon name="users" class="size-8 text-ink-gray-4" />
 			<span class="text-base text-ink-gray-6">No users with settings or usage yet.</span>
 		</div>
@@ -314,9 +311,9 @@ async function onSync() {
 		}
 		const d = (res && res.data) || {};
 		toast.success(
-			`Synced ${d.synced_sessions ?? 0} session${
-				d.synced_sessions === 1 ? "" : "s"
-			}, ${d.users_updated ?? 0} user${d.users_updated === 1 ? "" : "s"} updated`
+			`Synced ${d.synced_sessions ?? 0} session${d.synced_sessions === 1 ? "" : "s"}, ${
+				d.users_updated ?? 0
+			} user${d.users_updated === 1 ? "" : "s"} updated`
 		);
 		await loadUsers();
 	} catch (e) {

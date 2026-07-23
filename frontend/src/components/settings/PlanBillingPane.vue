@@ -45,9 +45,7 @@
 				</div>
 				<p class="mt-1 text-p-sm text-ink-gray-6">
 					{{ renewalLabel(account.current_period_end, account.days_remaining)
-					}}<template v-if="account.autorenew && !cancelling">
-						· Auto-renew on</template
-					>
+					}}<template v-if="account.autorenew && !cancelling"> · Auto-renew on</template>
 				</p>
 
 				<!-- Scheduled cancellation: state it plainly and put Resume right
@@ -60,12 +58,7 @@
 					<span class="text-p-sm text-ink-gray-7">
 						{{ cancellationNotice(account.access_ends_on) }}
 					</span>
-					<Button
-						variant="solid"
-						label="Resume"
-						:loading="busy"
-						@click="doResume"
-					/>
+					<Button variant="solid" label="Resume" :loading="busy" @click="doResume" />
 				</div>
 
 				<ul v-if="planFeatures.length" class="mt-4 flex flex-col gap-2">
@@ -101,7 +94,10 @@
 						<span class="text-p-sm text-ink-gray-6">
 							{{ planPriceLabel(p.price_inr, p.billing_cycle) }}
 						</span>
-						<a :href="billingUrl" class="mt-2 text-base text-ink-blue-link hover:underline">
+						<a
+							:href="billingUrl"
+							class="mt-2 text-base text-ink-blue-link hover:underline"
+						>
 							Upgrade in Desk
 						</a>
 					</div>
@@ -117,7 +113,10 @@
 				<p class="mt-1 text-p-sm text-ink-gray-6">
 					Your subscription has ended. Renewing restores access straight away.
 				</p>
-				<a :href="billingUrl" class="mt-2 inline-block text-base text-ink-blue-link hover:underline">
+				<a
+					:href="billingUrl"
+					class="mt-2 inline-block text-base text-ink-blue-link hover:underline"
+				>
 					Renew subscription in Desk
 				</a>
 			</template>
@@ -135,7 +134,10 @@
 					Set up auto-renewal in Desk
 				</a>
 			</div>
-			<p v-else-if="reauthNotice" class="mt-4 rounded-md border p-4 text-p-sm text-ink-gray-7">
+			<p
+				v-else-if="reauthNotice"
+				class="mt-4 rounded-md border p-4 text-p-sm text-ink-gray-7"
+			>
 				{{ reauthNotice }}
 			</p>
 

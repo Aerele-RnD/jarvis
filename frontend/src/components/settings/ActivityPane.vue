@@ -2,7 +2,10 @@
 	<SettingsPane title="Activity" description="Recent tool calls in this chat.">
 		<h3 class="text-base font-semibold text-ink-gray-9">Recent tool runs</h3>
 
-		<div v-if="!recentActivity.length" class="flex flex-col items-center gap-2 py-12 text-center">
+		<div
+			v-if="!recentActivity.length"
+			class="flex flex-col items-center gap-2 py-12 text-center"
+		>
 			<FeatherIcon name="activity" class="size-8 text-ink-gray-4" />
 			<span class="text-base text-ink-gray-6">No tool activity in this chat yet.</span>
 		</div>
@@ -16,9 +19,14 @@
 				<div class="flex items-center gap-2 text-p-sm text-ink-gray-7">
 					<FeatherIcon name="tool" class="size-4 text-ink-gray-5" />
 					<span>{{ a.tools }} tool{{ a.tools === 1 ? "" : "s" }}</span>
-					<span class="ml-auto tabular-nums text-ink-gray-5">{{ (a.ms / 1000).toFixed(1) }}s</span>
+					<span class="ml-auto tabular-nums text-ink-gray-5"
+						>{{ (a.ms / 1000).toFixed(1) }}s</span
+					>
 				</div>
-				<div v-if="a.names.length" class="mt-1 break-words font-mono text-xs text-ink-gray-5">
+				<div
+					v-if="a.names.length"
+					class="mt-1 break-words font-mono text-xs text-ink-gray-5"
+				>
 					{{ a.names.join(", ") }}
 				</div>
 			</div>

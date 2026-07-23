@@ -4,32 +4,44 @@
 		<div class="mt-2">
 			<KvRow label="Recall previous / next prompt">
 				<span class="flex items-center gap-1.5">
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						<FeatherIcon name="arrow-up" class="size-3" />
 					</kbd>
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						<FeatherIcon name="arrow-down" class="size-3" />
 					</kbd>
 				</span>
 			</KvRow>
 			<KvRow label="Send message">
-				<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+				<kbd
+					class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+				>
 					Enter
 				</kbd>
 			</KvRow>
 			<KvRow label="New line">
 				<span class="flex items-center gap-1">
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						Shift
 					</kbd>
 					<span class="text-xs text-ink-gray-5">+</span>
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						Enter
 					</kbd>
 				</span>
 			</KvRow>
 			<KvRow label="Mention a doctype / record">
-				<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">@</kbd>
+				<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>@</kbd
+				>
 			</KvRow>
 		</div>
 
@@ -39,32 +51,44 @@
 		<div class="mt-2">
 			<KvRow label="New chat">
 				<span class="flex items-center gap-1">
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						Ctrl
 					</kbd>
 					<span class="text-xs text-ink-gray-5">+</span>
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						Shift
 					</kbd>
 					<span class="text-xs text-ink-gray-5">+</span>
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						O
 					</kbd>
 				</span>
 			</KvRow>
 			<KvRow label="Toggle sidebar">
 				<span class="flex items-center gap-1">
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						Ctrl
 					</kbd>
 					<span class="text-xs text-ink-gray-5">+</span>
-					<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+					<kbd
+						class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+					>
 						B
 					</kbd>
 				</span>
 			</KvRow>
 			<KvRow label="Close panel / cancel">
-				<kbd class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7">
+				<kbd
+					class="rounded border bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-7"
+				>
 					Esc
 				</kbd>
 			</KvRow>

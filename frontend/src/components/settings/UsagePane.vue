@@ -3,7 +3,10 @@
 		<template v-if="measured">
 			<h3 class="text-base font-semibold text-ink-gray-9">Measured usage</h3>
 			<div class="mt-2">
-				<KvRow :label="usage.month_label || 'This month'" :value="fmtTokens(measured.month_tokens)" />
+				<KvRow
+					:label="usage.month_label || 'This month'"
+					:value="fmtTokens(measured.month_tokens)"
+				/>
 				<KvRow label="All time" :value="fmtTokens(measured.total_tokens)" />
 				<KvRow
 					v-if="measured.last_usage_at"
@@ -20,7 +23,9 @@
 					{{ fmtTokens(measured.monthly_token_limit) }} this month, {{ measuredPct }}%
 				</p>
 			</template>
-			<p v-else class="mt-2 text-p-sm text-ink-gray-5">No monthly limit set on your account.</p>
+			<p v-else class="mt-2 text-p-sm text-ink-gray-5">
+				No monthly limit set on your account.
+			</p>
 
 			<template v-if="perModel.length">
 				<h3 class="mt-6 text-base font-semibold text-ink-gray-9">By model, this month</h3>
@@ -40,11 +45,14 @@
 						</div>
 						<template v-if="m.monthly_token_limit > 0">
 							<div class="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-gray-3">
-								<div class="h-full bg-surface-gray-7" :style="{ width: modelPct(m) + '%' }" />
+								<div
+									class="h-full bg-surface-gray-7"
+									:style="{ width: modelPct(m) + '%' }"
+								/>
 							</div>
 							<p class="mt-1 text-p-sm text-ink-gray-5">
-								{{ fmtTokens(m.month_tokens) }} of {{ fmtTokens(m.monthly_token_limit) }},
-								{{ modelPct(m) }}%
+								{{ fmtTokens(m.month_tokens) }} of
+								{{ fmtTokens(m.monthly_token_limit) }}, {{ modelPct(m) }}%
 							</p>
 						</template>
 						<p v-else class="mt-1 text-p-sm text-ink-gray-5">Unlimited</p>
@@ -68,12 +76,16 @@
 				</div>
 			</div>
 			<div class="rounded-md border p-4">
-				<div class="text-2xl font-medium text-ink-gray-8">{{ s ? s.sessionToolCalls : "—" }}</div>
+				<div class="text-2xl font-medium text-ink-gray-8">
+					{{ s ? s.sessionToolCalls : "—" }}
+				</div>
 				<div class="mt-1 text-sm text-ink-gray-6">Tool calls</div>
 				<div class="mt-1 text-xs text-ink-gray-5">this session</div>
 			</div>
 			<div class="rounded-md border p-4">
-				<div class="text-2xl font-medium text-ink-gray-8">{{ s ? s.avgTokensPerMsg : "—" }}</div>
+				<div class="text-2xl font-medium text-ink-gray-8">
+					{{ s ? s.avgTokensPerMsg : "—" }}
+				</div>
 				<div class="mt-1 text-sm text-ink-gray-6">Avg tokens per msg</div>
 				<div class="mt-1 text-xs text-ink-gray-5">this chat</div>
 			</div>
@@ -95,7 +107,9 @@
 				<div class="text-2xl font-medium text-ink-gray-8">
 					{{ usage ? fmtTokens(usage.month_tokens) : "—" }}
 				</div>
-				<div class="mt-1 text-sm text-ink-gray-6">{{ usage ? usage.month_label : "This month" }}</div>
+				<div class="mt-1 text-sm text-ink-gray-6">
+					{{ usage ? usage.month_label : "This month" }}
+				</div>
 				<div class="mt-1 text-xs text-ink-gray-5">tokens</div>
 			</div>
 			<div class="rounded-md border p-4">
@@ -115,7 +129,9 @@
 		<hr class="my-8" />
 
 		<template v-if="usage && usage.budget_monthly">
-			<h3 class="text-base font-semibold text-ink-gray-9">Tenant monthly budget (informational)</h3>
+			<h3 class="text-base font-semibold text-ink-gray-9">
+				Tenant monthly budget (informational)
+			</h3>
 			<div class="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-gray-3">
 				<div class="h-full bg-surface-gray-7" :style="{ width: usagePct + '%' }" />
 			</div>

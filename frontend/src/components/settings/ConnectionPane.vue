@@ -22,7 +22,11 @@
 					<Badge :label="statusLabel" :theme="statusTheme" variant="subtle" />
 				</KvRow>
 				<KvRow v-if="conn.default_model" label="Model" :value="conn.default_model" />
-				<KvRow v-if="isProxy && conn.oauth_expires_at" label="Expires" :value="expiresLabel" />
+				<KvRow
+					v-if="isProxy && conn.oauth_expires_at"
+					label="Expires"
+					:value="expiresLabel"
+				/>
 			</template>
 		</div>
 	</SettingsPane>
