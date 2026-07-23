@@ -257,6 +257,73 @@ class TestPumpPipelineE2E(_PipelineCase):
 
 
 # --------------------------------------------------------------------------- #
+# 1b. F2 — the pump-mode accept `dispatched` hint reflects the real promote order
+# --------------------------------------------------------------------------- #
+
+
+class TestF2WillDispatchHint(_PipelineCase):
+	"""F2: the SENDER tab must render the queued chip immediately from the accept
+	response. That needs the pump-mode ``dispatched`` hint to reflect the pump's real
+	promote order — the OLD hint compared only ``inflight < cap`` and so wrongly
+	claimed immediate dispatch when a still-``queued`` occupier (uncounted by
+	``_shard_inflight``) sat AHEAD of the new turn, leaving the sender on "Working on
+	it…" for the whole wait while a reload showed the chip. The fix uses the turn's
+	RANK among the shard's queued turns: dispatch iff ``inflight + position <= cap``."""
+
+	def _accept(self, conv, rid, seed, cap):
+		with (
+			self._pump_on(),
+			patch.object(admission, "relay_target_id", lambda conversation=None: self._target),
+			patch.object(admission, "_max_inflight", lambda: cap),
+		):
+			return admission.accept_or_queue(
+				conversation=conv, run_id=rid, seed_message=seed, dispatch=lambda: None
+			)
+
+	def test_idle_shard_dispatches(self):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="hi")
+		adm = self._accept(conv, "f2_idle", seed, cap=1)
+		self.assertTrue(adm["dispatched"], "an idle shard dispatches immediately")
+		self.assertIsNone(adm["queued_position"])
+
+	def test_queued_occupier_ahead_marks_new_turn_queued(self):
+		# The exact F2 race: occupier A is plain 'queued' (pump has NOT promoted it to
+		# an inflight state yet) so _shard_inflight()==0. cap=1. Accepting B in another
+		# conversation must still report B QUEUED (position 2), not dispatched.
+		conv_a = self._mk_conv()
+		seed_a = self._mk_msg(conv_a, content="A")
+		self._mk_turn(conv_a, "f2_occ_a", seed_a, "queued", version=0, reserved=0)
+		conv_b = self._mk_conv()
+		seed_b = self._mk_msg(conv_b, content="B")
+		adm = self._accept(conv_b, "f2_occ_b", seed_b, cap=1)
+		self.assertFalse(adm["dispatched"], "F2: a queued occupier ahead => the new turn is queued")
+		self.assertEqual(adm["queued_position"], 2)
+		self.assertEqual(self._state("f2_occ_b"), "queued")
+
+	def test_streaming_occupier_marks_new_turn_queued(self):
+		conv_a = self._mk_conv()
+		seed_a = self._mk_msg(conv_a, content="A")
+		amsg = self._mk_msg(conv_a, role="assistant", content="", streaming=1)
+		self._mk_turn(conv_a, "f2_str_a", seed_a, "streaming", version=3, reserved=1, assistant_message=amsg)
+		conv_b = self._mk_conv()
+		seed_b = self._mk_msg(conv_b, content="B")
+		adm = self._accept(conv_b, "f2_str_b", seed_b, cap=1)
+		self.assertFalse(adm["dispatched"])
+		self.assertEqual(adm["queued_position"], 1, "A is inflight; only B is queued")
+
+	def test_second_credit_free_dispatches(self):
+		# cap=2 with one queued occupier ahead: inflight(0)+position(2) <= 2 => dispatch.
+		conv_a = self._mk_conv()
+		seed_a = self._mk_msg(conv_a, content="A")
+		self._mk_turn(conv_a, "f2_cap2_a", seed_a, "queued", version=0, reserved=0)
+		conv_b = self._mk_conv()
+		seed_b = self._mk_msg(conv_b, content="B")
+		adm = self._accept(conv_b, "f2_cap2_b", seed_b, cap=2)
+		self.assertTrue(adm["dispatched"], "cap=2 with one queued ahead still has a free credit for B")
+
+
+# --------------------------------------------------------------------------- #
 # 2. PANEL 4 — retry/orphan through the chokepoint (no dup user row, monotonic seq)
 # --------------------------------------------------------------------------- #
 

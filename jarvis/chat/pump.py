@@ -376,6 +376,113 @@ def _lease_mirror_live(target: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Control-job queue routing (F1 — long-queue self-starvation fix)
+# --------------------------------------------------------------------------- #
+#
+# Pump HOPS ride ``long`` UNCONDITIONALLY (PUMP_QUEUE, §10.4 / S4 — a dead
+# ``jarvis_chat`` lane can look provisioned for ~420-480s, longer than a hop, so a
+# hop must never be strandable). But the SHORT CONTROL jobs a hop enqueues and then
+# DEPENDS ON — ``prepare`` (queued->preparing->ready) and ``finalize`` (enrichment)
+# — must NOT share that same ``long`` queue when it has only one live worker: a 90s
+# hop occupies the single ``long`` worker for its whole slice budget, so the
+# ``prepare`` it just enqueued cannot run, the hop idle-exits before prepare
+# finishes, and the turn strands in ``preparing``/``ready`` until the watchdog
+# backstop revives it minutes later (the F1 dev-QA finding — 3-5 min strands with 1
+# ``long`` worker, ~10s turns with 2). The ORIGINAL bug: these two seams hardcoded
+# ``queue="long"`` and never consulted ``_turn_queue`` at all, so even a bench with
+# a live ``jarvis_chat`` lane (isolated parallel turn workers) still landed
+# prepare/finalize on ``long`` behind the hops.
+#
+# Routing (F1 ruling):
+#   * a live ``jarvis_chat`` lane  -> ride it (isolated parallel workers, exactly as
+#     the legacy turn path does via ``api._turn_queue``);
+#   * else ``long`` when it has >= 2 live workers (a hop can occupy one while the
+#     other runs prepare/finalize — no self-starvation);
+#   * else ``short`` — the single-``long``-no-``jarvis_chat`` shape. ``short`` is
+#     ALWAYS provisioned, its jobs are bounded, and prepare/finalize carry an
+#     EXPLICIT ``timeout=HOP_TIMEOUT_S`` (180s) that fits comfortably under short's
+#     300s queue envelope (a vision-heavy 4-page-PDF prepare is ~22s).
+
+
+def _live_worker_count(queue_name: str) -> int:
+	"""Number of RQ workers currently listening on ``queue_name`` (0 on any probe
+	trouble). Same ``get_workers()``/``generate_qname`` path ``api._turn_queue``
+	uses; best-effort — a probe hiccup must never break an enqueue, so the caller
+	treats 0 as "not safely provisioned" and falls back to ``short``."""
+	try:
+		from frappe.utils.background_jobs import generate_qname, get_workers
+
+		qname = generate_qname(queue_name)
+		return sum(1 for w in get_workers() if qname in (w.queue_names() or []))
+	except Exception:
+		return 0
+
+
+def _control_queue() -> str:
+	"""RQ queue for the pump's CONTROL jobs (prepare + finalize) — see the block
+	comment above. Never returns the shared ``long`` queue when ``long`` has fewer
+	than 2 live workers (the F1 self-starvation shape); routes to ``short`` there."""
+	try:
+		from jarvis.chat.api import _turn_queue
+
+		q = _turn_queue()
+	except Exception:
+		# _turn_queue itself is fully defensive, but if the import/probe blows up,
+		# never share the hop queue on an unknown shape — the bounded `short` lane is
+		# always a correct executor for these jobs.
+		return "short"
+	# A dedicated isolated lane (jarvis_chat, or a non-`long` override) never shares
+	# a worker with the hops — ride it as the legacy turn path does.
+	if q != PUMP_QUEUE:
+		return q
+	# It resolved to `long` (jarvis_chat absent, or overridden to long): only safe to
+	# share with the hops when `long` has >= 2 live workers; otherwise use `short`.
+	return PUMP_QUEUE if _live_worker_count(PUMP_QUEUE) >= 2 else "short"
+
+
+def _pump_shape_starves() -> bool:
+	"""True on the F1 self-starvation shape: no live ``jarvis_chat`` lane AND the
+	shared ``long`` hop queue has fewer than 2 workers — so a hop and the
+	prepare/finalize it depends on would fight over one worker. Drives the loud
+	``ensure_pump`` provisioning warning (§8-I)."""
+	return _control_queue() == "short"
+
+
+def _warn_provisioning_if_starved() -> None:
+	"""§8-I: emit ONE loud provisioning warning (telemetry line + error log) when the
+	site is in the F1 self-starvation shape. Throttled to at most once / 5 min per
+	site so the after-every-commit ``ensure_pump`` path never spams. Best-effort."""
+	if not _pump_shape_starves():
+		return
+	try:
+		site = frappe.local.site
+		key = f"jarvis:pump:provision_warn:{site}"
+		if frappe.cache().get_value(key):
+			return
+		frappe.cache().set_value(key, "1", expires_in_sec=300)
+	except Exception:
+		# If the throttle store is unavailable, still warn (better loud than silent).
+		pass
+	long_workers = _live_worker_count(PUMP_QUEUE)
+	_telemetry("provision_warning", queue=PUMP_QUEUE, long_workers=long_workers, control_queue="short")
+	try:
+		frappe.log_error(
+			title="pump.provisioning: single-long-no-jarvis_chat",
+			message=(
+				"Relay Pump provisioning WARNING: this site has no live `jarvis_chat` "
+				f"worker lane and only {long_workers} live `long` worker(s). Pump hops "
+				"ride `long`; with fewer than 2 `long` workers a 90s hop starves the "
+				"prepare/finalize jobs it enqueues (fresh turns strand for minutes until "
+				"the watchdog backstop). Control jobs are being routed to `short` as a "
+				"mitigation, but the supported shapes are >=2 `long` workers OR a live "
+				"`jarvis_chat` lane. See PUMP-RUNBOOK.md §6 (F1)."
+			),
+		)
+	except Exception:
+		pass
+
+
+# --------------------------------------------------------------------------- #
 # WP-1d seams + internal test seams (PumpDeps)
 # --------------------------------------------------------------------------- #
 
@@ -391,11 +498,15 @@ def _default_dispatch_prepare(run_id: str, relay_target_id: str) -> None:
 	silently no-op every re-enqueue for the job timeout (~180s) — the dedupe trap
 	§10.4 fixed for hops. The default enqueues a conventionally-named job that does
 	not exist yet, so it is a no-op-until-WP-1d in production and is ALWAYS replaced
-	by tests."""
+	by tests.
+
+	QUEUE (F1): routed via ``_control_queue`` — a live ``jarvis_chat`` lane else
+	``long`` (>=2 workers) else ``short`` — NEVER the single-worker ``long`` the hops
+	ride (which would self-starve; see the block comment above)."""
 	try:
 		frappe.enqueue(
 			"jarvis.chat.prepare.run_prepare",
-			queue="long",
+			queue=_control_queue(),
 			timeout=HOP_TIMEOUT_S,
 			job_id=f"jarvis-prepare::{run_id}::a{_attempt_suffix(run_id)}",
 			deduplicate=True,
@@ -414,11 +525,14 @@ def _default_enqueue_finalize(run_id: str, relay_target_id: str) -> None:
 	so a watchdog re-enqueue of an in-flight finalize dedupes, while a genuine new
 	attempt (finalize_done bumps version on the success flip) gets a fresh id — a
 	bare fixed id would let a hard-killed finalize's stale STARTED registration
-	no-op re-enqueues for the job timeout (the §10.4 dedupe trap)."""
+	no-op re-enqueues for the job timeout (the §10.4 dedupe trap).
+
+	QUEUE (F1): routed via ``_control_queue`` (same rule as prepare) — NEVER the
+	single-worker ``long`` the hops ride."""
 	try:
 		frappe.enqueue(
 			"jarvis.chat.finalize.run_finalize",
-			queue="long",
+			queue=_control_queue(),
 			timeout=HOP_TIMEOUT_S,
 			job_id=f"jarvis-finalize::{run_id}::a{_attempt_suffix(run_id)}",
 			deduplicate=True,
@@ -1918,6 +2032,12 @@ def ensure_pump(relay_target_id: str, *, deps: PumpDeps | None = None) -> dict:
 
 	if not pump_configured():
 		return {"enqueued": False, "reason": "not_configured"}
+
+	# §8-I / F1: if this site is in the single-long-no-jarvis_chat shape, warn LOUDLY
+	# (throttled). Emitted on the start path so it surfaces even when the pump is
+	# already leased (below) — the shape is a standing provisioning problem, not a
+	# per-hop one. Best-effort, never blocks the start decision.
+	_warn_provisioning_if_starved()
 
 	if _lease_mirror_live(target):
 		return {"enqueued": False, "reason": "mirror_live"}

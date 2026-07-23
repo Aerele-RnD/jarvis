@@ -979,6 +979,112 @@ class TestAttemptSuffixJobIds(_PumpTestCase):
 
 
 # --------------------------------------------------------------------------- #
+# 12b. F1 — control-job (prepare/finalize) queue routing per bench shape
+# --------------------------------------------------------------------------- #
+
+
+class TestControlQueueRouting(_PumpTestCase):
+	"""F1 (long-queue self-starvation): the pump's CONTROL jobs (prepare + finalize)
+	must never share the single-worker ``long`` queue the 90s hops ride. Routing per
+	bench shape: a live ``jarvis_chat`` lane -> ride it; else ``long`` with >=2
+	workers; else ``short``. Hops stay on ``long`` unconditionally (asserted in the
+	handoff test)."""
+
+	def test_jarvis_chat_lane_live_rides_it(self):
+		with patch("jarvis.chat.api._turn_queue", lambda: "jarvis_chat"):
+			self.assertEqual(pump._control_queue(), "jarvis_chat")
+			self.assertFalse(pump._pump_shape_starves())
+
+	def test_long_with_two_workers_uses_long(self):
+		with (
+			patch("jarvis.chat.api._turn_queue", lambda: "long"),
+			patch.object(pump, "_live_worker_count", lambda q: 2),
+		):
+			self.assertEqual(pump._control_queue(), "long")
+			self.assertFalse(pump._pump_shape_starves())
+
+	def test_single_long_no_jarvis_chat_uses_short(self):
+		with (
+			patch("jarvis.chat.api._turn_queue", lambda: "long"),
+			patch.object(pump, "_live_worker_count", lambda q: 1),
+		):
+			self.assertEqual(pump._control_queue(), "short")
+			self.assertTrue(pump._pump_shape_starves())
+
+	def test_prepare_finalize_route_to_short_on_starve_shape(self):
+		"""The F1 scenario as a queue-name assertion on the enqueue calls: on the
+		single-``long``-no-``jarvis_chat`` shape, BOTH prepare and finalize route to
+		``short`` — never the ``long`` queue the hops occupy (which self-starves)."""
+		conv = self._mk_conv()
+		rid = "pmp_route_short"
+		seed = self._mk_msg(conv)
+		self._mk_turn(conv, rid, seed, "queued", version=2, reserved=1)
+		captured: list = []
+
+		def fake_enqueue(method, **kw):
+			captured.append((method, kw.get("queue"), kw.get("timeout")))
+
+		with (
+			patch("jarvis.chat.api._turn_queue", lambda: "long"),
+			patch.object(pump, "_live_worker_count", lambda q: 1),
+			patch("frappe.enqueue", fake_enqueue),
+		):
+			pump._default_dispatch_prepare(rid, self._target)
+			pump._default_enqueue_finalize(rid, self._target)
+		self.assertEqual(captured[0], ("jarvis.chat.prepare.run_prepare", "short", pump.HOP_TIMEOUT_S))
+		self.assertEqual(captured[1], ("jarvis.chat.finalize.run_finalize", "short", pump.HOP_TIMEOUT_S))
+
+	def test_prepare_finalize_ride_jarvis_chat_when_live(self):
+		"""When a ``jarvis_chat`` lane is live, prepare/finalize ride it (isolated
+		parallel workers), NOT ``long`` or ``short``."""
+		conv = self._mk_conv()
+		rid = "pmp_route_jc"
+		seed = self._mk_msg(conv)
+		self._mk_turn(conv, rid, seed, "queued", version=2, reserved=1)
+		captured: list = []
+
+		def fake_enqueue(method, **kw):
+			captured.append((method, kw.get("queue")))
+
+		with (
+			patch("jarvis.chat.api._turn_queue", lambda: "jarvis_chat"),
+			patch("frappe.enqueue", fake_enqueue),
+		):
+			pump._default_dispatch_prepare(rid, self._target)
+			pump._default_enqueue_finalize(rid, self._target)
+		self.assertEqual(captured[0], ("jarvis.chat.prepare.run_prepare", "jarvis_chat"))
+		self.assertEqual(captured[1], ("jarvis.chat.finalize.run_finalize", "jarvis_chat"))
+
+	def test_provision_warning_emitted_once_then_throttled(self):
+		"""§8-I: the starve shape emits ONE loud provisioning warning, then throttles
+		(so the after-every-commit ensure_pump path never spams)."""
+		key = f"jarvis:pump:provision_warn:{frappe.local.site}"
+		frappe.cache().delete_value(key)
+		events: list = []
+		try:
+			with (
+				patch("jarvis.chat.api._turn_queue", lambda: "long"),
+				patch.object(pump, "_live_worker_count", lambda q: 1),
+				patch.object(pump, "_telemetry", lambda ev, **kw: events.append(ev)),
+				patch("frappe.log_error", lambda *a, **k: None),
+			):
+				pump._warn_provisioning_if_starved()
+				pump._warn_provisioning_if_starved()  # throttled — a no-op
+			self.assertEqual(events.count("provision_warning"), 1, "warned once, then throttled")
+		finally:
+			frappe.cache().delete_value(key)
+
+	def test_no_provision_warning_when_shape_healthy(self):
+		events: list = []
+		with (
+			patch("jarvis.chat.api._turn_queue", lambda: "jarvis_chat"),
+			patch.object(pump, "_telemetry", lambda ev, **kw: events.append(ev)),
+		):
+			pump._warn_provisioning_if_starved()
+		self.assertNotIn("provision_warning", events)
+
+
+# --------------------------------------------------------------------------- #
 # 13. OARF-9 — the canonical lock-order assertion fires under the test config
 # --------------------------------------------------------------------------- #
 

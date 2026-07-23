@@ -38,6 +38,7 @@ socket) with the sanctioned escape hatch — it never touches a real tenant
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import time
@@ -301,8 +302,11 @@ class StageB:
 		from jarvis.chat import pump
 
 		self.frappe.db.set_value(
-			PUMP, self.target, "lease_expires_at",
-			self.frappe.utils.add_to_date(None, seconds=-1), update_modified=False,
+			PUMP,
+			self.target,
+			"lease_expires_at",
+			self.frappe.utils.add_to_date(None, seconds=-1),
+			update_modified=False,
 		)
 		self.frappe.db.commit()
 		pump._clear_lease_mirror(self.target)
@@ -322,8 +326,10 @@ class StageB:
 		return None
 
 	def _flush_gaps(self, rid: str) -> list[float]:
-		ts_list = [p["_t_mono"] for p in self.pubs if p.get("run_id") == rid and p.get("kind") == "assistant:delta"]
-		return [(b - a) * 1000.0 for a, b in zip(ts_list, ts_list[1:])]
+		ts_list = [
+			p["_t_mono"] for p in self.pubs if p.get("run_id") == rid and p.get("kind") == "assistant:delta"
+		]
+		return [(b - a) * 1000.0 for a, b in itertools.pairwise(ts_list)]
 
 	def _run_pubs(self, rid: str) -> list[dict]:
 		return [p for p in self.pubs if p.get("run_id") == rid]
@@ -351,8 +357,12 @@ class StageB:
 			phase = (data or {}).get("phase") or event.get("phase")
 			name = (data or {}).get("name") or event.get("name")
 			self.pubs.append(
-				{"kind": "tool:start" if phase == "start" else "tool:end",
-				 "run_id": run_id, "tool_name": name, "_t_mono": time.monotonic()}
+				{
+					"kind": "tool:start" if phase == "start" else "tool:end",
+					"run_id": run_id,
+					"tool_name": name,
+					"_t_mono": time.monotonic(),
+				}
 			)
 
 		orig_apply = deps.apply_tool
@@ -366,8 +376,10 @@ class StageB:
 				res["transcript_tools"] = list(self._transcript_tool_counts(name))
 				res["verdict"] = self._equiv_verdict(name, res, legacy.get(name))
 				out[name] = res
-				log(f"  {name:22s} pump_state={res['final_state']:12s} tools={res['tool_starts']}/{res['tool_ends']} "
-				    f"(txscript {res['transcript_tools']}) recovered={res['was_recovered']} verdict={res['verdict']['status']}")
+				log(
+					f"  {name:22s} pump_state={res['final_state']:12s} tools={res['tool_starts']}/{res['tool_ends']} "
+					f"(txscript {res['transcript_tools']}) recovered={res['was_recovered']} verdict={res['verdict']['status']}"
+				)
 		finally:
 			deps.apply_tool = orig_apply
 		self.results["equivalence"] = out
@@ -389,7 +401,7 @@ class StageB:
 		from jarvis.chat import pump
 
 		conv = self.mk_conv()
-		rid = f"eq_{name}_{int(time.time()*1000)%100000}"
+		rid = f"eq_{name}_{int(time.time() * 1000) % 100000}"
 		self.warm_session(conv)  # measured turn is warm (equivalence, not latency)
 		cadence = 100.0 if name in self._DROP else CADENCE_MS
 		self._lapse_lease()  # fresh lease per transcript (no cross-transcript carryover)
@@ -400,18 +412,20 @@ class StageB:
 				# fire the ack-timeout park fast (real ACK_TIMEOUT_S=15s is too slow
 				# to wait on; the park is the point, not the 15s wall).
 				with patch.object(pump, "ACK_TIMEOUT_S", 1.0):
-					out1 = self._run_hop(deps, soft=8, hard=10, slices=300)
+					self._run_hop(deps, soft=8, hard=10, slices=300)
 				st1 = self.state(rid)
 				partial = self.content_of(rid)
 				extra_hops = 0
 			else:
-				out1 = self._run_hop(deps, soft=25, hard=30, slices=600)
+				self._run_hop(deps, soft=25, hard=30, slices=600)
 				st1 = self.state(rid)
 				partial = self.content_of(rid)
 				# parked/dropped turns need a takeover hop (faithful: real gap
 				# <= LEASE_TTL_S) to drive settle / snapshot-recovery.
 				extra_hops = 0
-				while self.state(rid) not in ("done", "errored", "cancelled", "recovering") and extra_hops < 2:
+				while (
+					self.state(rid) not in ("done", "errored", "cancelled", "recovering") and extra_hops < 2
+				):
 					self._lapse_lease()
 					self._run_hop(deps, soft=20, hard=25, slices=600)
 					extra_hops += 1
@@ -427,9 +441,13 @@ class StageB:
 			"answer_head": final[:70],
 			"tool_starts": kinds.count("tool:start"),
 			"tool_ends": kinds.count("tool:end"),
-			"tool_names": sorted({p.get("tool_name") for p in pubs if p.get("kind") == "tool:start" and p.get("tool_name")}),
+			"tool_names": sorted(
+				{p.get("tool_name") for p in pubs if p.get("kind") == "tool:start" and p.get("tool_name")}
+			),
 			"was_recovered": int(self.val(rid, "was_recovered") or 0),
-			"content_kinds": sorted(set(k for k in kinds if k not in ("run:start", "run:end", "message:enriched"))),
+			"content_kinds": sorted(
+				set(k for k in kinds if k not in ("run:start", "run:end", "message:enriched"))
+			),
 			"all_kinds": sorted(set(kinds)),
 			"extra_hops": extra_hops,
 			"error": self.val(rid, "error"),
@@ -438,7 +456,9 @@ class StageB:
 	def _load_legacy_corpus(self) -> dict:
 		"""Extract the legacy per-transcript signature from the Stage-A trace
 		corpus (baseline/trace_transcript_smoke.json)."""
-		path = os.path.join(os.path.dirname(self.out_dir.rstrip("/")), "baseline", "trace_transcript_smoke.json")
+		path = os.path.join(
+			os.path.dirname(self.out_dir.rstrip("/")), "baseline", "trace_transcript_smoke.json"
+		)
 		alt = "/home/vignesh/jarvis/jarvis-chat-concurrency-design/implementation/wp-2/baseline/trace_transcript_smoke.json"
 		for p in (path, alt):
 			if os.path.exists(p):
@@ -460,7 +480,9 @@ class StageB:
 				"gateway_terminal": sig.get("gateway_terminal"),
 				"tool_starts": kinds.count("tool:start"),
 				"tool_ends": kinds.count("tool:end"),
-				"content_kinds": sorted(set(k for k in kinds if k not in ("run:start", "run:end", "message:enriched"))),
+				"content_kinds": sorted(
+					set(k for k in kinds if k not in ("run:start", "run:end", "message:enriched"))
+				),
 				"db_write_count": sig.get("db_write_count"),
 			}
 		return out
@@ -538,7 +560,7 @@ class StageB:
 		self._lapse_lease()  # fresh lease for this drain (no carryover from a prior rep)
 		hops = 0
 		while hops < max_hops:
-			out = self._run_hop(deps, soft=25, hard=30, slices=4000)
+			self._run_hop(deps, soft=25, hard=30, slices=4000)
 			hops += 1
 			pending = [r for r in rids if self.state(r) not in ("done", "errored", "cancelled")]
 			if not pending:
@@ -589,8 +611,11 @@ class StageB:
 			frappe.connect()
 			try:
 				pump.run_pump_hop(
-					self.target, deps=deps,
-					soft_budget_s=timeout_s + 20, hard_deadline_s=timeout_s + 25, max_slices=10**7,
+					self.target,
+					deps=deps,
+					soft_budget_s=timeout_s + 20,
+					hard_deadline_s=timeout_s + 25,
+					max_slices=10**7,
 				)
 			except Exception as e:  # pragma: no cover - defensive
 				err.append(repr(e))
@@ -610,11 +635,13 @@ class StageB:
 		terminal_set = ("done", "errored", "cancelled", "finalizing")
 		accepts: dict = {}
 		rids: list = []
-		with self._pump_flags_on(), patch.object(
-			pump, "_idle_exit", lambda ctx: (_orig_idle(ctx) if stop.is_set() else False)
-		), patch.object(deps, "enqueue_finalize", lambda *a, **k: None):
+		with (
+			self._pump_flags_on(),
+			patch.object(pump, "_idle_exit", lambda ctx: (_orig_idle(ctx) if stop.is_set() else False)),
+			patch.object(deps, "enqueue_finalize", lambda *a, **k: None),
+		):
 			self._lapse_lease()
-			wu_rid = f"wu_{int(time.time()*1e6)%10**7}"
+			wu_rid = f"wu_{int(time.time() * 1e6) % 10**7}"
 			self._accept(wu_conv, wu_rid)
 			self.frappe.db.commit()
 			self.gateway.arm(wu_rid, "success")
@@ -625,8 +652,8 @@ class StageB:
 			while time.monotonic() < t_wait and self._fresh_state(wu_rid) not in terminal_set:
 				time.sleep(0.05)
 			# accept the MEASURED turns into the live reactor
-			for i, (c, arm) in enumerate(zip(convs, arms)):
-				rid = f"lr_{int(time.time()*1e6)%10**7}_{i}"
+			for i, (c, arm) in enumerate(zip(convs, arms, strict=False)):
+				rid = f"lr_{int(time.time() * 1e6) % 10**7}_{i}"
 				rids.append(rid)
 				accepts[rid] = time.monotonic()
 				self._accept(c, rid)
@@ -683,10 +710,12 @@ class StageB:
 				"dwell_ms_C4": P.summarize(dwell),
 				"max_observed_main_lane": max_lane,
 			}
-			log(f"  concurrency N={N}: ft_submit p50/p95={out[f'N={N}']['first_token_from_submit_ms']['p50']}/"
-			    f"{out[f'N={N}']['first_token_from_submit_ms']['p95']} "
-			    f"ft_disp p95={out[f'N={N}']['first_token_from_dispatch_ms']['p95']} "
-			    f"flush p95={out[f'N={N}']['flush_gap_ms_C3']['p95']} dwell p95={out[f'N={N}']['dwell_ms_C4']['p95']}")
+			log(
+				f"  concurrency N={N}: ft_submit p50/p95={out[f'N={N}']['first_token_from_submit_ms']['p50']}/"
+				f"{out[f'N={N}']['first_token_from_submit_ms']['p95']} "
+				f"ft_disp p95={out[f'N={N}']['first_token_from_dispatch_ms']['p95']} "
+				f"flush p95={out[f'N={N}']['flush_gap_ms_C3']['p95']} dwell p95={out[f'N={N}']['dwell_ms_C4']['p95']}"
+			)
 		return out
 
 	def _pilot_burst(self, deps):
@@ -713,7 +742,7 @@ class StageB:
 
 	def _pilot_storm(self, deps):
 		n = 6 if self.quick else 10
-		reps = 2 if self.quick else 2
+		reps = 2
 		ft, flush = [], []
 		terms = {}
 		for _ in range(reps):
@@ -741,7 +770,7 @@ class StageB:
 			self.warm_session(conv)
 		self._lapse_lease()
 		with self._pump_flags_on():
-			rid = f"cold_{int(time.time()*1e6)%10**7}"
+			rid = f"cold_{int(time.time() * 1e6) % 10**7}"
 			adm, t0 = self._accept(conv, rid)
 			self.frappe.db.commit()
 			self.gateway.arm(rid, "success")
@@ -764,15 +793,27 @@ class StageB:
 				if m["ft_submit"] is not None:
 					warm_ft.append(m["ft_submit"])
 		cold_ft = [v for v in (self._cold_one(deps, warm_session=True) for _ in range(N)) if v is not None]
-		cold_ft_bootstrap = [v for v in (self._cold_one(deps, warm_session=False) for _ in range(max(4, N // 3))) if v is not None]
+		cold_ft_bootstrap = [
+			v
+			for v in (self._cold_one(deps, warm_session=False) for _ in range(max(4, N // 3)))
+			if v is not None
+		]
 		warm_s, cold_s, cold_bs = P.summarize(warm_ft), P.summarize(cold_ft), P.summarize(cold_ft_bootstrap)
 		return {
 			"N_cold": N,
 			"warm_live_first_token_ms": warm_s,
 			"cold_boot_first_token_ms": cold_s,
 			"cold_boot_plus_session_bootstrap_ms": cold_bs,
-			"added_boot_delay_p50_ms": (None if cold_s["p50"] is None or warm_s["p50"] is None else round(cold_s["p50"] - warm_s["p50"], 2)),
-			"added_boot_delay_p95_ms": (None if cold_s["p95"] is None or warm_s["p95"] is None else round(cold_s["p95"] - warm_s["p95"], 2)),
+			"added_boot_delay_p50_ms": (
+				None
+				if cold_s["p50"] is None or warm_s["p50"] is None
+				else round(cold_s["p50"] - warm_s["p50"], 2)
+			),
+			"added_boot_delay_p95_ms": (
+				None
+				if cold_s["p95"] is None or warm_s["p95"] is None
+				else round(cold_s["p95"] - warm_s["p95"], 2)
+			),
 		}
 
 	def _pilot_stop_latency(self):
@@ -863,7 +904,7 @@ class StageB:
 		conv = self.mk_conv()
 		if warm:
 			self.warm_session(conv)
-		rid = f"kill_{name}_{int(time.time()*1e6)%10**7}"
+		rid = f"kill_{name}_{int(time.time() * 1e6) % 10**7}"
 		adm, _ = self._accept(conv, rid, transcript=name)
 		self.gateway.arm(rid, name, cadence_ms=cadence_ms, ack_timeout_hold_ms=1500)
 		return conv, rid
@@ -897,8 +938,14 @@ class StageB:
 
 			self._lapse_lease()  # ensure the shard lease is free to acquire
 			won, epoch = _ts.lease_acquire(self.target, "killprep")
-			ctx = _pump.PumpContext(relay_target_id=self.target, epoch=epoch, holder="killprep",
-			                        hop_counter=0, site=self.frappe.local.site, deps=deps)
+			ctx = _pump.PumpContext(
+				relay_target_id=self.target,
+				epoch=epoch,
+				holder="killprep",
+				hop_counter=0,
+				site=self.frappe.local.site,
+				deps=deps,
+			)
 			_pump._promote_queued(ctx)
 			self.frappe.db.commit()
 			st_before = self.state(rid)  # ready (prepared, awaiting dispatch)
@@ -913,7 +960,9 @@ class StageB:
 			"sessions_after_prepare": sess_after_prepare,
 			"sessions_final": sess_final,
 			"session_at_most_once": sess_final <= max(1, sess_after_prepare),
-			"PASS": self.state(rid) == "done" and len(self.content_of(rid)) > 0 and sess_final <= max(1, sess_after_prepare),
+			"PASS": self.state(rid) == "done"
+			and len(self.content_of(rid)) > 0
+			and sess_final <= max(1, sess_after_prepare),
 		}
 
 	def _kill_after_streaming(self, deps, *, recoverable: bool):
@@ -996,7 +1045,9 @@ class StageB:
 def main():
 	ap = argparse.ArgumentParser()
 	ap.add_argument("--site", default="patterntest.localhost")
-	ap.add_argument("--out", default="/home/vignesh/jarvis/jarvis-chat-concurrency-design/implementation/wp-2/stage-b")
+	ap.add_argument(
+		"--out", default="/home/vignesh/jarvis/jarvis-chat-concurrency-design/implementation/wp-2/stage-b"
+	)
 	ap.add_argument("--quick", action="store_true")
 	ap.add_argument("--equivalence", action="store_true")
 	ap.add_argument("--pilot", action="store_true")

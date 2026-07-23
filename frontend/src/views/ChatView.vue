@@ -1890,8 +1890,15 @@
 						</div>
 					</template>
 
-					<!-- live tool activity + thinking (Claude Code style) -->
-					<div v-if="activeTools.length || waiting" style="display: flex; gap: 12px">
+					<!-- live tool activity + thinking (Claude Code style). Suppressed
+					     while a queued chip is showing (F2): whenever the accept says
+					     the turn is queued, the "Queued — ~N ahead" chip WINS over this
+					     "Working on it…" / warming placeholder — never both, and never a
+					     stray warming spinner masking the chip. -->
+					<div
+						v-if="(activeTools.length || waiting) && !queuedTurn"
+						style="display: flex; gap: 12px"
+					>
 						<JarvisMark :size="28" :radius="7" style="margin-top: 2px" />
 						<div style="flex: 1; min-width: 0; padding-top: 3px">
 							<!-- the single tool running right now -->

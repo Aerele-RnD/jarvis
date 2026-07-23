@@ -520,10 +520,31 @@ def accept_or_queue(
 			# (reserved=0, pump_epoch=0); the pump reserves the credit at the
 			# queued->preparing PROMOTION point under the shard lock (D3 Race 2) and
 			# drives prepare->dispatch->settle. NO Phase-0 admit CAS, NO legacy
-			# dispatch(). A UI hint (will_dispatch) mirrors the Phase-0 admit read
-			# WITHOUT the CAS — the pump is authoritative.
+			# dispatch(). A UI hint (will_dispatch) mirrors the pump's OWN promote
+			# order WITHOUT the CAS — the pump is authoritative.
+			#
+			# F2 (will_dispatch race): the pump leaves EVERY accepted turn 'queued'
+			# and only promotes it to an inflight state on a later slice, so an
+			# occupier turn A can still be plain 'queued' (uncounted by
+			# _shard_inflight, which counts only _INFLIGHT_STATES) at the instant a
+			# second turn B is accepted. The OLD hint compared only
+			# `_shard_inflight < cap`, so it wrongly told B's sender "dispatched" —
+			# B's tab then sat on the "Working on it…" placeholder for the whole
+			# queue wait (never rendering the queued chip), while a RELOAD read the
+			# durable 'queued' row and showed the chip correctly (the reported split).
+			# The fix uses B's RANK among the shard's queued turns (interactive-first
+			# FIFO — the pump's own promote order): B dispatches immediately iff a
+			# free credit reaches its position, i.e. inflight + position <= cap. This
+			# never claims immediate dispatch when a still-'queued' occupier sits
+			# ahead of B. `_position_of` sees B's own (uncommitted) queued insert in
+			# this same transaction, and the shard lock (held until the commit below)
+			# blocks any concurrent accept/promote, so the rank is stable.
 			conv_busy = _conv_has_other_active_turn(conversation, run_id) or _conv_legacy_busy(conversation)
-			will_dispatch = (not conv_busy) and (_shard_inflight(target) < _max_inflight())
+			position = _position_of(run_id, target)
+			inflight = _shard_inflight(target)
+			will_dispatch = (
+				(not conv_busy) and position is not None and (inflight + position <= _max_inflight())
+			)
 			frappe.db.commit()  # releases both locks; row durable
 		else:
 			# Admit decision: dispatch iff nothing else is live on this conversation
@@ -562,7 +583,9 @@ def accept_or_queue(
 		_telemetry("accept_pump", run_id=run_id, target=target, turn_class=turn_class)
 		pump.ensure_pump(target)
 		pump.lpush_wake(target, run_id)
-		pos = None if will_dispatch else _position_of(run_id, target)
+		# Reuse the rank computed under the lock (the row is unchanged — the pump's
+		# promote is serialized on the same shard lock we just released).
+		pos = None if will_dispatch else position
 		return {
 			"ok": True,
 			"dispatched": bool(will_dispatch),
