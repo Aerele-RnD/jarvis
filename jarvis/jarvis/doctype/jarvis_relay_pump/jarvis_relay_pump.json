@@ -6,7 +6,12 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "relay_target_id"
+  "relay_target_id",
+  "pump_epoch",
+  "lease_holder",
+  "lease_expires_at",
+  "loop_heartbeat_ts",
+  "hop_counter"
  ],
  "fields": [
   {
@@ -17,12 +22,54 @@
    "unique": 1,
    "in_list_view": 1,
    "length": 140,
-   "description": "The shard key; the container/gateway this pump serves. Phase-0 minimal control row: the admission serializer takes SELECT ... FOR UPDATE on it. Pump fields arrive in WP-1."
+   "description": "The shard key; the container/gateway this pump serves. The admission serializer takes SELECT ... FOR UPDATE on it (OAR-1)."
+  },
+  {
+   "fieldname": "pump_epoch",
+   "fieldtype": "Int",
+   "label": "Pump Epoch",
+   "default": "0",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "The MONOTONIC fencing generation. Advanced transactionally on EVERY lease acquisition (cold start, takeover, self-hop). A pump caches E; every pump-owned write CASes WHERE pump_epoch=E; a stale pump's E no longer matches so it affects 0 rows and exits (D2 §3, D4)."
+  },
+  {
+   "fieldname": "lease_holder",
+   "fieldtype": "Data",
+   "label": "Lease Holder",
+   "length": 140,
+   "read_only": 1,
+   "description": "Current hop's RQ job id (jarvis-pump::<site>::hop<n>); diagnostic + takeover logging (D2 §3)."
+  },
+  {
+   "fieldname": "lease_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Lease Expires At",
+   "search_index": 1,
+   "read_only": 1,
+   "description": "Lease TTL wall-clock (~30s, heartbeat ~10s). A takeover is legal only when now > lease_expires_at OR the lease is vacant. MariaDB is authoritative; Redis mirrors for the fast wake path (D2 §3). Kept NULLABLE (D2 §3 states NOT NULL) so WP-0's bare _ensure_control_row insert stays valid; NULL = never-leased/vacant, treated as acquirable by lease_acquire's predicate."
+  },
+  {
+   "fieldname": "loop_heartbeat_ts",
+   "fieldtype": "Datetime",
+   "label": "Loop Heartbeat Ts",
+   "search_index": 1,
+   "read_only": 1,
+   "description": "Loop-WRITTEN liveness, DISTINCT from lease renewal (Amendment E). Catches the live-but-wedged pump the lease alone cannot (D2 §3)."
+  },
+  {
+   "fieldname": "hop_counter",
+   "fieldtype": "Int",
+   "label": "Hop Counter",
+   "default": "0",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "The <n> in the hop job id; increments on every self-requeue so the new hop gets a FRESH job id (Frappe job-id dedupe trap). Separate from pump_epoch: hop_counter mints ids, pump_epoch fences writes (D2 §3)."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-22 00:00:00.000000",
+ "modified": "2026-07-23 00:00:00.000000",
  "module": "Jarvis",
  "name": "Jarvis Relay Pump",
  "naming_rule": "By fieldname",

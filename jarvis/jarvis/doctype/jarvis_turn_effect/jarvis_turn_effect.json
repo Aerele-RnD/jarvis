@@ -1,0 +1,81 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:{turn}::{effect_name}",
+ "creation": "2026-07-23 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "turn",
+  "effect_name",
+  "status",
+  "attempts",
+  "applied_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "turn",
+   "fieldtype": "Link",
+   "label": "Turn",
+   "options": "Jarvis Chat Turn",
+   "reqd": 1,
+   "search_index": 1,
+   "in_list_view": 1,
+   "description": "The settled turn this effect belongs to (D2 §1a)."
+  },
+  {
+   "fieldname": "effect_name",
+   "fieldtype": "Data",
+   "label": "Effect Name",
+   "length": 64,
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "One of auto_title/rich_outputs/macro_advance/telemetry_flush/terminal_publish/usage; part of the UNIQUE (turn, effect_name) enforced via the composite doc name (D2 §1a)."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "pending\ndone",
+   "default": "pending",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Set done inside the effect's own idempotent (turn,effect) txn, or FORCE-DONE after FINALIZE_MAX_ATTEMPTS=3 (OAR-9)."
+  },
+  {
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Attempts",
+   "default": "0",
+   "description": "Incremented on every finalize try for this effect; the force-done budget (FINALIZE_MAX_ATTEMPTS=3) reads it (D2 §1a)."
+  },
+  {
+   "fieldname": "applied_at",
+   "fieldtype": "Datetime",
+   "label": "Applied At",
+   "description": "Stamp for the effect completion (D2 §1a)."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "module": "Jarvis",
+ "name": "Jarvis Turn Effect",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Jarvis Admin"
+  }
+ ],
+ "quick_entry": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
