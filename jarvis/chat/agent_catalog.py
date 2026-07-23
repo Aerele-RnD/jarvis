@@ -24,6 +24,8 @@ import os
 
 import frappe
 
+from jarvis.chat.agent_installability import reconcile_installations
+
 LISTING = "Jarvis Agent Listing"
 
 _AGENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agents")
@@ -96,6 +98,18 @@ def sync_agent_listings() -> dict:
 			# legacy agents. Mirrors the bundle store's rules.ids.json.
 			"rule_tokens": frappe.as_json(a.get("rule_tokens") or []),
 			"min_apps": frappe.as_json(a.get("min_apps") or []),
+			# R5-J9: the declarative operator write contract (manifest.writes[] —
+			# non-IP {doctype, mode} metadata the exporter emits). create_doc/
+			# update_doc bind a delegate call to it. Tolerant of an OLD registry
+			# that predates the field (``.get`` -> empty list): an operator whose
+			# registry carries no writes stays refused every write (fail-closed),
+			# an auditor's is always empty. NEVER a rule body/threshold.
+			"writes": frappe.as_json(a.get("writes") or []),
+			# R5-J11(c): the canonical pack-membership id (a NAME, never the as-coded
+			# predicate) the reviewer two-pack activation gate counts DISTINCT non-empty
+			# values of. Tolerant of an old registry that predates it (``.get`` -> "");
+			# an empty pack id contributes nothing to the distinct-pack count.
+			"rule_pack": (a.get("rule_pack") or "").strip(),
 			# A2: NEVER write a SKILL body into the customer DB — the proprietary
 			# playbook lives only in the private admin bundle store. Every listing
 			# is a body-free stub.
@@ -177,11 +191,17 @@ def build_agent_push_payload(owner: str | None = None) -> list[dict]:
 	installs = frappe.get_all(
 		"Jarvis Agent Installation",
 		filters=filters,
-		fields=["agent", "owner"],
+		fields=["agent", "owner", "installable"],
 		order_by="agent asc",
 	)
 	payload = []
 	for row in installs:
+		# R5-J8: a reconcile marks an install ``installable=0`` (never deletes) when
+		# a min_apps dependency vanished AFTER install while it was still enabled.
+		# Its enablement signal must not reach the container — the run gates already
+		# refuse it, and pushing it would install a bundle whose data is absent.
+		if not frappe.utils.cint(row.installable):
+			continue
 		listing = frappe.db.get_value(
 			LISTING,
 			row.agent,
@@ -241,5 +261,17 @@ def after_migrate() -> None:
 	except Exception:
 		frappe.log_error(
 			title="jarvis agent catalog: after_migrate sync failed",
+			message=frappe.get_traceback(),
+		)
+	# R5-J8: an app install/uninstall runs a migrate, so this is the reconcile
+	# point — re-mark every installation installable/not against the current site.
+	# Independent try/except: a reconcile hiccup must never fail a migration and
+	# must run even if the catalog sync above raised.
+	try:
+		rec = reconcile_installations()
+		frappe.logger("jarvis").info(f"agent installability reconciled: {rec}")
+	except Exception:
+		frappe.log_error(
+			title="jarvis agent catalog: after_migrate installability reconcile failed",
 			message=frappe.get_traceback(),
 		)

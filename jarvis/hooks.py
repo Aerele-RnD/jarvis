@@ -203,6 +203,12 @@ website_redirects = [
 # login so the provider prompt cache is warm before the chat page even loads.
 on_session_creation = ["jarvis.chat.prewarm.warm_on_login"]
 
+# A fresh install runs THIS and never after_migrate, so anything a day-1 site
+# needs that DocType sync does not produce has to be seeded here: the roles no
+# DocType names ("Knowledge Wiki Manager", the two support roles) plus the
+# Personalisation Settings defaults. See jarvis/install.py.
+after_install = "jarvis.install.after_install"
+
 # Keep the Agents Marketplace catalog (Jarvis Agent Listing) in lockstep with
 # the BUNDLED jarvis/agents/registry.json on every migrate (never a runtime
 # fetch — bundles are reviewed deploy artifacts, adversarial S2).

@@ -46,6 +46,19 @@ const routes = [
 		},
 	},
 	{
+		path: "/support",
+		name: "Support",
+		component: () => import("@/pages/support/SupportPage.vue"),
+		// Dual kill-switch (P2): support must be enabled fleet-wide AND the user must have access.
+		beforeEnter: (to, from, next) => {
+			next(
+				window.support_available && window.has_support_access
+					? undefined
+					: { name: "Chat" }
+			);
+		},
+	},
+	{
 		path: "/macros",
 		name: "MacrosList",
 		component: () => import("@/pages/macros/MacrosList.vue"),

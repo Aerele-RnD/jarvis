@@ -110,6 +110,25 @@ _EMPTY_SENTENCE = {
 }
 
 
+def _clean_attestation_allowed(result_state: str, findings_count, *, shadow: bool) -> bool:
+	"""R5-J1 TWO-CONDITION render gate for the "No exceptions were found" sentence
+	(and any equivalent clean/compliant attestation).
+
+	``run_state`` alone is a COVERAGE verdict — a completed close that surfaced
+	exceptions is still ``evaluated_clean`` (``coverage_reasons.RUN_STATES``). The
+	absence-of-exceptions claim is a SEPARATE, stronger statement, so it may render
+	ONLY when BOTH hold:
+
+	  1. ``result_state == evaluated_clean`` (every required check evaluated), AND
+	  2. the run persisted ZERO findings (``findings_count == 0``).
+
+	A run that evaluated full coverage but DID persist findings therefore can never
+	read "no exceptions", closing the false-clean render R4-P0-03/R5 targeted. The
+	sentence is also unconditionally suppressed while the installation is in
+	shadow/preview (PP-4 — a preview issues no outward attestation)."""
+	return not shadow and result_state == cr.CLEAN_RUN_STATE and int(findings_count or 0) == 0
+
+
 def _fallback_dashboard_html(
 	title: str,
 	findings: list,
@@ -177,16 +196,28 @@ def _fallback_dashboard_html(
 			f'<td style="padding:8px 10px;text-align:right;white-space:nowrap">{amt}</td></tr>'
 		)
 	if not rows:
-		# PP-4: in shadow the clean "No exceptions were found" sentence is UNREACHABLE
-		# even when result_state == evaluated_clean — a preview run issues no outward
-		# clean/compliant claim. Otherwise the sentence is PP-2 state-conditional.
+		# R5-J1 two-condition render gate: the clean "No exceptions were found"
+		# sentence renders ONLY when result_state == evaluated_clean AND the run
+		# persisted ZERO findings (``total``), and NEVER while shadow (PP-4 — a
+		# preview issues no outward attestation). ``_clean_attestation_allowed``
+		# is the single predicate both conditions flow through, so a run that
+		# persisted findings can never read "no exceptions" even under full
+		# coverage. For every other case the PP-2 state-conditional (non-clean)
+		# sentence renders; ``evaluated_clean`` WITH findings can never reach the
+		# clean sentence because condition 2 fails.
 		if shadow:
 			sentence = (
 				"Preview (shadow) run — findings are visible to the reviewer only; "
 				"no clean or compliant attestation is issued while this capability is in preview."
 			)
+		elif _clean_attestation_allowed(result_state, total, shadow=shadow):
+			sentence = _EMPTY_SENTENCE["evaluated_clean"]
 		else:
-			sentence = _EMPTY_SENTENCE.get(result_state, _EMPTY_SENTENCE["partial"])
+			# Not both conditions met: never the clean sentence. An evaluated_clean
+			# verdict with findings present (condition 2 failed) is downgraded to the
+			# non-clean partial-style sentence rather than the "no exceptions" claim.
+			state_for_sentence = result_state if result_state != cr.CLEAN_RUN_STATE else "partial"
+			sentence = _EMPTY_SENTENCE.get(state_for_sentence, _EMPTY_SENTENCE["partial"])
 		rows = (
 			'<tr><td colspan="5" style="padding:14px 10px;color:var(--jarvis-muted,#6b7280)">'
 			f"{_esc(sentence)}</td></tr>"

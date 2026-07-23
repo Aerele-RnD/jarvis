@@ -365,3 +365,33 @@ export const fileboxDeleteBulk = (conversations) =>
 	call("jarvis.chat.filebox.delete_inbound_bulk", {
 		conversations: JSON.stringify(conversations || []),
 	});
+
+// --- Support panel (Plan 3) -------------------------------------------------
+export const supportListTickets = () => call("jarvis.support.api.list_tickets");
+export const supportCreateTicket = (subject, body) =>
+	call("jarvis.support.api.create_ticket", { subject, body: body || "" });
+export const supportGetThread = (ticket) => call("jarvis.support.api.get_thread", { ticket });
+export const supportReply = (ticket, body) => call("jarvis.support.api.reply", { ticket, body });
+export const supportCloseTicket = (ticket) => call("jarvis.support.api.close_ticket", { ticket });
+export const supportAwaitingCount = () => call("jarvis.support.api.awaiting_count");
+
+// Same-origin GET so <img>/<a> resolve against the bench; session cookie authenticates.
+export const supportDownloadUrl = (ticket, fileUrl) =>
+	`/api/method/jarvis.support.media.download?ticket=${encodeURIComponent(
+		ticket
+	)}&file_url=${encodeURIComponent(fileUrl)}`;
+
+export async function supportUpload(ticket, file) {
+	const fd = new FormData();
+	fd.append("ticket", ticket);
+	fd.append("file", file, file.name);
+	const r = await fetch("/api/method/jarvis.support.media.upload", {
+		method: "POST",
+		headers: { "X-Frappe-CSRF-Token": window.csrf_token || "" },
+		body: fd,
+		credentials: "include",
+	});
+	const data = await r.json();
+	const msg = data.message || data;
+	return msg.data || msg;
+}

@@ -56,6 +56,10 @@ def _mk_user(email: str) -> str:
 
 
 def _mk_listing(slug: str) -> str:
+	# One synthetic pack per agent: the two-pack ceiling preflight counts distinct
+	# non-empty rule_pack values (R5-P1-02 — the agent-slug fallback is gone), so
+	# the "reviewer covers two packs" scaffolding these tests rely on must declare
+	# real pack ids. Distinct-per-slug preserves the original intent exactly.
 	if not frappe.db.exists(LISTING, slug):
 		frappe.get_doc(
 			{
@@ -64,8 +68,12 @@ def _mk_listing(slug: str) -> str:
 				"title": f"Hardening {slug}",
 				"rule_tokens": json.dumps(["tok"]),
 				"doctypes_required": json.dumps([]),
+				"rule_pack": f"pack-{slug}",
 			}
 		).insert(ignore_permissions=True)
+	else:
+		# A listing left by an earlier run may predate the rule_pack field.
+		frappe.db.set_value(LISTING, slug, "rule_pack", f"pack-{slug}", update_modified=False)
 	return slug
 
 

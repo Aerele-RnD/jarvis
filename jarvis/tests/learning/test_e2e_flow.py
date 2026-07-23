@@ -44,6 +44,15 @@ class TestPatternLearningE2E(FrappeTestCase):
 		for n in getattr(cls, "_parked", []):
 			if frappe.db.exists("Jarvis Custom Skill", n):
 				frappe.db.set_value("Jarvis Custom Skill", n, "enabled", 1, update_modified=False)
+		# drop the dedicated role users this suite owns (best-effort; the helper
+		# self-heals their roles on the next run, so a link-blocked delete is fine)
+		for _role in ("Sales User", "Accounts User"):
+			_email = f"e2e-{_role.lower().replace(' ', '-')}@example.com"
+			if frappe.db.exists("User", _email):
+				try:
+					frappe.delete_doc("User", _email, force=True, ignore_permissions=True)
+				except Exception:
+					pass
 		frappe.db.commit()
 		super().tearDownClass()
 
@@ -158,14 +167,28 @@ class TestPatternLearningE2E(FrappeTestCase):
 
 
 def _user_with_role(role):
-	"""Return an existing enabled user holding `role`, or Administrator as a fallback."""
-	users = frappe.get_all("Has Role", filters={"role": role, "parenttype": "User"}, pluck="parent", limit=5)
-	for u in users:
-		if u not in ("Administrator", "Guest") and frappe.db.get_value("User", u, "enabled"):
-			return u
-	# create a throwaway user for the role
+	"""Return a dedicated, enabled test user holding EXACTLY ``role``.
+
+	Turn-injection scoping is asserted both ways, so the mismatched-role user
+	must hold the target role yet be NEITHER privileged (Administrator / System
+	Manager, which ``learned_skill_clause`` auto-passes) NOR a holder of the
+	positive role. An ambient bench user cannot promise that: on a shared dev
+	box - or a multi-module CI run where an earlier suite commits fixtures - the
+	first ``Has Role`` match for e.g. "Accounts User" is frequently a user that
+	also carries System Manager, which folds every managed skill into the clause
+	and defeats scoping (the historical flake: acct_clause == sales_clause). So
+	we own the user outright - deterministic email, roles reconciled to exactly
+	the target, enabled, per-user roles cache dropped - making the assertion
+	independent of suite ordering and ambient residue.
+	"""
 	email = f"e2e-{role.lower().replace(' ', '-')}@example.com"
-	if not frappe.db.exists("User", email):
+	if frappe.db.exists("User", email):
+		u = frappe.get_doc("User", email)
+		u.enabled = 1
+		u.set("roles", [{"role": role}])
+		u.flags.ignore_permissions = True
+		u.save()
+	else:
 		u = frappe.get_doc(
 			{
 				"doctype": "User",
@@ -177,5 +200,8 @@ def _user_with_role(role):
 		)
 		u.flags.ignore_permissions = True
 		u.insert()
-		frappe.db.commit()
+	frappe.db.commit()
+	# roles ride frappe.get_roles' per-user redis cache, which is NOT bypassed
+	# under in_test; drop it so learned_skill_clause reads the reconciled set.
+	frappe.clear_cache(user=email)
 	return email

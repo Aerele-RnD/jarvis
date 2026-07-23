@@ -68,7 +68,15 @@ def run_due_agent_audits() -> None:
 	due = frappe.get_all(
 		INSTALLATION,
 		filters={"enabled": 1, "schedule_enabled": 1, "next_run_at": ["<=", now]},
-		fields=["name", "owner", "run_as_user", "agent", "schedule_frequency", "schedule_time"],
+		fields=[
+			"name",
+			"owner",
+			"run_as_user",
+			"agent",
+			"schedule_frequency",
+			"schedule_time",
+			"installable",
+		],
 	)
 	if not due:
 		return
@@ -83,6 +91,17 @@ def run_due_agent_audits() -> None:
 			_advance(row, now)
 			continue
 		seen.add(key)
+
+		# R5-J8: never dispatch a scheduled run for a non-installable capability. A
+		# reconcile marks an install installable=0 when a min_apps dependency
+		# disappeared after install (the row is kept, not deleted); its run has no
+		# data. Record why + consume the slot so the cadence does not busy-retry.
+		if not frappe.utils.cint(row.installable):
+			_record_failed(
+				row, "scheduled audit skipped: capability not installable (app_absent_or_ineligible)"
+			)
+			_advance(row, now)
+			continue
 
 		# Only auditor agents run scheduled scans; an operator install with a
 		# schedule set just consumes its slot (it drafts through the board, not
