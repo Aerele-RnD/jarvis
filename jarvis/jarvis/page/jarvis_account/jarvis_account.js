@@ -2047,7 +2047,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			<p class="ja-sub">${esc(ctaPrimary.subtitle)}</p>
 			<div class="ja-actions">
 				${
-					ctaPrimary
+					ctaPrimary.action
 						? `<button class="ja-btn ja-btn-primary" id="ja-cta-primary" data-action="${
 								ctaPrimary.action
 						  }">${esc(ctaPrimary.label)}</button>`
@@ -2099,24 +2099,40 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		return `<p class="ja-sub" style="margin-top:8px">Switching to ${name}${on}. You keep your current plan until then.${cost}</p><button class="ja-btn ja-btn-ghost" id="ja-cta-keep" data-action="keep-plan">Keep current plan</button>`;
 	}
 
+	// When autopay is live, renew() refuses (a one-shot order on top of the
+	// mandate double-charges) for exactly the auto-charging statuses. can_renew
+	// mirrors that guard, so gate on it rather than on the status alone - or we
+	// offer a button whose only outcome is "Couldn't start payment".
+	function autoRenewNote() {
+		const end = account.current_period_end
+			? String(frappe.datetime.str_to_user(account.current_period_end)).split(" ")[0]
+			: "";
+		return end
+			? `Your plan renews automatically on ${end} using your saved payment method. There's nothing to pay now.`
+			: "Your plan renews automatically using your saved payment method. There's nothing to pay now.";
+	}
+
 	function primaryCta(sub) {
 		const upgrade = (account.upgrade_plans || []).length > 0;
+		const renewable = !!account.can_renew;
 		switch (sub) {
 			case "Active":
-				return upgrade
-					? {
-							action: "upgrade",
-							label: "Upgrade plan",
-							heading: "Want more capacity?",
-							subtitle:
-								"Move to a higher plan - you only pay the prorated difference for the remaining period.",
-					  }
-					: {
-							action: "renew",
-							label: "Renew now",
-							heading: "Renew early",
-							subtitle: "Add another billing cycle to your current plan.",
-					  };
+				if (upgrade)
+					return {
+						action: "upgrade",
+						label: "Upgrade plan",
+						heading: "Want more capacity?",
+						subtitle:
+							"Move to a higher plan - you only pay the prorated difference for the remaining period.",
+					};
+				if (renewable)
+					return {
+						action: "renew",
+						label: "Renew now",
+						heading: "Renew early",
+						subtitle: "Add another billing cycle to your current plan.",
+					};
+				return { action: "", heading: "Auto-renewal is on", subtitle: autoRenewNote() };
 			case "Cancelled":
 				return {
 					action: "renew",
@@ -2125,6 +2141,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					subtitle: "Pay now to keep service running past the current period end.",
 				};
 			case "Past Due":
+				if (!renewable)
+					// The mandate is live and Razorpay retries on its own schedule;
+					// a manual payment here would stack on top of that retry.
+					return {
+						action: "",
+						heading: "Payment retrying",
+						subtitle:
+							"We'll charge your saved payment method again automatically. No manual payment is needed.",
+					};
+			// falls through - a dead mandate means this is a normal reactivation
 			case "Expired":
 				return {
 					action: "renew",
@@ -2145,7 +2171,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function secondaryCta(sub, hasUpgrade) {
-		if (sub === "Active" && hasUpgrade) return { action: "renew", label: "Renew now" };
+		// Same rule as the primary: never offer a renewal the server refuses.
+		if (sub === "Active" && hasUpgrade && account.can_renew)
+			return { action: "renew", label: "Renew now" };
 		if (sub === "Cancelled" && hasUpgrade) return { action: "upgrade", label: "Upgrade plan" };
 		return null;
 	}
