@@ -67,6 +67,7 @@ correct standalone; WP-1d replaces them with the full prepare/finalize jobs.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -248,6 +249,96 @@ def drain_wake(target: str, max_items: int = 512) -> list[str]:
 	except Exception:
 		pass
 	return out
+
+
+# --------------------------------------------------------------------------- #
+# Wake thread — the accept wake-bus as an EVENT-DRIVEN block interrupt (C1)
+# --------------------------------------------------------------------------- #
+#
+# WP-2 Stage B found warm first-token ~+513ms over legacy: a slice's idle wait is
+# ``mux.dispatch(block_s=SLICE_BLOCK_S)`` (an Event wait the mux sets on frame
+# delivery, and now — WP-2 C1 fix — on a resolved ack), but NOTHING in the pump
+# process watched the CROSS-PROCESS accept wake bus. accept_send LPUSHes the bus
+# from the web worker AFTER its durable commit (§10.6), yet the running reactor was
+# blocked in a slice that only re-scanned `queued` rows at the NEXT slice top — so an
+# uncontended new turn waited up to the SLICE_BLOCK_S ceiling just to be promoted.
+#
+# This thread BLOCKS on the wake bus (BRPOP) and pokes the mux the instant an accept
+# (or a prepare -> ready) LPUSHes, waking the slice IMMEDIATELY — no polling theatre.
+# It runs ON ITS OWN thread (like the mux reader) so the block is truly event-driven;
+# the slice then waits on whichever of {frame, ack, accept wake} fires first, all via
+# the ONE mux ``_wake`` Event. The redis client + the fully-resolved site-scoped key
+# are captured on the PUMP thread (frappe.local valid there) and used RAW in the child
+# via ``execute_command`` — the exact un-wrapped path lpush_wake/drain_wake use, which
+# needs no frappe.local (RedisWrapper does not override execute_command). Best-effort:
+# any redis error just ends the thread — SLICE_BLOCK_S stays the fallback tick and
+# _promote_queued scans `queued` rows every slice regardless (the wake is advisory,
+# so a lost/duplicate/late wake is harmless, never a stuck turn).
+
+# BRPOP block ceiling: integer secs (valid on every redis, incl. <6.0); a real LPUSH
+# returns AT ONCE regardless, so this only bounds how often an idle thread re-checks
+# the stop flag. Kept small so per-hop thread churn (kill/e2e phases) stays bounded.
+WAKE_BRPOP_TIMEOUT_S = 1
+_WAKE_STOP_SENTINEL = "__pump_wake_stop__"
+
+
+class _WakeThread:
+	"""Daemon thread that turns the accept wake bus into an immediate mux poke (C1)."""
+
+	def __init__(self, target: str, mux: RelayMux):
+		self._target = target
+		self._mux = mux
+		self._stop = threading.Event()
+		self._thread: threading.Thread | None = None
+		# Capture the client + explicit key HERE (pump thread: frappe.local is valid).
+		try:
+			self._conn = frappe.cache()
+			self._key = _wake_key(target)
+		except Exception:
+			self._conn = None
+			self._key = None
+
+	def start(self) -> "_WakeThread":
+		if self._conn is None or self._key is None:
+			return self
+		self._thread = threading.Thread(target=self._run, name=f"pump-wake::{self._target}", daemon=True)
+		self._thread.start()
+		return self
+
+	def _run(self) -> None:
+		while not self._stop.is_set():
+			try:
+				# Blocking pop: returns [key, value] the instant an accept LPUSHes, else
+				# None after the ceiling. Raw conn + explicit key — no frappe.local.
+				item = self._conn.execute_command("BRPOP", self._key, WAKE_BRPOP_TIMEOUT_S)
+			except Exception:
+				return  # redis unavailable — fall back to the SLICE_BLOCK_S ceiling
+			if self._stop.is_set():
+				return
+			if item is None:
+				continue
+			# Drain any OTHER queued wake commands non-blocking (raw RPOP on the captured
+			# conn+key — no frappe.local needed in this bare thread), then poke ONCE. The
+			# slice re-scans `queued` rows regardless, so the drained ids are advisory.
+			try:
+				for _ in range(512):
+					if self._conn.execute_command("RPOP", self._key) is None:
+						break
+			except Exception:
+				pass
+			self._mux.poke()
+
+	def stop(self) -> None:
+		self._stop.set()
+		# Unblock a mid-wait BRPOP so the daemon exits promptly (bounds thread churn
+		# across the many bounded hops the kill/e2e phases run). Best-effort.
+		try:
+			if self._key is not None:
+				frappe.cache().execute_command("LPUSH", self._key, _WAKE_STOP_SENTINEL)
+		except Exception:
+			pass
+		if self._thread is not None:
+			self._thread.join(timeout=2.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -622,6 +713,11 @@ def run_pump_hop(
 		frappe.log_error(title="pump.make_mux", message=frappe.get_traceback())
 		return {"acquired": True, "exit": "no_transport", "epoch": epoch}
 
+	# C1 (WP-2 Stage B): watch the cross-process accept wake bus on its own thread so
+	# an accept's LPUSH interrupts the slice's idle block AT ONCE (event-driven, not
+	# the SLICE_BLOCK_S poll ceiling). Best-effort; stopped in the finally.
+	wake = _WakeThread(relay_target_id, ctx.mux).start()
+
 	outcome = "handoff"
 	op_errors = 0
 	try:
@@ -662,6 +758,10 @@ def run_pump_hop(
 	except ts.LeaseLostExit:
 		outcome = "lease_lost"
 	finally:
+		try:
+			wake.stop()
+		except Exception:
+			pass
 		try:
 			if ctx.mux is not None:
 				ctx.mux.stop()
@@ -1456,11 +1556,7 @@ def _reattach_or_recover(ctx: PumpContext, r: dict, active_keys) -> None:
 	recovery tail RPC is ISSUED non-blocking and resolved by ``_poll_recoveries``,
 	so a crash-reconcile of N gone turns does not serialize N×15s of blocking waits
 	off the delta-draining critical path."""
-	if (
-		r.get("state") == "streaming"
-		and active_keys is not None
-		and int(r.get("last_event_seq") or 0) > 0
-	):
+	if r.get("state") == "streaming" and active_keys is not None and int(r.get("last_event_seq") or 0) > 0:
 		session_key = _load_dispatch(_read_dispatch_row(r["run_id"]) or {}).get("session_key")
 		if session_key and session_key not in active_keys:
 			_issue_recovery_tail(ctx, r, session_key)
@@ -1969,9 +2065,7 @@ def _watchdog_shard(target: str, deps: PumpDeps, summary: dict) -> None:
 			# reserved turn. A turn that was admitted + given a credit must not be
 			# cancelled for a starvation that was not its fault. recover_to_queued
 			# drops the stale prepare refs so it re-prepares from scratch.
-			if reserved and _reservation_stale(
-				r.get("reservation_expires_at"), PREPARE_DISPATCH_DEADLINE_S
-			):
+			if reserved and _reservation_stale(r.get("reservation_expires_at"), PREPARE_DISPATCH_DEADLINE_S):
 				if ts.mark_recovering(run_id, v):
 					frappe.db.commit()
 					if ts.recover_to_queued(run_id, v + 1):
@@ -2326,7 +2420,9 @@ def _emit_stream_telemetry(rs: "_RunState") -> None:
 				_telemetry("first_token_ms", run_id=rs.run_id, ms=max(0, now_ms - rs.accept_ms))
 			# Stamp first_event_at once (dwell baseline) + emit the dispatch->first-event
 			# dwell proxy from the durable timestamps.
-			row = frappe.db.get_value(TURN, rs.run_id, ["dispatching_at", "first_event_at"], as_dict=True) or {}
+			row = (
+				frappe.db.get_value(TURN, rs.run_id, ["dispatching_at", "first_event_at"], as_dict=True) or {}
+			)
 			if not row.get("first_event_at"):
 				try:
 					frappe.db.set_value(
@@ -2341,7 +2437,9 @@ def _emit_stream_telemetry(rs: "_RunState") -> None:
 				except Exception:
 					pass
 		elif rs.last_publish_mono:
-			_telemetry("flush_gap_ms", run_id=rs.run_id, ms=round((now_mono - rs.last_publish_mono) * 1000.0, 1))
+			_telemetry(
+				"flush_gap_ms", run_id=rs.run_id, ms=round((now_mono - rs.last_publish_mono) * 1000.0, 1)
+			)
 		rs.last_publish_mono = now_mono
 	except Exception:
 		pass

@@ -125,10 +125,13 @@ def invoke_settlement(
 		# SUX-6: was_recovered tells the client a VISIBLE replacement is legitimate
 		# (the answer changed via snapshot recovery); on the normal path it is 0 and
 		# the client skips re-rendering an identical terminal.
-		pub_kind, pub_extra = "run:end", {
-			"enrichment_pending": True,
-			"was_recovered": bool(frappe.db.get_value(TURN, run_id, "was_recovered")),
-		}
+		pub_kind, pub_extra = (
+			"run:end",
+			{
+				"enrichment_pending": True,
+				"was_recovered": bool(frappe.db.get_value(TURN, run_id, "was_recovered")),
+			},
+		)
 
 	if not won:
 		# OARF-3 / §10.11: a 0-rows settlement CAS is NOT unconditionally a lease

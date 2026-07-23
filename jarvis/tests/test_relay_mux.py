@@ -109,7 +109,12 @@ def _chat_final_frame(run_id, session_key, text="hi"):
 	return {
 		"type": "event",
 		"event": "chat",
-		"payload": {"runId": run_id, "sessionKey": session_key, "state": "final", "message": {"content": content}},
+		"payload": {
+			"runId": run_id,
+			"sessionKey": session_key,
+			"state": "final",
+			"message": {"content": content},
+		},
 	}
 
 
@@ -171,14 +176,19 @@ def _terminal_frame(run_id, session_key, terminal):
 	payload = {"runId": run_id, "sessionKey": session_key}
 	if kind == "final":
 		text = terminal.get("text")
-		payload.update({"state": "final", "message": {"content": [{"type": "text", "text": text}] if text else []}})
+		payload.update(
+			{"state": "final", "message": {"content": [{"type": "text", "text": text}] if text else []}}
+		)
 	elif kind == "failed_final":
 		payload.update({"state": "final", "message": {"content": [], "stopReason": "error"}})
 	elif kind == "aborted":
 		payload.update({"state": "aborted", "errorMessage": "aborted by user"})
 	else:
 		payload.update(
-			{"state": terminal.get("state", "error"), "errorMessage": terminal.get("errorMessage", "run error")}
+			{
+				"state": terminal.get("state", "error"),
+				"errorMessage": terminal.get("errorMessage", "run error"),
+			}
 		)
 	return {"type": "event", "event": "chat", "payload": payload}
 
@@ -257,7 +267,12 @@ class _DoubleGateway:
 		if method == "sessions.get":
 			key = params.get("key")
 			self._push(
-				{"type": "res", "id": rid, "ok": True, "payload": {"messages": self._sessions_get.get(key, [])}}
+				{
+					"type": "res",
+					"id": rid,
+					"ok": True,
+					"payload": {"messages": self._sessions_get.get(key, [])},
+				}
 			)
 			return
 		# every other RPC (sessions.patch / sessions.create / chat.abort / ...)
@@ -281,7 +296,9 @@ class _DoubleGateway:
 			# bounded future fires the ack-timeout sentinel first).
 			threading.Timer(
 				(transcript.get("ack_hold_s") or 3.0),
-				lambda: self._push({"type": "res", "id": rid, "ok": True, "payload": {"runId": run_id, "status": "started"}}),
+				lambda: self._push(
+					{"type": "res", "id": rid, "ok": True, "payload": {"runId": run_id, "status": "started"}}
+				),
 			).start()
 			return
 
@@ -312,7 +329,11 @@ class _DoubleGateway:
 			if drop_after is not None and idx >= drop_after:
 				self._push(OpenclawUnreachableError("fake mid-stream ws drop", code=None))
 				return
-		self._push(_terminal_frame(run_id, session_key, transcript.get("terminal") or {"kind": "final", "text": None}))
+		self._push(
+			_terminal_frame(
+				run_id, session_key, transcript.get("terminal") or {"kind": "final", "text": None}
+			)
+		)
 
 
 # --------------------------------------------------------------------------- #
@@ -344,11 +365,17 @@ class TestRelayMuxWhiteBox(FrappeTestCase):
 		mux = self._mux()
 		mux.register_run("known", _Recorder().handler(), session_key="sk")
 		before = mux.stats()["stray_frames"]
-		mux._classify(_agent_frame("UNKNOWN", "sk", "assistant", {"text": "x", "delta": "x"}))  # unknown runId
+		mux._classify(
+			_agent_frame("UNKNOWN", "sk", "assistant", {"text": "x", "delta": "x"})
+		)  # unknown runId
 		mux._classify({"type": "res", "id": "nope", "ok": True, "payload": {}})  # unknown req id
-		mux._classify({"type": "event", "event": "agent", "payload": {"stream": "assistant", "data": {}}})  # no runId
+		mux._classify(
+			{"type": "event", "event": "agent", "payload": {"stream": "assistant", "data": {}}}
+		)  # no runId
 		mux._classify({"type": "weird", "blob": 1})  # unknown frame type
-		mux._classify({"type": "event", "event": "mystery", "payload": {"runId": "known"}})  # unknown event kind
+		mux._classify(
+			{"type": "event", "event": "mystery", "payload": {"runId": "known"}}
+		)  # unknown event kind
 		self.assertEqual(mux.stats()["stray_frames"], before + 5)
 		# a KNOWN-run agent frame still routes (no stray) — proves it never crashed.
 		mux._classify(_agent_frame("known", "sk", "assistant", {"text": "ok", "delta": "ok"}))
@@ -393,11 +420,15 @@ class TestRelayMuxWhiteBox(FrappeTestCase):
 		lane = mux.register_run("r", rec.handler(), session_key="s")
 		for _ in range(rm.LANE_QUEUE_MAX):
 			mux._classify(
-				_agent_frame("r", "s", "item", {"kind": "tool", "phase": "start", "name": "t", "toolCallId": "c"})
+				_agent_frame(
+					"r", "s", "item", {"kind": "tool", "phase": "start", "name": "t", "toolCallId": "c"}
+				)
 			)
 		self.assertEqual(lane.state, "active")
 		mux._classify(
-			_agent_frame("r", "s", "item", {"kind": "tool", "phase": "start", "name": "t", "toolCallId": "c2"})
+			_agent_frame(
+				"r", "s", "item", {"kind": "tool", "phase": "start", "name": "t", "toolCallId": "c2"}
+			)
 		)
 		self.assertEqual(lane.state, "quarantined")
 		mux.dispatch()  # delivers the deferred quarantine notification
@@ -492,7 +523,9 @@ class TestRelayMuxReaderLoop(FrappeTestCase):
 			self.assertEqual(rec.terminal[0], "relay:final", run_id)
 			self.assertEqual(rec.terminal[1].get("text"), _term_text(name), run_id)  # right lane's own answer
 			seqs = [dd[0] for dd in rec.deltas]
-			self.assertTrue(all(b > a for a, b in itertools.pairwise(seqs)), run_id)  # per-lane order preserved
+			self.assertTrue(
+				all(b > a for a, b in itertools.pairwise(seqs)), run_id
+			)  # per-lane order preserved
 			self.assertEqual(rec.deltas[-1][1], _term_text(name), run_id)
 		self.assertTrue(len(recs["r1"][0].tools) >= 6)  # tool-heavy exercised precious tool path
 		self.assertEqual(mux.stats()["stray_frames"], 0)

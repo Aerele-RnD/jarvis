@@ -250,10 +250,10 @@ class _Lane:
 
 	def offer(self, ev: _LaneEvent) -> str:
 		"""Reader-side, non-blocking enqueue. Returns:
-		  * ``"ok"``        — buffered.
-		  * ``"dropped"``   — LOSSY overflow: an old delta was dropped (count it).
-		  * ``"quarantine"``— PRECIOUS overflow: the lane must be quarantined.
-		  * ``"closed"``    — lane is no longer active (drop, treat as stray)."""
+		* ``"ok"``        — buffered.
+		* ``"dropped"``   — LOSSY overflow: an old delta was dropped (count it).
+		* ``"quarantine"``— PRECIOUS overflow: the lane must be quarantined.
+		* ``"closed"``    — lane is no longer active (drop, treat as stray)."""
 		with self.lock:
 			if self.state != "active":
 				return "closed"
@@ -378,6 +378,15 @@ class RelayMux:
 		with self._breaker_lock:
 			return self._breaker_open
 
+	def poke(self) -> None:
+		"""C1 (WP-2 Stage B): wake a slice blocked in ``dispatch(block_s>0)`` from
+		OUTSIDE the reader loop. The pump's wake-bus thread calls this the instant an
+		accept LPUSHes the cross-process wake bus, so the slice's idle block waits on
+		whichever of {a delivered frame, a resolved ack, an accept wake} fires first —
+		no polling theatre. Setting the same ``_wake`` Event the reader uses keeps the
+		block single-sourced; a spurious poke costs at most one no-op drain."""
+		self._wake.set()
+
 	# -- reader loop (the sole _recv owner, R-15) --------------------------- #
 
 	def _read_loop(self) -> None:
@@ -435,8 +444,17 @@ class RelayMux:
 					details=details if isinstance(details, dict) else None,
 				)
 			)
+			# C1 (WP-2 Stage B): a resolved RPC is a delivery too — poke the block so a
+			# slice waiting in dispatch() wakes AT ONCE (see set_result path below).
+			self._wake.set()
 			return
 		fut.set_result(frame)
+		# C1 (WP-2 Stage B): the chat.send ack resolves HERE, on the reader loop. Set
+		# the same wake Event a delivered frame sets so the pump's slice returns from
+		# its idle block immediately and _poll_acks runs mark_streaming this slice —
+		# instead of dead-blocking to the SLICE_BLOCK_S poll ceiling before the turn
+		# can leave `dispatching` and stream its first token.
+		self._wake.set()
 
 	def _route_event(self, frame: dict) -> None:
 		event = frame.get("event")
@@ -504,7 +522,10 @@ class RelayMux:
 		if state == "final":
 			text = _chat_final_text(payload)
 			if _chat_final_failed(payload, text):
-				term_kind, term_payload = "relay:error", {"state": "failed_final", "error": FAILED_FINAL_ERROR}
+				term_kind, term_payload = (
+					"relay:error",
+					{"state": "failed_final", "error": FAILED_FINAL_ERROR},
+				)
 			else:
 				term_kind, term_payload = "relay:final", {"text": text}
 		elif state in ("error", "aborted"):
@@ -795,9 +816,7 @@ class RelayMux:
 		if self._closed.is_set():
 			return
 		detail = str(exc)
-		sentinel = OpenclawUnreachableError(
-			f"relay transport lost: {detail}", code="ack-timeout"
-		)
+		sentinel = OpenclawUnreachableError(f"relay transport lost: {detail}", code="ack-timeout")
 		# 1. fail ALL pending RPC futures (immediately, no dead-wait).
 		with self._pending_lock:
 			futs = list(self._pending.values())
