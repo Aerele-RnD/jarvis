@@ -11,7 +11,7 @@ import {
 } from "./pool.js";
 import { PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig } from "./pool.js";
 import { defaultSubscriptionModel } from "./pool.js";
-import { apiKeyModelHealth, subscriptionAccountHealth } from "./pool.js";
+import { apiKeyModelHealth, subscriptionAccountHealth, dirtyAccountHealth } from "./pool.js";
 import { LOCAL_PROVIDER_IDS, effectiveApiKey } from "./pool.js";
 
 test("defaultSubscriptionModel: per-upstream default, openai fallback", () => {
@@ -745,4 +745,78 @@ test("subscriptionAccountHealth: no verdict at all -> neutral (grey), never gree
 	assert.deepEqual(subscriptionAccountHealth("", opts), { level: "neutral" });
 	assert.deepEqual(subscriptionAccountHealth(undefined, opts), { level: "neutral" });
 	assert.deepEqual(subscriptionAccountHealth("not_applicable", opts), { level: "neutral" });
+});
+
+// ---- subscriptionAccountHealth: an UNRECOGNISED status must never read as healthy
+// (review finding #1 on PR #410). "unverified"/"unchecked"/"verified"/falsy/
+// "not_applicable" are the only strings this function knows about - anything else (a
+// future fleet verdict this frontend enum hasn't caught up to yet, or a typo upstream)
+// used to fall through to knownGood's default, painting solid green in the
+// failover-list editor (knownGood defaults true there) for an account the backend is
+// actively reporting a problem on. That is the exact false-positive-green defect this
+// whole PR exists to kill, reintroduced through an unrecognised string instead of the
+// old hardcoded singleMode short-circuit. An unknown verdict must fail towards "not
+// proven", the same as "unchecked". ----
+
+test("subscriptionAccountHealth: an unrecognised status is treated as unchecked, NEVER green, regardless of knownGood", () => {
+	const known = subscriptionAccountHealth("unchecked");
+	assert.deepEqual(subscriptionAccountHealth("rate_limited"), known);
+	assert.deepEqual(subscriptionAccountHealth("rate_limited", { knownGood: true }), known);
+	assert.deepEqual(subscriptionAccountHealth("rate_limited", { knownGood: false }), known);
+	// A typo'd/legacy verdict string behaves identically - the enum is closed, not the
+	// set of strings a real or misbehaving fleet might ever send.
+	assert.deepEqual(subscriptionAccountHealth("Unverified"), known);
+});
+
+test("subscriptionAccountHealth: an unrecognised status is never 'ok' even in the failover-list editor (knownGood defaults true)", () => {
+	// This is the exact scenario the finding describes: the failover-list editor calls
+	// subscriptionAccountHealth with its default options (knownGood defaults true), so
+	// the regression would show here first.
+	assert.notEqual(subscriptionAccountHealth("expired").level, "ok");
+});
+
+// ---- dirtyAccountHealth: what LlmPoolEditor's dot shows once the pool is dirty
+// (unsaved edits) or a save is still being applied (sync.pending) - review finding #2
+// on PR #410. Repointing --neutral's CSS from green to grey (the fix above, for the
+// real never-verified case) had a side effect: LlmPoolEditor's accountHealth()
+// unconditionally forced EVERY row to {level:"neutral"} while dirty/pending, so an
+// already-healthy, previously-verified account's dot flipped from green to grey the
+// moment the customer edited an unrelated field - reading as "this just broke" when
+// nothing about that account's health changed. These pin that a settled "ok" gets its
+// own "pending" treatment instead, distinct from both "ok" (still asserting current
+// health) and "neutral" (never proven at all), while anything that was already
+// unproven or already flagged keeps landing on the same neutral dot as before. ----
+
+test("dirtyAccountHealth: not dirty/pending -> passes the settled health through unchanged", () => {
+	assert.deepEqual(dirtyAccountHealth({ level: "ok" }, false), { level: "ok" });
+	assert.deepEqual(
+		dirtyAccountHealth({ level: "warn", label: "Not working" }, false),
+		{ level: "warn", label: "Not working" }
+	);
+});
+
+test("dirtyAccountHealth: a settled 'ok' row goes to 'pending' (not 'neutral') while dirty - it was never broken", () => {
+	const h = dirtyAccountHealth({ level: "ok" }, true);
+	assert.equal(h.level, "pending");
+	assert.notEqual(h.level, "neutral");
+	assert.ok(h.label, "pending must carry a label explaining why the dot isn't plain green");
+	assert.match(h.title, /verified/i);
+});
+
+test("dirtyAccountHealth: a settled 'warn'/'unchecked'/'neutral' row stays 'neutral' while dirty - nothing to lose, unlike a settled 'ok'", () => {
+	assert.deepEqual(dirtyAccountHealth({ level: "warn", label: "Not working" }, true), {
+		level: "neutral",
+	});
+	assert.deepEqual(dirtyAccountHealth({ level: "unchecked", label: "Not verified yet" }, true), {
+		level: "neutral",
+	});
+	assert.deepEqual(dirtyAccountHealth({ level: "neutral" }, true), { level: "neutral" });
+});
+
+test("dirtyAccountHealth: 'pending' and 'neutral' are visibly distinct levels (regression lock)", () => {
+	// The whole point of this fix is that these two must NOT collapse into one
+	// customer-visible state again - assert the levels differ, not just that both exist.
+	const wasHealthy = dirtyAccountHealth({ level: "ok" }, true);
+	const neverProven = dirtyAccountHealth({ level: "neutral" }, true);
+	assert.notEqual(wasHealthy.level, neverProven.level);
 });

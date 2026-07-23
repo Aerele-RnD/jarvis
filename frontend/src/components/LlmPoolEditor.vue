@@ -1572,6 +1572,7 @@ import {
 	defaultSubscriptionModel,
 	apiKeyModelHealth,
 	subscriptionAccountHealth,
+	dirtyAccountHealth,
 	isCodeOnlyPaste,
 	effectiveApiKey,
 	LOCAL_PROVIDER_IDS,
@@ -2449,9 +2450,20 @@ function firstWarningMessage() {
 // actually reading sync.value.subscription_status in both modes now.
 function accountHealth(m) {
 	if (!m) return { level: "ok" };
-	// Config changed but not yet (re)applied - the last probe result no longer
-	// describes what's about to be saved, so don't assert a stale health.
-	if (dirty.value || sync.value.pending) return { level: "neutral" };
+	// Config changed but not yet (re)applied, or the last save is still being applied -
+	// the last probe result no longer describes what's about to be saved, so it can't
+	// be asserted verbatim. dirtyAccountHealth (@/llm/pool.js) is what decides how that
+	// downgrades a settled health into what the dot actually shows - see its doc for
+	// why a settled "ok" gets its own "pending" treatment instead of collapsing into
+	// the same grey a never-verified row shows (PR #410 review finding 2).
+	return dirtyAccountHealth(settledAccountHealth(m), dirty.value || sync.value.pending);
+}
+// The health accountHealth() would show if the pool were clean and no apply were in
+// flight - i.e. purely from the last real signal, with no regard for whether that
+// signal still describes what's about to be saved. Split out so dirtyAccountHealth
+// (@/llm/pool.js) has a settled value to compare "what did we last actually measure"
+// against "is that measurement stale".
+function settledAccountHealth(m) {
 	if (m.credentialType !== "subscription") {
 		// api-key rows carry a PER-MODEL verdict (contract 1.11 model_statuses), probed
 		// in isolation, so each shows its own health instead of the presence-only "key
@@ -3178,6 +3190,15 @@ defineExpose({ save });
 .jv-pool-dot--unchecked {
 	background: var(--text-3);
 }
+/* A settled "ok" row caught mid-edit or mid-apply (accountHealth's dirty/pending
+   branch) - deliberately NOT --text-3 grey. Sharing that colour with --neutral would
+   make "previously verified, about to be re-checked" indistinguishable from "never
+   verified at all", which is the exact regression this rule exists to avoid (PR #410
+   review finding 2). --link is the one sanctioned "in progress" blue elsewhere in this
+   app (see theme.js) - calm, not alarming, and visibly not the unproven grey. */
+.jv-pool-dot--pending {
+	background: var(--link);
+}
 /* flex: none + a cap, not 0 1 auto: the label can now carry a provider's own error detail
    (apiKeyModelHealth's `detail`, e.g. a GLM/Z.ai balance message) instead of always being one
    of two fixed short strings - pool.js already truncates the text itself, this is just a
@@ -3196,6 +3217,9 @@ defineExpose({ save });
 }
 .jv-pool-acct-health--unchecked {
 	color: var(--text-3);
+}
+.jv-pool-acct-health--pending {
+	color: var(--link);
 }
 .jv-pool-acctacts {
 	margin-left: auto;
