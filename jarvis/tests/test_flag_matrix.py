@@ -149,6 +149,39 @@ class TestAdmissionOnly(_FlagMatrixCase):
 		self.assertEqual(r["legacy"].count, 1, "Phase-0 dispatches via the LEGACY worker after commit")
 		self.assertEqual(int(self._val(rid, "reserved")), 1, "the dispatching row IS the reservation")
 
+	def test_watchdog_noop_with_phase0_rows_flag_off(self):
+		"""OARF-1 regression guard: on an admission-on / pump-OFF site (a shipped
+		Phase-0 mode) the pump watchdog is INERT even with live Phase-0 Turn rows —
+		it must NOT auto-start a pump hop over a Phase-0-owned row (dual-engine
+		ownership defeats the flag-off safety + rollback ladder). pump_configured()
+		reads the real conf (pump UNSET on patterntest) → the watchdog early-returns.
+		The symmetric positive case (pump configured) DOES revive the shard, proving
+		the gate is the only thing holding it back."""
+		conv = self._mk_conv()
+		rid = "fm_b_wd"
+		with self._flags(pump_active=False, draining=False, admission_on=True, configured=False):
+			self._send(conv, rid)
+		self.assertEqual(self._state(rid), "dispatching", "a live Phase-0 Turn row exists")
+
+		# Flag OFF (real conf): the watchdog starts NO pump hop.
+		wd_off = pump.PumpDeps()
+		wd_off.enqueue_pump_job = _Recorder()
+		summary_off = pump.watchdog(deps=wd_off)
+		self.assertEqual(wd_off.enqueue_pump_job.count, 0, "flag-off watchdog enqueues NO hop")
+		self.assertEqual(summary_off["revived"], 0)
+		# The Phase-0 row is untouched by the (inert) watchdog.
+		self.assertEqual(self._state(rid), "dispatching")
+
+		# Symmetric positive: configured -> the watchdog DOES revive live work.
+		# (No pump ever ran this test, so the shard control row's lease is vacant —
+		# ensure_pump takes the MariaDB revive path.)
+		wd_on = pump.PumpDeps()
+		wd_on.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			summary_on = pump.watchdog(deps=wd_on)
+		self.assertGreaterEqual(wd_on.enqueue_pump_job.count, 1, "configured watchdog revives the shard")
+		self.assertGreaterEqual(summary_on["revived"], 1)
+
 
 # --------------------------------------------------------------------------- #
 # (c) pump ON — the full machine + admission semantics inside it
@@ -271,7 +304,13 @@ class TestDraining(_FlagMatrixCase):
 
 
 class TestFlipOffMidTurn(_FlagMatrixCase):
-	def test_flip_off_midturn_inflight_completes_via_watchdog_no_strands(self):
+	def test_rollback_ladder_draining_drains_inflight_no_strands(self):
+		"""Rollback ladder (enabled -> DRAINING -> disabled): flipping to `draining`
+		routes NEW turns pure-legacy while the pump keeps draining its in-flight
+		rows to terminal. OARF-1: the no-strand guarantee now rides `draining`
+		(pump_configured() TRUE), NOT a hard flip to fully-off — with the flag fully
+		OFF the watchdog is inert (proven below), which is exactly why the runbook
+		mandates the ladder."""
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv)
 		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
@@ -279,7 +318,7 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 		deps = self._deps(snapshot=lambda ctx: {"gateway_active": 0, "active_session_keys": None})
 		ctx = self._make_ctx(deps, with_mux=False)
 		# A pump turn caught in-flight (terminal observed, settlement owed) exactly at
-		# the moment the operator flips the flag off.
+		# the moment the operator begins the rollback.
 		self._mk_turn(
 			conv,
 			rid,
@@ -295,19 +334,8 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 			dispatching_at=frappe.utils.now(),
 		)
 
-		# FLIP: pump fully OFF + admission OFF (the true kill switch).
-		with self._flags(pump_active=False, draining=False, admission_on=False, configured=False):
-			# Phase-0 is inert (admission off): it never touches the pump-owned turn.
-			self.assertEqual(admission.promote_next(self._target), 0)
-			self.assertEqual(
-				admission.sweep(), {"reclaimed": 0, "reconciled": 0, "aged_out": 0, "promoted": 0}
-			)
-			self.assertEqual(self._state(rid), "terminal_observed", "Phase-0 left the pump turn untouched")
-
-		# The pump WATCHDOG still sees the in-flight turn (it is flag-AGNOSTIC — the flag
-		# only gates NEW turns) and revives the shard: the guarantee that a flag flip
-		# strands nothing. Expire the lease + clear the mirror so ensure_pump takes the
-		# MariaDB revive path (a dead pump left the lease vacant).
+		# Expire the lease + clear the mirror so ensure_pump takes the MariaDB revive
+		# path (a dead pump left the lease vacant).
 		frappe.db.set_value(
 			"Jarvis Relay Pump",
 			self._target,
@@ -317,10 +345,23 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 		)
 		frappe.db.commit()
 		pump._clear_lease_mirror(self._target)
+
+		# STEP 1 of the ladder — `draining` (pump_configured TRUE): new turns go
+		# pure-legacy and Phase-0 promote steps back (pump owns the row).
+		with self._flags(pump_active=False, draining=True, admission_on=True, configured=True):
+			self.assertFalse(admission.turn_machine_enabled(), "draining routes new turns legacy")
+			self.assertEqual(admission.promote_next(self._target), 0)
+
+		# The draining watchdog (pump_configured TRUE) still revives the shard so the
+		# in-flight turn drains. Real ensure_pump here (only pump_configured patched)
+		# so the enqueue lands in wd_deps' recorder.
 		wd_deps = pump.PumpDeps()
 		wd_deps.enqueue_pump_job = _Recorder()
-		summary = pump.watchdog(deps=wd_deps)
-		self.assertGreaterEqual(wd_deps.enqueue_pump_job.count, 1, "watchdog revives the in-flight shard")
+		with patch.object(pump, "pump_configured", return_value=True):
+			summary = pump.watchdog(deps=wd_deps)
+		self.assertGreaterEqual(
+			wd_deps.enqueue_pump_job.count, 1, "draining watchdog revives the in-flight shard"
+		)
 		self.assertGreaterEqual(summary["revived"], 1)
 
 		# The revived hop's reconcile settles the owed terminal from the row, then
@@ -329,4 +370,47 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 		self.assertEqual(self._state(rid), "finalizing", "reconcile settled the owed terminal")
 		with self._mock_enrichment():
 			finalize.run_finalize(rid, self._target)
-		self.assertEqual(self._state(rid), "done", "flipped-off in-flight turn reached done — no strand")
+		self.assertEqual(self._state(rid), "done", "drained in-flight turn reached done — no strand")
+
+	def test_hard_flip_fully_off_watchdog_is_inert(self):
+		"""OARF-1: a HARD flip to fully-off (pump unset) makes the watchdog INERT —
+		it does NOT revive even an in-flight pump turn. This is why the rollback
+		ladder (enabled -> draining -> disabled) is mandatory: draining is what keeps
+		the no-strand guarantee, not fully-off."""
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		rid = "fm_e_hard"
+		deps = self._deps(snapshot=lambda ctx: {"gateway_active": 0, "active_session_keys": None})
+		ctx = self._make_ctx(deps, with_mux=False)
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"terminal_observed",
+			version=6,
+			pump_epoch=ctx.epoch,
+			reserved=1,
+			assistant_message=amsg,
+			terminal_kind="relay:final",
+			terminal_payload=json.dumps({"text": "final answer"}),
+			terminal_observed_at=frappe.utils.now(),
+			dispatching_at=frappe.utils.now(),
+		)
+		frappe.db.set_value(
+			"Jarvis Relay Pump",
+			self._target,
+			"lease_expires_at",
+			frappe.utils.add_to_date(None, seconds=-5),
+			update_modified=False,
+		)
+		frappe.db.commit()
+		pump._clear_lease_mirror(self._target)
+
+		# Fully OFF (real conf: pump unset) -> the watchdog early-returns; NO revive.
+		wd_deps = pump.PumpDeps()
+		wd_deps.enqueue_pump_job = _Recorder()
+		summary = pump.watchdog(deps=wd_deps)
+		self.assertEqual(wd_deps.enqueue_pump_job.count, 0, "fully-off watchdog starts NO hop")
+		self.assertEqual(summary["revived"], 0)
+		self.assertEqual(self._state(rid), "terminal_observed", "the turn is left as-is (use the ladder)")

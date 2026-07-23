@@ -2080,7 +2080,9 @@
 								>
 									<path d="M12 3a9 9 0 1 0 9 9" />
 								</svg>
-								<span>{{ queuedChipLabel(queuedTurn.position) }}</span>
+								<span>{{
+									queuedChipLabel(queuedTurn.position, queuedTurn.state)
+								}}</span>
 								<button
 									type="button"
 									class="jv-queued-cancel"
@@ -4146,12 +4148,21 @@ const ERROR_HEADLINES = {
 // reply renders normally) — kept so the mapping is complete for WP-1 (SUXI-7).
 const TURN_STATE_COPY = {
 	queued: (pos) => (pos && pos > 0 ? `Queued — ~${pos} ahead` : "Queued"),
+	// SUXF-3: the pump introduces a queued->preparing->ready window (prompt assembly
+	// + session bootstrap) between "queued" and the stream. Give it copy so the chip
+	// reads "Starting…" instead of freezing on a stale "~N ahead" / going silent.
+	preparing: () => "Starting…",
+	ready: () => "Starting…",
 	dispatching: () => "Starting…",
 	cancelled: () => "Cancelled",
 	errored: () => "Something went wrong",
 	done: () => "",
 };
-function queuedChipLabel(pos) {
+function queuedChipLabel(pos, state) {
+	// SUXF-3: once a turn leaves `queued` (preparing/ready/dispatching) the position
+	// is meaningless — show "Starting…" so the chip never contradicts what's actually
+	// happening while the message is being prepared.
+	if (state && TURN_STATE_COPY[state] && state !== "queued") return TURN_STATE_COPY[state]();
 	return TURN_STATE_COPY.queued(pos);
 }
 function classifyErrorCode(raw) {
@@ -5828,13 +5839,19 @@ async function resyncQueuedTurn(id) {
 		return; // best-effort — never block the load
 	}
 	if (currentId.value !== id) return; // navigated away while the request was in flight
-	if (active && active.state === "queued") {
+	// SUXF-3: keep the chip (and the composer lock) through the whole pre-stream
+	// window — queued AND the new preparing/ready stages — so a reload during
+	// prompt-assembly/session-bootstrap shows "Starting…" rather than going silent
+	// and re-enabling an empty composer that could invite a duplicate send. Once the
+	// turn is dispatching/streaming, loadConversation's streaming resume owns it.
+	if (active && ["queued", "preparing", "ready"].includes(active.state)) {
 		queuedTurn.value = {
 			run_id: active.run_id,
 			message_id: active.message_id,
 			position: active.position || null,
+			state: active.state,
 		};
-		// Keep the composer locked while a turn is queued so the re-enabled empty
+		// Keep the composer locked while a turn is pre-stream so the re-enabled empty
 		// composer can't invite a duplicate send.
 		sending.value = true;
 		waiting.value = false;
@@ -7126,12 +7143,22 @@ function onEvent(p) {
 			recovering.value = null;
 			announceSR("Jarvis replied.");
 			store.loadConversations();
-			loadConversation(currentId.value);
-			// Re-render charts after the reload settles — late re-renders can swap a
-			// freshly-rendered mermaid node back to raw source; these idle passes
-			// (mutex-guarded, no-op when nothing's pending) catch that race.
-			setTimeout(processMermaid, 300);
-			setTimeout(processMermaid, 900);
+			// SUX-6 identical-skip (OARF-7): the streamed deltas already painted the
+			// final cumulative text, so on the normal path a full reload would just
+			// re-render an IDENTICAL message (a visible flash). Do the disruptive
+			// reload ONLY when the answer actually changed via snapshot recovery
+			// (was_recovered — a legitimate visible replacement), OR when there is no
+			// enrichment follow-up to reconcile a non-streamed terminal (e.g. a
+			// stopped turn: !enrichment_pending). On the ordinary success path the
+			// message:enriched event reloads once enrichment lands — no churn here.
+			if (p.was_recovered || !p.enrichment_pending) {
+				loadConversation(currentId.value);
+				// Re-render charts after the reload settles — late re-renders can swap a
+				// freshly-rendered mermaid node back to raw source; these idle passes
+				// (mutex-guarded, no-op when nothing's pending) catch that race.
+				setTimeout(processMermaid, 300);
+				setTimeout(processMermaid, 900);
+			}
 			break;
 		}
 		case "message:enriched": {

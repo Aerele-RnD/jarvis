@@ -1026,10 +1026,16 @@ def lease_acquire(target: str, holder: str, hop_counter: int | None = None) -> t
 		return (False, None)
 	epoch = int(frappe.db.get_value(PUMP, target, "pump_epoch") or 0)
 	# Re-stamp adopted in-flight turns (D4 c t3, §10.5): bounded batch (<= ceiling).
+	# OARF-7: the clean-hop re-stamp does NOT set was_recovered — a turn that merely
+	# spans a hop boundary (hops are 60-120s, turns can run to 600s) was NOT
+	# recovered. was_recovered is set ONLY on a GENUINE recovery transition
+	# (mark_recovering when a turn is parked; _settle_recovered_final on a real
+	# snapshot recovery), so the flag keeps meaning "the answer was reconstructed"
+	# for support/telemetry and the SUX-6 SR announcement.
 	inflight = "','".join(EPOCH_INFLIGHT_STATES)
 	_run_cas(
 		f"""UPDATE `tab{TURN}`
-		SET pump_epoch=%(e)s, was_recovered=1, version=version+1
+		SET pump_epoch=%(e)s, version=version+1
 		WHERE relay_target_id=%(t)s AND state IN ('{inflight}')""",
 		{"e": epoch, "t": target},
 	)

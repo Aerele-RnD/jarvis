@@ -117,8 +117,18 @@ class _PumpTestCase(FrappeTestCase):
 		# Remove real waits from the DB-disconnect backoff path.
 		self._sleep_patch = patch.object(pump, "_sleep", lambda *_a, **_k: None)
 		self._sleep_patch.start()
+		# OARF-9: activate the canonical lock-order assertion for the whole pump
+		# suite so an inversion (control->conversation->turn->message) FAILS a test
+		# instead of silently log_error-ing. patterntest sets neither developer_mode
+		# nor this flag, so without it assert_lock_order is a no-op everywhere.
+		self._lock_assert_prev = frappe.local.conf.get("jarvis_pump_lock_assert")
+		frappe.local.conf["jarvis_pump_lock_assert"] = 1
 
 	def tearDown(self):
+		if self._lock_assert_prev is None:
+			frappe.local.conf.pop("jarvis_pump_lock_assert", None)
+		else:
+			frappe.local.conf["jarvis_pump_lock_assert"] = self._lock_assert_prev
 		self._sleep_patch.stop()
 		for mux in self._muxes:
 			try:
@@ -344,7 +354,10 @@ class TestIdleExitRace(_PumpTestCase):
 		rec = _Recorder()
 		deps = pump.PumpDeps()
 		deps.enqueue_pump_job = rec
-		res = pump.ensure_pump(self._target, deps=deps)
+		# ensure_pump is gated on pump_configured (OARF-1) — it only revives when the
+		# pump is enabled/draining.
+		with patch.object(pump, "pump_configured", return_value=True):
+			res = pump.ensure_pump(self._target, deps=deps)
 		self.assertTrue(res["enqueued"])
 		self.assertEqual(rec.count, 1)
 		_, kwargs = rec.calls[0]
@@ -361,7 +374,8 @@ class TestIdleExitRace(_PumpTestCase):
 		rec = _Recorder()
 		deps = pump.PumpDeps()
 		deps.enqueue_pump_job = rec
-		res = pump.ensure_pump(self._target, deps=deps)
+		with patch.object(pump, "pump_configured", return_value=True):
+			res = pump.ensure_pump(self._target, deps=deps)
 		self.assertFalse(res["enqueued"])
 		self.assertEqual(res["reason"], "lease_live")
 		self.assertEqual(rec.count, 0)
@@ -538,7 +552,11 @@ class TestWatchdog(_PumpTestCase):
 		deps.enqueue_finalize = fin_rec
 		deps.enqueue_pump_job = pump_rec
 
-		summary = pump.watchdog(deps=deps)
+		# OARF-1: the watchdog is gated on pump_configured — it only runs when the
+		# pump is enabled/draining. (The queued age-out row here is UNRESERVED, so
+		# OARF-4's reserved-reclaim does not pre-empt the age-out.)
+		with patch.object(pump, "pump_configured", return_value=True):
+			summary = pump.watchdog(deps=deps)
 
 		self.assertEqual(self._state("pmp_wd_queued"), "cancelled", "queued age-out")
 		self.assertEqual(summary["aged_out"], 1)
@@ -633,11 +651,20 @@ class TestDispatchOutcomes(_PumpTestCase):
 		double.arm(rid, "ack-timeout")  # gateway holds the ack past the window
 		deps = self._deps(double=double)
 		ctx = self._make_ctx(deps)
+		# OARF-5: dispatch ISSUES the ack (non-blocking) + parks it; the ack-timeout
+		# fires on a LATER poll when our slice-level deadline passes (not a blocking
+		# .result()). Drive slices until the park lands.
 		with patch.object(pump, "ACK_TIMEOUT_S", 0.3):
+			t0 = time.monotonic()
 			pump._dispatch_ready(ctx)
+			self.assertLess(time.monotonic() - t0, 1.0, "dispatch did NOT block on the ack (OARF-5)")
+			self._pump_until(ctx, lambda: self._state(rid) == "recovering")
 		# Ambiguous outcome -> parked recovering (NOT errored).
 		self.assertEqual(self._state(rid), "recovering")
 		self.assertEqual(int(self._val(rid, "recovering")), 1)
+		# SUXF-1: the park mirrored the Message row so a reload reconstructs the banner.
+		amsg = self._val(rid, "assistant_message")
+		self.assertEqual(int(frappe.db.get_value(MSG, amsg, "recovering") or 0), 1)
 
 	def test_ws_drop_outstanding_ack_immediate_sentinel_parks(self):
 		"""PANEL 9: a WS drop while a chat.send ack is outstanding fails the future
@@ -650,7 +677,9 @@ class TestDispatchOutcomes(_PumpTestCase):
 		deps = self._deps(double=double)
 		ctx = self._make_ctx(deps)
 		t0 = time.monotonic()
-		pump._dispatch_ready(ctx)
+		pump._dispatch_ready(ctx)  # OARF-5: non-blocking issue
+		# The Closing sentinel fails the pending future immediately; a poll resolves it.
+		self._pump_until(ctx, lambda: self._state(rid) == "recovering")
 		self.assertLess(time.monotonic() - t0, 5.0, "did not dead-wait the ack")
 		self.assertEqual(self._state(rid), "recovering")
 
@@ -664,7 +693,8 @@ class TestDispatchOutcomes(_PumpTestCase):
 		self._doubles.append(double)
 		deps = self._deps(double=double)
 		ctx = self._make_ctx(deps)
-		pump._dispatch_ready(ctx)
+		pump._dispatch_ready(ctx)  # OARF-5: non-blocking issue
+		self._pump_until(ctx, lambda: self._state(rid) in ("errored", "recovering"))
 		self.assertEqual(self._state(rid), "errored")
 		self.assertEqual(int(self._val(rid, "reserved")), 0, "credit released on definite rejection")
 		self.assertTrue(self._val(rid, "error") or "")
@@ -853,3 +883,168 @@ class TestWakeBus(_PumpTestCase):
 		self.assertEqual(set(drained), {"run-1", "run-2"})
 		# Draining again yields nothing (the bus was emptied).
 		self.assertEqual(pump.drain_wake(self._target), [])
+
+
+# --------------------------------------------------------------------------- #
+# 11. OARF-4 — reserved-but-unclaimed reclaim (retry, never age-out cancel)
+# --------------------------------------------------------------------------- #
+
+
+class TestWatchdogReservationReclaim(_PumpTestCase):
+	def test_reserved_unclaimed_reclaimed_for_retry_not_cancelled(self):
+		"""OARF-4: a turn that RESERVED a credit at promote but whose prepare never
+		CLAIMED it (still `queued` reserved=1, reservation > 120s old) is reclaimed
+		back to `queued reserved=0` FOR RETRY — even when it is ALSO past the 900s
+		age-out (reclaim WINS over cancel for a reserved turn)."""
+		conv = self._mk_conv()
+		rid = "pmp_oarf4"
+		seed = self._mk_msg(conv)
+		self._mk_turn(conv, rid, seed, "queued", version=1, reserved=1)
+		frappe.db.set_value(
+			TURN,
+			rid,
+			{
+				# reservation made > PREPARE_DISPATCH_DEADLINE_S ago (stale, unclaimed):
+				"reservation_expires_at": frappe.utils.add_to_date(
+					None, seconds=(ts.RESERVE_TTL_S - pump.PREPARE_DISPATCH_DEADLINE_S - 30)
+				),
+				# ALSO past the 900s age-out — prove reclaim pre-empts cancel.
+				"enqueued_at": frappe.utils.add_to_date(None, seconds=-(ts.QUEUED_MAX_AGE_S + 120)),
+			},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		wd_deps = pump.PumpDeps()
+		wd_deps.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			summary = pump.watchdog(deps=wd_deps)
+		self.assertEqual(self._state(rid), "queued", "reserved-unclaimed turn RETRIED, not cancelled")
+		self.assertEqual(int(self._val(rid, "reserved")), 0, "credit released for retry")
+		self.assertGreaterEqual(summary["reclaimed"], 1)
+		self.assertEqual(summary["aged_out"], 0, "reclaim wins over age-out for a reserved turn")
+
+	def test_unreserved_queued_still_ages_out(self):
+		"""The 15-min age-out still cancels a genuinely-waiting UNRESERVED queued turn
+		(never given a credit) — OARF-4 only spares RESERVED turns."""
+		conv = self._mk_conv()
+		rid = "pmp_oarf4b"
+		seed = self._mk_msg(conv)
+		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=0)
+		frappe.db.set_value(
+			TURN,
+			rid,
+			"enqueued_at",
+			frappe.utils.add_to_date(None, seconds=-(ts.QUEUED_MAX_AGE_S + 120)),
+			update_modified=False,
+		)
+		frappe.db.commit()
+		wd_deps = pump.PumpDeps()
+		wd_deps.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			summary = pump.watchdog(deps=wd_deps)
+		self.assertEqual(self._state(rid), "cancelled", "unreserved queued turn still ages out")
+		self.assertGreaterEqual(summary["aged_out"], 1)
+
+
+# --------------------------------------------------------------------------- #
+# 12. OARF-8 — prepare/finalize enqueues use attempt-suffixed job ids
+# --------------------------------------------------------------------------- #
+
+
+class TestAttemptSuffixJobIds(_PumpTestCase):
+	def test_prepare_finalize_ids_carry_attempt_suffix(self):
+		conv = self._mk_conv()
+		rid = "pmp_jobid"
+		seed = self._mk_msg(conv)
+		self._mk_turn(conv, rid, seed, "queued", version=3, reserved=1)
+		captured: list = []
+
+		def fake_enqueue(method, **kw):
+			captured.append(kw.get("job_id"))
+
+		with patch("frappe.enqueue", fake_enqueue):
+			pump._default_dispatch_prepare(rid, self._target)
+			pump._default_enqueue_finalize(rid, self._target)
+		self.assertEqual(captured[0], f"jarvis-prepare::{rid}::a3", "prepare id carries ::a<version>")
+		self.assertEqual(captured[1], f"jarvis-finalize::{rid}::a3", "finalize id carries ::a<version>")
+
+		# A genuine new attempt (version bumped) mints a DIFFERENT id, so a dead
+		# STARTED registration of the old id can never no-op the re-enqueue.
+		frappe.db.set_value(TURN, rid, "version", 7, update_modified=False)
+		frappe.db.commit()
+		captured.clear()
+		with patch("frappe.enqueue", fake_enqueue):
+			pump._default_dispatch_prepare(rid, self._target)
+		self.assertEqual(captured[0], f"jarvis-prepare::{rid}::a7", "new attempt -> fresh id")
+
+
+# --------------------------------------------------------------------------- #
+# 13. OARF-9 — the canonical lock-order assertion fires under the test config
+# --------------------------------------------------------------------------- #
+
+
+class TestLockOrderAssertion(_PumpTestCase):
+	def test_lock_order_violation_raises_under_test_config(self):
+		# setUp activates jarvis_pump_lock_assert, so _dev_mode() is True and an
+		# inversion RAISES instead of silently log_error-ing (OARF-9).
+		self.assertTrue(ts._dev_mode(), "lock-assert config active for the suite")
+		ts.reset_lock_tracking()
+		try:
+			ts.assert_lock_order("turn")  # rank 3
+			with self.assertRaises(ts.LockOrderError):
+				ts.assert_lock_order("shard")  # rank 1 while holding rank 3 -> inversion
+		finally:
+			ts.reset_lock_tracking()
+
+	def test_canonical_order_does_not_raise(self):
+		ts.reset_lock_tracking()
+		try:
+			ts.assert_lock_order("shard")
+			ts.assert_lock_order("conversation")
+			ts.assert_lock_order("turn")
+			ts.assert_lock_order("message")  # canonical order -> no raise
+		finally:
+			ts.reset_lock_tracking()
+
+
+# --------------------------------------------------------------------------- #
+# 14. OARF-5 — the reactor does not block on RPC futures inside a slice
+# --------------------------------------------------------------------------- #
+
+
+class TestNonBlockingReactor(_PumpTestCase):
+	def test_dispatch_wave_does_not_block_on_slow_acks(self):
+		"""OARF-5: dispatching N ready turns whose gateway HOLDS the ack must NOT
+		block the reactor per-ack (the old fut.result(15s) wave). _dispatch_ready
+		issues every send and returns fast; the acks are parked for polling."""
+		double = self._double()
+		rids = []
+		for i in range(3):
+			conv = self._mk_conv()
+			rid = f"pmp_wave_{i}"
+			rids.append(rid)
+			seed = self._mk_msg(conv)
+			amsg = self._mk_msg(conv, role="assistant", content="", streaming=1)
+			self._mk_turn(
+				conv,
+				rid,
+				seed,
+				"ready",
+				version=2,
+				reserved=1,
+				assistant_message=amsg,
+				ready_at=frappe.utils.now(),
+				dispatch_payload=json.dumps({"session_key": f"s-{rid}", "message": "hi"}),
+			)
+			double.arm(rid, "ack-timeout")  # the gateway holds every ack
+		deps = self._deps(double=double)
+		ctx = self._make_ctx(deps)
+		t0 = time.monotonic()
+		with patch.object(pump, "ACK_TIMEOUT_S", 5.0):
+			n = pump._dispatch_ready(ctx)
+		elapsed = time.monotonic() - t0
+		self.assertEqual(n, 3, "all three sends issued")
+		self.assertLess(elapsed, 2.0, "OARF-5: the wave did NOT block ~N*ACK_TIMEOUT on acks")
+		self.assertEqual(len(ctx.pending_acks), 3, "acks parked for polling, not awaited inline")
+		for rid in rids:
+			self.assertEqual(self._state(rid), "dispatching")

@@ -205,6 +205,7 @@ class _DoubleGateway:
 		self._q: queue.Queue = queue.Queue()
 		self._ws = _FakeWs(self._on_send)
 		self._armed: dict[str, tuple[str, dict]] = {}
+		self._sessions_get: dict[str, list] = {}  # session_key -> raw transcript messages
 		self._closed = threading.Event()
 		self._players: list[threading.Thread] = []
 
@@ -229,6 +230,12 @@ class _DoubleGateway:
 	def arm(self, run_id: str, transcript: str = "success", **overrides):
 		self._armed[run_id] = (transcript, overrides)
 
+	def arm_sessions_get(self, session_key: str, messages: list):
+		"""Arm the raw transcript ``sessions.get`` returns for a session key (used by
+		the pump's missed-terminal snapshot-recovery tail). Each message may carry an
+		``__openclaw.seq`` so the pump's watermark windowing (OARF-2) is exercised."""
+		self._sessions_get[session_key] = messages
+
 	def stop(self):
 		self._closed.set()
 		for t in self._players:
@@ -246,6 +253,12 @@ class _DoubleGateway:
 		params = frame.get("params") or {}
 		if method == "chat.send":
 			self._handle_chat_send(rid, params)
+			return
+		if method == "sessions.get":
+			key = params.get("key")
+			self._push(
+				{"type": "res", "id": rid, "ok": True, "payload": {"messages": self._sessions_get.get(key, [])}}
+			)
 			return
 		# every other RPC (sessions.patch / sessions.create / chat.abort / ...)
 		# gets a plain ok response.

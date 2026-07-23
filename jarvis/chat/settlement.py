@@ -131,10 +131,23 @@ def invoke_settlement(
 		}
 
 	if not won:
-		# D3 S3 stale-pump branch: rollback undoes the S1 message write; the shared
-		# lease-loss exit stops writing/publishing (re-raised as LeaseLostExit, which
-		# the pump's on_terminal wrapper converts to its shared exit).
-		ts.lease_lost_exit(run_id)
+		# OARF-3 / §10.11: a 0-rows settlement CAS is NOT unconditionally a lease
+		# loss. Re-read the row's epoch to disambiguate:
+		#   * epoch NO LONGER matches -> a takeover re-stamped us; route through the
+		#     ONE shared lease-loss exit (rollback undoes the uncommitted S1 message
+		#     write, stops writing/publishing; the pump's on_terminal wrapper converts
+		#     the LeaseLostExit to its shared exit).
+		#   * epoch INTACT + version drifted -> a legitimate concurrent actor moved
+		#     the row (e.g. the watchdog marked a stuck terminal_observed turn
+		#     recovering in the TOCTOU window between read_turn and this CAS). That is
+		#     an ordinary optimistic-concurrency loss, NOT a lease incident — rolling
+		#     back the S1 write and returning lets reconcile/watchdog own it; killing
+		#     the whole hop here would turn a benign drift into an availability
+		#     incident (every turn on the shard stalls up to LEASE_TTL_S).
+		if _epoch_lost(run_id, epoch):
+			ts.lease_lost_exit(run_id)
+		else:
+			frappe.db.rollback()
 		return
 
 	frappe.db.commit()  # slot released; the NEXT turn can be promoted
@@ -157,6 +170,15 @@ def invoke_settlement(
 # --------------------------------------------------------------------------- #
 # terminal-payload helpers (mirror pump.py's so the two agree on shape)
 # --------------------------------------------------------------------------- #
+
+
+def _epoch_lost(run_id: str, epoch: int) -> bool:
+	"""OARF-3 / §10.11: True iff the row's ``pump_epoch`` no longer matches this
+	settlement's epoch — the real lease-loss signal that distinguishes a takeover
+	(kill the hop) from a benign concurrent-actor version drift (an ordinary
+	optimistic-concurrency loss the hop must survive)."""
+	e = frappe.db.get_value(TURN, run_id, "pump_epoch")
+	return e is None or int(e) != epoch
 
 
 def _coerce_payload(payload):

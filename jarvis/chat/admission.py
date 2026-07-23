@@ -905,25 +905,36 @@ def active_turn_for_conversation(conversation: str) -> dict:
 	IS the caller's own. A ``dispatching`` turn is deliberately NOT returned here:
 	loadConversation's existing streaming resume already shows its "Thinking…"
 	state from the assistant placeholder; the chip is only for a not-yet-running
-	queued turn. Returns ``{"ok": True, "active": None}`` when nothing is queued.
-	The earliest-enqueued queued turn (position closest to 1) is reported."""
+	turn. Returns ``{"ok": True, "active": None}`` when nothing is pending.
+	The earliest-enqueued pending turn (position closest to 1) is reported.
+
+	SUXF-3: the pump adds a ``preparing``/``ready`` window between ``queued`` and
+	the stream (prompt assembly + session bootstrap). Those states are returned too
+	(with ``state`` so the chip reads "Starting…" via TURN_STATE_COPY) so a reload /
+	focus resync during that window keeps the chip + composer lock instead of going
+	silent and re-enabling an empty composer. Position is reported only for a still
+	``queued`` turn (meaningless once a credit is held)."""
 	require_jarvis_access()
 	_assert_owner(conversation)
 	row = frappe.db.get_value(
 		TURN,
-		{"conversation": conversation, "state": "queued"},
-		["run_id", "seed_message", "relay_target_id"],
+		{"conversation": conversation, "state": ["in", ("queued", "preparing", "ready")]},
+		["run_id", "seed_message", "relay_target_id", "state"],
 		as_dict=True,
 		order_by="enqueued_at asc",
 	)
 	if not row:
 		return {"ok": True, "active": None}
-	pos = _position_of(row["run_id"], row["relay_target_id"] or DEFAULT_RELAY_TARGET)
+	pos = (
+		_position_of(row["run_id"], row["relay_target_id"] or DEFAULT_RELAY_TARGET)
+		if row["state"] == "queued"
+		else None
+	)
 	return {
 		"ok": True,
 		"active": {
 			"run_id": row["run_id"],
-			"state": "queued",
+			"state": row["state"],
 			"message_id": row["seed_message"],
 			"position": pos,
 		},

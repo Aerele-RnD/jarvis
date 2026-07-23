@@ -386,7 +386,11 @@ class TestPanel8ForceDone(_PipelineCase):
 		wd_deps = pump.PumpDeps()
 		wd_deps.enqueue_finalize = fin_rec
 		wd_deps.enqueue_pump_job = _Recorder()
-		pump.watchdog(deps=wd_deps)
+		# OARF-1: watchdog gated on pump_configured — run it as-if configured so the
+		# assertion tests the R-13 "done turn -> no finalize re-enqueue" behaviour
+		# (not the flag-off early return).
+		with patch.object(pump, "pump_configured", return_value=True):
+			pump.watchdog(deps=wd_deps)
 		self.assertEqual(fin_rec.count, 0, "no finalize re-enqueue for a done turn")
 
 
@@ -437,6 +441,126 @@ class TestPanel10Draining(_PipelineCase):
 			)
 			# The pump turn was NOT touched by Phase-0.
 			self.assertEqual(self._state(rid), "streaming")
+
+
+# --------------------------------------------------------------------------- #
+# 5b. OARF-2 — snapshot recovery is bounded by the turn's watermark
+# --------------------------------------------------------------------------- #
+
+
+class TestSnapshotRecoveryWindow(_PipelineCase):
+	"""OARF-2: missed-terminal snapshot recovery must window the durable tail by
+	the turn's ``openclaw_seq_watermark`` (captured by prepare BEFORE this turn's
+	send). A run that ended with NO output beyond the watermark must NEVER adopt a
+	PRIOR turn's answer — it settles ``errored`` honestly (Amendment D: never
+	fabricate)."""
+
+	def _seed_streaming_gone(self, conv, rid, *, watermark, last_event_seq=3):
+		seed = self._mk_msg(conv, content="second question")
+		amsg = self._mk_msg(
+			conv, role="assistant", content="partial", streaming=1, openclaw_seq_watermark=watermark
+		)
+		epoch = self._acquire_fresh("snaprec")
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"streaming",
+			version=6,
+			pump_epoch=epoch,
+			reserved=1,
+			assistant_message=amsg,
+			last_event_seq=last_event_seq,
+			gateway_run_id=rid,
+			dispatching_at=frappe.utils.now(),
+			dispatch_payload=json.dumps({"session_key": "sess-rec"}),
+		)
+		return amsg, epoch
+
+	def _ctx_for(self, double, epoch):
+		# A ctx whose snapshot reports the session as GONE (not in active_session_keys)
+		# so reconcile treats the terminal as missed and pulls the durable tail.
+		deps = self._deps(
+			double=double, snapshot=lambda ctx: {"gateway_active": 0, "active_session_keys": set()}
+		)
+		ctx = pump.PumpContext(
+			relay_target_id=self._target,
+			epoch=epoch,
+			holder="snaprec",
+			hop_counter=0,
+			site=frappe.local.site,
+			deps=deps,
+		)
+		now = pump._monotonic()
+		ctx.soft_deadline = now + 999
+		ctx.hard_deadline = now + 999
+		ctx.last_heartbeat = now
+		ctx.mux = deps.make_mux(self._target, epoch)
+		return ctx
+
+	def test_two_turn_recovery_does_not_surface_prior_answer(self):
+		"""MANDATORY (OARF-2 regression): a two-turn conversation whose SECOND turn
+		died pre-output. The session transcript still holds turn 1's 'PRIOR ANSWER'
+		@seq5; the second turn's watermark is 5 (captured before its send). Recovery
+		must NOT settle the second turn with turn 1's answer — it settles errored."""
+		conv = self._mk_conv()
+		rid = "pmp_rec_prior"
+		amsg, epoch = self._seed_streaming_gone(conv, rid, watermark=5)
+		double = self._double()
+		# Durable transcript: only turn 1's answer @seq5 (<= watermark) + the user's
+		# second question @seq6. NO assistant message for the current (second) turn.
+		double.arm_sessions_get(
+			"sess-rec",
+			[
+				{"role": "assistant", "content": "PRIOR ANSWER", "__openclaw": {"seq": 5}},
+				{"role": "user", "content": "second question", "__openclaw": {"seq": 6}},
+			],
+		)
+		ctx = self._ctx_for(double, epoch)
+		self._pubs.clear()
+
+		pump._reconcile_on_start(ctx)  # issues the recovery-tail RPC (non-blocking)
+		self._pump_until(ctx, lambda: self._state(rid) in ("errored", "finalizing", "done"))
+
+		# The second turn settled ERRORED — NEVER final with turn 1's answer.
+		self.assertEqual(self._state(rid), "errored", "no in-window output -> honest errored")
+		row = frappe.db.get_value(MSG, amsg, ["content", "error", "streaming"], as_dict=True)
+		self.assertNotEqual(row["content"], "PRIOR ANSWER", "must NOT adopt the prior turn's answer")
+		self.assertTrue(row["error"], "an honest user-visible error reason is set")
+		self.assertEqual(int(row["streaming"]), 0, "spinner cleared (no stuck bubble)")
+		self.assertEqual(int(self._val(rid, "reserved")), 0, "credit released")
+		self.assertNotIn("PRIOR ANSWER", [p.get("text") for p in self._pubs])
+		self.assertIn("run:error", self._pub_kinds())
+		self.assertNotIn("run:end", self._pub_kinds())
+
+	def test_in_window_answer_recovers_as_final_marked_recovered(self):
+		"""Positive: when the durable tail DOES hold an answer WITHIN the window
+		(seq 7 > watermark 5), recovery settles it as a final AND marks
+		was_recovered (OARF-7: a genuine recovery, unlike a clean-hop re-stamp)."""
+		conv = self._mk_conv()
+		rid = "pmp_rec_final"
+		amsg, epoch = self._seed_streaming_gone(conv, rid, watermark=5)
+		double = self._double()
+		double.arm_sessions_get(
+			"sess-rec",
+			[
+				{"role": "assistant", "content": "PRIOR ANSWER", "__openclaw": {"seq": 5}},
+				{"role": "user", "content": "second question", "__openclaw": {"seq": 6}},
+				{"role": "assistant", "content": "RECOVERED ANSWER", "__openclaw": {"seq": 7}},
+			],
+		)
+		ctx = self._ctx_for(double, epoch)
+		self._pubs.clear()
+
+		pump._reconcile_on_start(ctx)
+		self._pump_until(ctx, lambda: self._state(rid) in ("errored", "finalizing", "done"))
+
+		self.assertEqual(self._state(rid), "finalizing", "in-window answer settles final")
+		self.assertEqual(frappe.db.get_value(MSG, amsg, "content"), "RECOVERED ANSWER")
+		self.assertEqual(int(self._val(rid, "was_recovered")), 1, "genuine recovery flags was_recovered")
+		self.assertIn("run:end", self._pub_kinds())
+		end = next(p for p in self._pubs if p.get("kind") == "run:end")
+		self.assertTrue(end.get("was_recovered"), "run:end carries was_recovered for a real recovery")
 
 
 # --------------------------------------------------------------------------- #
@@ -510,6 +634,96 @@ class TestTwoWriterSettlement(_PipelineCase):
 				# exactly one run:end published, one finalize enqueued.
 				self.assertEqual(self._pub_kinds().count("run:end"), 1)
 				self.assertEqual(fin_rec.count, 1)
+
+	def test_settlement_vs_watchdog_benign_loss_does_not_kill_hop(self):
+		"""OARF-3 / §10.11 (the requested THIRD writer order): settlement races a
+		DIFFERENT writer (the watchdog moving a stuck terminal_observed turn to
+		recovering). A benign 0-rows loss with the epoch INTACT must NOT
+		``lease_lost_exit`` — that would kill the hop and stall the whole shard for
+		an ordinary optimistic-concurrency loss."""
+		conv = self._mk_conv()
+		rid = "pmp_2w_wd"
+		epoch = self._acquire_fresh("wd_race")
+		amsg = self._seed_terminal_observed(conv, rid, epoch)  # v6, pump_epoch=epoch
+		# The watchdog (a DIFFERENT writer) moves the terminal_observed turn to
+		# recovering: version -> 7, epoch UNTOUCHED.
+		self.assertTrue(ts.mark_recovering(rid, 6))
+		frappe.db.commit()
+		self.assertEqual(self._state(rid), "recovering")
+		# Faithful TOCTOU: settlement had read the row as terminal_observed@v6 BEFORE
+		# the watchdog moved it, so its CAS now 0-rows with the epoch intact.
+		stale = {
+			"state": "terminal_observed",
+			"version": 6,
+			"pump_epoch": epoch,
+			"reserved": 1,
+			"assistant_message": amsg,
+			"terminal_kind": "relay:final",
+			"cancel_requested": 0,
+			"last_event_seq": 3,
+			"recovering": 0,
+			"dispatching_at": frappe.utils.now(),
+		}
+		deps = pump.PumpDeps()
+		deps.enqueue_finalize = _Recorder()
+		self._pubs.clear()
+		with patch.object(ts, "read_turn", return_value=stale):
+			# Epoch intact -> a clean no-op (rollback + return), NEVER LeaseLostExit.
+			settlement.invoke_settlement(
+				rid,
+				relay_target_id=self._target,
+				epoch=epoch,
+				version=6,
+				terminal_kind="relay:final",
+				terminal_payload={"text": "final answer"},
+				assistant_message=amsg,
+				owner=self._orig_user,
+				conversation=conv,
+				deps=deps,
+			)
+		# The hop survives; the watchdog still owns the (recovering) turn; the S1
+		# message write was rolled back; no finalize/run:end leaked.
+		self.assertEqual(self._state(rid), "recovering", "the concurrent actor still owns the turn")
+		self.assertEqual(frappe.db.get_value(MSG, amsg, "content"), "partial", "S1 write rolled back")
+		self.assertEqual(deps.enqueue_finalize.count, 0)
+		self.assertNotIn("run:end", self._pub_kinds())
+
+	def test_settlement_epoch_mismatch_raises_lease_lost(self):
+		"""OARF-3 / §10.11: when the 0-rows loss is a genuine TAKEOVER (epoch no
+		longer matches) settlement DOES route through the shared lease-loss exit."""
+		conv = self._mk_conv()
+		rid = "pmp_2w_takeover"
+		epoch = self._acquire_fresh("takeover_race")
+		self._seed_terminal_observed(conv, rid, epoch)
+		# A takeover re-stamps the turn to a new epoch (expire the lease first).
+		frappe.db.set_value(
+			"Jarvis Relay Pump",
+			self._target,
+			"lease_expires_at",
+			frappe.utils.add_to_date(None, seconds=-5),
+			update_modified=False,
+		)
+		frappe.db.commit()
+		won, new_epoch = ts.lease_acquire(self._target, "taker")
+		self.assertTrue(won)
+		self.assertGreater(new_epoch, epoch)
+		self.assertEqual(int(self._val(rid, "pump_epoch")), new_epoch, "turn re-stamped by the takeover")
+		deps = pump.PumpDeps()
+		deps.enqueue_finalize = _Recorder()
+		with self.assertRaises(ts.LeaseLostExit):
+			settlement.invoke_settlement(
+				rid,
+				relay_target_id=self._target,
+				epoch=epoch,
+				version=6,
+				terminal_kind="relay:final",
+				terminal_payload={"text": "final answer"},
+				assistant_message=None,
+				owner=self._orig_user,
+				conversation=conv,
+				deps=deps,
+			)
+		self.assertEqual(deps.enqueue_finalize.count, 0)
 
 
 # --------------------------------------------------------------------------- #
@@ -627,3 +841,192 @@ class TestUsageIdempotency(_PipelineCase):
 			finalize.run_finalize(rid, self._target)
 		self.assertEqual(rec.count, 1)
 		self.assertEqual(self._state(rid), "done")
+
+
+# --------------------------------------------------------------------------- #
+# 9. SUXF-2 — dispatch-time definite rejection carries changed_data=False
+# --------------------------------------------------------------------------- #
+
+
+class TestSuxf2AckFailureContract(_PipelineCase):
+	def test_definite_rejection_carries_changed_data_false(self):
+		"""SUXF-2: the pump's own pre-ack definite-rejection surface
+		(_handle_ack_failure) must publish run:error with changed_data=False — the
+		run never started, so 'No changes were made to your data' is honest (parity
+		with prepare._prepare_error + legacy)."""
+		from jarvis.tests.test_pump import _RejectGateway
+
+		conv = self._mk_conv()
+		rid = "pmp_suxf2"
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="", streaming=1)
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"ready",
+			version=2,
+			reserved=1,
+			assistant_message=amsg,
+			ready_at=frappe.utils.now(),
+			dispatch_payload=json.dumps({"session_key": f"sess-{rid}", "message": "hi"}),
+		)
+		double = _RejectGateway()
+		self._doubles.append(double)
+		deps = self._deps(double=double)
+		ctx = self._make_ctx(deps)
+		self._pubs.clear()
+		pump._dispatch_ready(ctx)  # OARF-5: non-blocking issue
+		self._pump_until(ctx, lambda: self._state(rid) in ("errored", "recovering"))
+		self.assertEqual(self._state(rid), "errored")
+		err = next(p for p in self._pubs if p.get("kind") == "run:error")
+		self.assertIs(err.get("changed_data"), False, "SUXF-2: pre-ack rejection => changed_data False")
+
+
+# --------------------------------------------------------------------------- #
+# 10. SUXF-1 — every recovering/errored transition mirrors the Message row
+# --------------------------------------------------------------------------- #
+
+
+class TestSuxf1RecoveringMirror(_PipelineCase):
+	def test_watchdog_deadline_park_writes_message_mirror_and_publishes(self):
+		conv = self._mk_conv()
+		rid = "pmp_suxf1_park"
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		epoch = self._acquire_fresh("suxf1a")
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"streaming",
+			version=4,
+			pump_epoch=epoch,
+			reserved=1,
+			assistant_message=amsg,
+			dispatching_at=frappe.utils.now(),
+			deadline_at=frappe.utils.add_to_date(None, seconds=-5),  # soft deadline passed
+		)
+		self._pubs.clear()
+		wd_deps = pump.PumpDeps()
+		wd_deps.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			pump.watchdog(deps=wd_deps)
+		self.assertEqual(self._state(rid), "recovering")
+		# SUXF-1: the Message row mirrors the recovering state so a reload / 2nd tab
+		# reconstructs the 'Reconnecting' banner (not a plain locked composer).
+		row = frappe.db.get_value(MSG, amsg, ["recovering", "recovery_started_at"], as_dict=True)
+		self.assertEqual(int(row["recovering"]), 1)
+		self.assertIsNotNone(row["recovery_started_at"])
+		self.assertIn("run:recovering", self._pub_kinds())
+
+	def test_watchdog_budget_exhausted_errors_message_and_publishes(self):
+		conv = self._mk_conv()
+		rid = "pmp_suxf1_err"
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1, recovering=1)
+		epoch = self._acquire_fresh("suxf1b")
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"recovering",
+			version=4,
+			pump_epoch=epoch,
+			reserved=1,
+			assistant_message=amsg,
+			recovering=1,
+			dispatching_at=frappe.utils.now(),
+			recovery_started_at=frappe.utils.add_to_date(None, seconds=-(pump.RECOVERY_BUDGET_S + 60)),
+		)
+		self._pubs.clear()
+		wd_deps = pump.PumpDeps()
+		wd_deps.enqueue_pump_job = _Recorder()
+		with patch.object(pump, "pump_configured", return_value=True):
+			pump.watchdog(deps=wd_deps)
+		self.assertEqual(self._state(rid), "errored")
+		# SUXF-1: a budget-exhausted turn reaches the terminal error UX — the Message
+		# never sits forever at streaming=1 with an empty spinner and no backstop.
+		row = frappe.db.get_value(MSG, amsg, ["streaming", "error"], as_dict=True)
+		self.assertEqual(int(row["streaming"]), 0)
+		self.assertTrue(row["error"])
+		self.assertIn("run:error", self._pub_kinds())
+		self.assertEqual(int(self._val(rid, "reserved")), 0, "credit released")
+
+	def test_db_disconnect_park_writes_mirror_and_publishes(self):
+		conv = self._mk_conv()
+		rid = "pmp_suxf1_db"
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		epoch = self._acquire_fresh("suxf1c")
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"streaming",
+			version=4,
+			pump_epoch=epoch,
+			reserved=1,
+			assistant_message=amsg,
+			dispatching_at=frappe.utils.now(),
+		)
+		ctx = pump.PumpContext(
+			relay_target_id=self._target,
+			epoch=epoch,
+			holder="db",
+			hop_counter=0,
+			site=frappe.local.site,
+			deps=self._deps(),
+		)
+		self._pubs.clear()
+		pump._park_affected_recovering(ctx)
+		self.assertEqual(self._state(rid), "recovering")
+		self.assertEqual(int(frappe.db.get_value(MSG, amsg, "recovering") or 0), 1)
+		self.assertIn("run:recovering", self._pub_kinds())
+
+
+# --------------------------------------------------------------------------- #
+# 11. OARF-6 — the bench-side delta batcher relocated into the lane handler
+# --------------------------------------------------------------------------- #
+
+
+class TestDeltaBatcher(_PipelineCase):
+	def test_delta_publishes_are_batched_not_per_frame(self):
+		"""OARF-6: the 'success' transcript streams many cumulative delta frames at a
+		1ms cadence (< the 250ms batch interval), so the relocated batcher must
+		coalesce them into FEW commits+publishes (N=10/250ms) — a bounded gap count,
+		not one publish per frame."""
+		import math
+
+		from jarvis.tests.harness import transcripts as _t
+
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="hello")
+		rid = "pmp_batch"
+		fake = _FakeSess()
+		double = self._double()
+
+		def real_prepare(run_id, target):
+			with self._gateway(fake), self._pump_on():
+				prepare.run_prepare(run_id, target)
+
+		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=0)
+		deps = self._deps(double=double, prepare=real_prepare)
+		ctx = self._make_ctx(deps)
+		pump._promote_queued(ctx)
+		double.arm(rid, "success")
+		self._pubs.clear()
+		self._pump_until(ctx, lambda: self._state(rid) in ("finalizing", "done"))
+
+		deltas = [p for p in self._pubs if p.get("kind") == "assistant:delta"]
+		frames = [f for f in _t.get("success")["frames"] if f.get("op") == "assistant"]
+		self.assertGreater(len(frames), 15, "the success transcript streams many delta frames")
+		self.assertGreaterEqual(len(deltas), 1, "at least one delta published (first token flushes now)")
+		self.assertLess(len(deltas), len(frames), "batcher coalesced deltas (fewer publishes than frames)")
+		# Cadence bound (size-triggered under the fast cadence): ceil(frames/N) + a
+		# small slop for the immediate first-token flush + the terminal tail flush.
+		self.assertLessEqual(
+			len(deltas),
+			math.ceil(len(frames) / pump._DELTA_BATCH_SIZE) + 3,
+			"publish count within the N=10 batch cadence",
+		)

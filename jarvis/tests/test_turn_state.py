@@ -556,7 +556,10 @@ class TestFencingTimelines(_TurnStateTestCase):
 		row = frappe.db.get_value(TURN, "ts_d4c", ["pump_epoch", "version", "was_recovered"], as_dict=True)
 		self.assertEqual(row["pump_epoch"], E + 1, "turn re-stamped to the new epoch")
 		self.assertEqual(row["version"], 13, "re-stamp bumped version")
-		self.assertEqual(row["was_recovered"], 1)
+		# OARF-7: a CLEAN-hop re-stamp does NOT set was_recovered — a turn that merely
+		# spans a hop boundary was not recovered; only a genuine recovery transition
+		# (mark_recovering / snapshot recovery) sets the flag.
+		self.assertEqual(row["was_recovered"], 0)
 		# P_old wakes with cached (version=12, epoch=E) and tries a delta: 0 rows.
 		self.assertFalse(ts.apply_delta("ts_d4c", 12, E, 5, amsg, "stale"), "stale writer affects 0")
 		frappe.db.rollback()

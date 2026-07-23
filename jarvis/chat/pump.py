@@ -117,6 +117,24 @@ DB_BACKOFF_CAP_S = 2.0
 # recovery_started_at) is driven to `errored` by the watchdog (D2 row 24).
 RECOVERY_BUDGET_S = 600
 
+# Pre-claim dispatch deadline (OARF-4): a turn that RESERVED a credit at promote
+# but whose prepare never CLAIMED it (lost enqueue / `long` saturation / a crash
+# before claim_preparing) is reclaimed back to `queued reserved=0` FOR RETRY at
+# this short deadline (from enqueued_at), well under both the 900s reserve TTL and
+# the 900s queued age-out. Reclaim (retry) WINS over age-out (cancel) for a
+# reserved turn: a turn that was admitted + given a credit must not be cancelled
+# for a starvation that was not its fault.
+PREPARE_DISPATCH_DEADLINE_S = 120
+
+# Bench-side delta batcher cadence (OARF-6 / D1 #28): the legacy
+# `_AssistantContentBatcher` relocated INTO the lane handler — per-frame
+# commit+publish becomes one commit+publish per N frames OR every INTERVAL ms
+# (whichever trips first), coalescing openclaw's ~150ms cumulative mirrors. The
+# first delta always flushes immediately (first-token latency, C1). C3
+# (flush_gap_ms) measures the resulting cadence.
+_DELTA_BATCH_SIZE = 10
+_DELTA_BATCH_INTERVAL_MS = 250
+
 # Admission safety reserve (§10.1 — heartbeats self-defer, so default 0).
 SAFETY_RESERVE = 0
 
@@ -273,17 +291,22 @@ def _lease_mirror_live(target: str) -> bool:
 
 def _default_dispatch_prepare(run_id: str, relay_target_id: str) -> None:
 	"""WP-1d SEAM 1 — prepare dispatcher. Enqueue the short prepare job (D1 stages
-	#16-#26 → queued->preparing->ready). WP-1d owns the job body + a DEDUPED
-	deterministic job_id (a still-`queued` reserved turn may be re-offered each
-	slice; dedupe + the idempotent claim CAS make that a no-op). The default
-	enqueues a conventionally-named job that does not exist yet, so it is a
-	no-op-until-WP-1d in production and is ALWAYS replaced by tests."""
+	#16-#26 → queued->preparing->ready). WP-1d owns the job body + an
+	ATTEMPT-SUFFIXED deduped job_id (OARF-8): the suffix is the turn's ``version``,
+	which is STABLE across the same slice's re-offers of a still-`queued` reserved
+	turn (dedupe + the idempotent claim CAS make a re-offer a no-op) but CHANGES on
+	a genuine new attempt (a park -> recover_to_queued -> re-reserve bumps version).
+	A bare fixed id would let a hard-killed prepare's stale STARTED registration
+	silently no-op every re-enqueue for the job timeout (~180s) — the dedupe trap
+	§10.4 fixed for hops. The default enqueues a conventionally-named job that does
+	not exist yet, so it is a no-op-until-WP-1d in production and is ALWAYS replaced
+	by tests."""
 	try:
 		frappe.enqueue(
 			"jarvis.chat.prepare.run_prepare",
 			queue="long",
 			timeout=HOP_TIMEOUT_S,
-			job_id=f"jarvis-prepare::{run_id}",
+			job_id=f"jarvis-prepare::{run_id}::a{_attempt_suffix(run_id)}",
 			deduplicate=True,
 			run_id=run_id,
 			relay_target_id=relay_target_id,
@@ -296,13 +319,17 @@ def _default_enqueue_finalize(run_id: str, relay_target_id: str) -> None:
 	"""WP-1d SEAM 2b — finalize invoker. Enqueue the short finalize (enrichment)
 	job. Used by settlement (D3 S6) AND by the watchdog for a `finalizing` turn
 	(R-13: the watchdog's ONLY legal action there is re-enqueueing finalize).
-	Deduped so a watchdog re-enqueue of an in-flight finalize is a no-op."""
+	ATTEMPT-SUFFIXED deduped job_id (OARF-8): the suffix is the turn's ``version``
+	so a watchdog re-enqueue of an in-flight finalize dedupes, while a genuine new
+	attempt (finalize_done bumps version on the success flip) gets a fresh id — a
+	bare fixed id would let a hard-killed finalize's stale STARTED registration
+	no-op re-enqueues for the job timeout (the §10.4 dedupe trap)."""
 	try:
 		frappe.enqueue(
 			"jarvis.chat.finalize.run_finalize",
 			queue="long",
 			timeout=HOP_TIMEOUT_S,
-			job_id=f"jarvis-finalize::{run_id}",
+			job_id=f"jarvis-finalize::{run_id}::a{_attempt_suffix(run_id)}",
 			deduplicate=True,
 			run_id=run_id,
 			relay_target_id=relay_target_id,
@@ -471,6 +498,43 @@ class _RunState:
 	accept_ms: int = 0  # epoch-ms of the turn's enqueued_at (C1 accept baseline)
 	first_delta_done: bool = False  # first streamed delta published this run?
 	last_publish_mono: float = 0.0  # monotonic of the last delta publish (C3 gap)
+	# --- OARF-6 bench-side delta batcher (relocated _AssistantContentBatcher) - #
+	# The latest cumulative mirror + the accumulated incremental delta since the
+	# last flush; a flush = one apply_delta CAS + commit + publish for the whole
+	# batch (N=10 events / 250ms cadence). None => nothing pending.
+	pending_seq: int | None = None
+	pending_text: str = ""
+	pending_delta: str = ""
+	events_since_flush: int = 0
+	last_flush_mono: float = 0.0
+
+
+@dataclass
+class _PendingAck:
+	"""OARF-5: an in-flight ``chat.send`` ack the reactor issued but does NOT block
+	on. Polled each slice (``fut.done``); on our slice-level ``deadline`` the
+	``ack-timeout`` sentinel path fires (park recovering), not a blocking
+	``.result()`` — so a dispatch wave never stalls the streaming lanes."""
+
+	fut: object
+	deadline: float
+	rs: _RunState
+	drained_note_ids: list
+
+
+@dataclass
+class _PendingRecovery:
+	"""OARF-5: an in-flight ``sessions.get`` recovery-tail RPC (missed-terminal
+	snapshot recovery) the reactor issued without blocking. Polled each slice; on
+	resolve the tail is windowed by the turn's watermark (OARF-2) and the turn is
+	settled final/errored; on our deadline it re-attaches and waits."""
+
+	fut: object
+	deadline: float
+	r: dict
+	session_key: str
+	min_seq: int
+	max_seq: int | None
 
 
 @dataclass
@@ -489,6 +553,9 @@ class PumpContext:
 	last_heartbeat: float = 0.0
 	runs: dict[str, _RunState] = field(default_factory=dict)
 	peak_occupancy: int = 0  # max concurrent lanes this hop (C4 pump occupancy)
+	# OARF-5: in-flight RPCs the reactor polls (never blocks on) each slice.
+	pending_acks: dict[str, _PendingAck] = field(default_factory=dict)
+	pending_recoveries: dict[str, _PendingRecovery] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -648,7 +715,8 @@ def drain_slice(ctx: PumpContext) -> str:
 	drain_wake(ctx.relay_target_id)
 
 	_promote_queued(ctx)
-	_dispatch_ready(ctx)
+	_dispatch_ready(ctx)  # OARF-5: issues chat.send acks, parks them (never blocks)
+	_poll_pending(ctx)  # OARF-5: resolve done acks/recovery tails; ack-timeout deadlines
 
 	if ctx.mux is not None:
 		ctx.mux.dispatch(block_s=SLICE_BLOCK_S)
@@ -859,8 +927,11 @@ def _dispatch_ready(ctx: PumpContext) -> int:
 
 
 def _dispatch_one(ctx: PumpContext, run_id: str) -> bool:
-	"""ready -> dispatching (stamp epoch, CONFIRM-only) then ``chat.send`` and the
-	ack transition. Returns True if a stream was started."""
+	"""ready -> dispatching (stamp epoch, CONFIRM-only) then ISSUE ``chat.send``
+	WITHOUT blocking on its ack (OARF-5): the ack future is parked in
+	``ctx.pending_acks`` and resolved by ``_poll_pending`` on a later slice, so a
+	dispatch wave never stalls the streaming lanes' delta application. Returns True
+	if the send was issued."""
 	turn = _read_dispatch_row(run_id)
 	if turn is None or turn["state"] != "ready":
 		return False
@@ -912,32 +983,71 @@ def _dispatch_one(ctx: PumpContext, run_id: str) -> bool:
 			thinking=dispatch.get("thinking"),
 			attachments=dispatch.get("attachments"),
 		)
-		ack = fut.result(ACK_TIMEOUT_S)
 	except OpenclawUnreachableError as exc:
-		return _handle_ack_failure(ctx, rs, exc)
+		# Immediate send failure (socket write failed) — resolve inline (rare).
+		_handle_ack_failure(ctx, rs, exc)
+		return False
+	# Park the ack: polled by _poll_pending; on our deadline the ack-timeout
+	# sentinel path fires (park recovering), never a blocking .result().
+	ctx.pending_acks[run_id] = _PendingAck(
+		fut=fut,
+		deadline=_monotonic() + ACK_TIMEOUT_S,
+		rs=rs,
+		drained_note_ids=dispatch.get("drained_note_ids"),
+	)
+	return True
 
+
+def _poll_pending(ctx: PumpContext) -> None:
+	"""OARF-5: resolve every in-flight ack / recovery-tail RPC WITHOUT blocking —
+	``fut.done`` checks per slice, our slice-level deadline is the ack-timeout. A
+	real epoch loss raised here (via ``lease_lost_exit``) propagates to the shared
+	hop exit."""
+	_poll_acks(ctx)
+	_poll_recoveries(ctx)
+
+
+def _poll_acks(ctx: PumpContext) -> None:
+	for run_id in list(ctx.pending_acks):
+		pa = ctx.pending_acks[run_id]
+		done = pa.fut.done
+		if not done and _monotonic() <= pa.deadline:
+			continue  # still in flight, under the ack window — leave for a later slice
+		ctx.pending_acks.pop(run_id, None)
+		try:
+			# done -> returns the frame or raises the stored exc; not-done + past our
+			# deadline -> result(0) cleans up the mux map and raises the ack-timeout
+			# sentinel (the timeout, not a blocking wait).
+			ack = pa.fut.result(0)
+		except OpenclawUnreachableError as exc:
+			_handle_ack_failure(ctx, pa.rs, exc)
+			continue
+		_on_ack_success(ctx, pa, ack)
+
+
+def _on_ack_success(ctx: PumpContext, pa: _PendingAck, ack: dict) -> None:
+	"""Process a resolved ``chat.send`` ack: rekey to the gateway run id if it
+	differs, then dispatching -> streaming (epoch-fenced). A real 0-rows epoch
+	loss routes through the shared lease-loss exit."""
+	rs = pa.rs
 	payload = ack.get("payload") or ack.get("result") or {}
-	gw = payload.get("runId") or run_id
-	if gw != run_id:
-		ctx.mux.rekey_run(run_id, gw)
+	gw = payload.get("runId") or rs.run_id
+	if gw != rs.run_id and ctx.mux is not None:
+		ctx.mux.rekey_run(rs.run_id, gw)
 	rs.gateway_run_id = gw
-
-	# dispatching -> streaming (record gateway_run_id, epoch-fenced).
-	if ts.mark_streaming(run_id, rs.version, ctx.epoch, gateway_run_id=gw):
+	if ts.mark_streaming(rs.run_id, rs.version, ctx.epoch, gateway_run_id=gw):
 		rs.version += 1
 		frappe.db.commit()
 		# R-2: the ack PROVES delivery, so clear EXACTLY the agent-correction notes
-		# prepare folded into this prompt (id-keyed, idempotent). Deferred from
-		# WP-1c; the clear must fire on proven delivery (post-ack), never on an
-		# ack-timeout. Best-effort — a clear failure never breaks the stream.
-		_clear_agent_notes_on_ack(rs.conversation, dispatch.get("drained_note_ids"))
-		return True
+		# prepare folded into this prompt (id-keyed, idempotent) — never on an
+		# ack-timeout. Best-effort.
+		_clear_agent_notes_on_ack(rs.conversation, pa.drained_note_ids)
+		return
 	# 0 rows: distinguish a real epoch loss from a benign version drift (e.g. a
 	# concurrent cancel bumped version out-of-band).
-	if _epoch_lost(ctx, run_id):
-		ts.lease_lost_exit(run_id)
-	rs.version = _resync_version(run_id)
-	return False
+	if _epoch_lost(ctx, rs.run_id):
+		ts.lease_lost_exit(rs.run_id)
+	rs.version = _resync_version(rs.run_id)
 
 
 def _handle_ack_failure(ctx: PumpContext, rs: _RunState, exc: OpenclawUnreachableError) -> bool:
@@ -970,6 +1080,9 @@ def _handle_ack_failure(ctx: PumpContext, rs: _RunState, exc: OpenclawUnreachabl
 		if rs.owner:
 			# SUX-11: a definite pre-ack rejection is a real error — publish run:error
 			# with today's classification code + message_id (not a bare run:end).
+			# SUXF-2: carry changed_data=False — this is a pre-ack rejection, the run
+			# never started, so "No changes were made to your data" is honest (parity
+			# with prepare._prepare_error + legacy turn_handler._publish_run_error).
 			ts.publish_fenced(
 				rs.owner,
 				"run:error",
@@ -978,6 +1091,7 @@ def _handle_ack_failure(ctx: PumpContext, rs: _RunState, exc: OpenclawUnreachabl
 				message_id=rs.assistant_message,
 				error=err,
 				code=_classify_error(err),
+				changed_data=False,
 			)
 		return False
 	if _epoch_lost(ctx, run_id):
@@ -990,6 +1104,67 @@ def _handle_ack_failure(ctx: PumpContext, rs: _RunState, exc: OpenclawUnreachabl
 # --------------------------------------------------------------------------- #
 
 
+def _flush_deltas(ctx: PumpContext, rs: _RunState) -> None:
+	"""OARF-6: flush the batched cumulative mirror — ONE ``apply_delta`` CAS +
+	commit + fenced ``assistant:delta`` publish for the whole accumulated batch.
+	No-op when nothing is pending. Raises ``LeaseLostExit`` on a real epoch loss
+	(the caller converts it to ``ctx.lease_lost``); a benign 0-rows (watermark dup
+	/ version drift) re-syncs the version and returns."""
+	if rs.pending_seq is None:
+		return
+	seq, text, delta = rs.pending_seq, rs.pending_text, rs.pending_delta
+	rs.pending_seq = None
+	rs.pending_delta = ""
+	rs.events_since_flush = 0
+	rs.last_flush_mono = _monotonic()
+	won = ts.apply_delta(
+		run_id=rs.run_id,
+		version=rs.version,
+		epoch=ctx.epoch,
+		event_seq=seq,
+		assistant_message=rs.assistant_message,
+		content=text,
+	)
+	if won:
+		rs.version += 1
+		frappe.db.commit()
+		if rs.owner:
+			# SUX-1/SUX-6: the event name + payload MUST match what today's ChatView
+			# already consumes — it renders on `assistant:delta` with {message_id,
+			# text} (cumulative mirror). publish_fenced adds (turn_id, event_seq) so
+			# the client dedupes a replayed frame. `delta` is the accumulated
+			# incremental fragment since the last flush.
+			ts.publish_fenced(
+				rs.owner,
+				"assistant:delta",
+				conversation_id=rs.conversation,
+				run_id=rs.run_id,
+				event_seq=seq,
+				message_id=rs.assistant_message,
+				text=text,
+				delta=delta,
+			)
+			_emit_stream_telemetry(rs)
+	else:
+		# Benign (watermark dup / version drift) vs real epoch loss.
+		if _epoch_lost(ctx, rs.run_id):
+			ts.lease_lost_exit(rs.run_id)
+		rs.version = _resync_version(rs.run_id)
+
+
+def _flush_all_pending(ctx: PumpContext) -> None:
+	"""OARF-6: flush every active lane's batched deltas (called at hop handoff so a
+	sub-threshold tail batch is not left in memory across the hop boundary). A lease
+	loss during a flush ends the hop via the shared exit. Best-effort otherwise."""
+	for rs in list(ctx.runs.values()):
+		try:
+			_flush_deltas(ctx, rs)
+		except ts.LeaseLostExit:
+			ctx.lease_lost = rs.run_id
+		except Exception:
+			frappe.log_error(title="pump.flush_pending", message=frappe.get_traceback())
+
+
 def _make_handler(ctx: PumpContext, rs: _RunState) -> LaneHandler:
 	"""Build the per-turn lane callbacks (they run ON THE PUMP THREAD inside
 	``mux.dispatch``). A ``LeaseLostExit`` raised inside a callback is CAUGHT and
@@ -1000,53 +1175,48 @@ def _make_handler(ctx: PumpContext, rs: _RunState) -> LaneHandler:
 	quarantine)."""
 
 	def on_delta(event_seq: int, text: str, delta: str) -> None:
+		# OARF-6: BATCH the cumulative mirror (relocated _AssistantContentBatcher).
+		# Record the latest cumulative text + accumulate the incremental delta, then
+		# flush (one apply_delta CAS + commit + publish for the whole batch) only
+		# when the size (N=10) or time (250ms) threshold trips — the first delta
+		# always flushes immediately (first-token latency, C1). openclaw already
+		# coalesces at ~150ms, so this is bench-side de-duplication of commits+
+		# publishes, not a change to what the user eventually sees (cumulative).
 		if ctx.lease_lost:
 			return
 		try:
-			won = ts.apply_delta(
-				run_id=rs.run_id,
-				version=rs.version,
-				epoch=ctx.epoch,
-				event_seq=event_seq,
-				assistant_message=rs.assistant_message,
-				content=text,
-			)
-			if won:
-				rs.version += 1
-				frappe.db.commit()
-				if rs.owner:
-					# SUX-1/SUX-6: the event name + payload MUST match what today's
-					# ChatView already consumes — it renders on `assistant:delta` with
-					# {message_id, text} (cumulative mirror). publish_fenced adds
-					# (turn_id, event_seq) so the client dedupes a replayed frame.
-					ts.publish_fenced(
-						rs.owner,
-						"assistant:delta",
-						conversation_id=rs.conversation,
-						run_id=rs.run_id,
-						event_seq=event_seq,
-						message_id=rs.assistant_message,
-						text=text,
-						delta=delta,
-					)
-					_emit_stream_telemetry(rs)
-			else:
-				# Benign (watermark dup / version drift) vs real epoch loss.
-				if _epoch_lost(ctx, rs.run_id):
-					ts.lease_lost_exit(rs.run_id)
-				rs.version = _resync_version(rs.run_id)
+			rs.pending_seq = event_seq
+			rs.pending_text = text
+			rs.pending_delta = (rs.pending_delta + delta) if rs.pending_delta else delta
+			rs.events_since_flush += 1
+			if rs.events_since_flush >= _DELTA_BATCH_SIZE or (
+				(_monotonic() - rs.last_flush_mono) * 1000.0 >= _DELTA_BATCH_INTERVAL_MS
+			):
+				_flush_deltas(ctx, rs)
 		except ts.LeaseLostExit:
 			ctx.lease_lost = rs.run_id
 
 	def on_tool(event: dict) -> None:
 		# PRECIOUS: a raise here quarantines the lane. The out-of-band receipt
-		# writer (R-6) is WP-1d; the default is a no-op.
+		# writer (R-6) is WP-1d; the default is a no-op. Flush any batched deltas
+		# FIRST so the on-disk mirror + realtime order matches the frame order
+		# (ordering: flush before any non-delta event, verbatim legacy batcher).
+		if ctx.lease_lost:
+			return
+		try:
+			_flush_deltas(ctx, rs)
+		except ts.LeaseLostExit:
+			ctx.lease_lost = rs.run_id
+			return
 		ctx.deps.apply_tool(rs.run_id, event)
 
 	def on_terminal(kind: str, payload: dict) -> None:
 		if ctx.lease_lost:
 			return
 		try:
+			# Flush the last batched cumulative mirror before the terminal so the
+			# Message row holds the full streamed text if settlement carries no final.
+			_flush_deltas(ctx, rs)
 			won = ts.mark_terminal_observed(rs.run_id, rs.version, ctx.epoch, kind, payload)
 			if not won:
 				if _epoch_lost(ctx, rs.run_id):
@@ -1070,16 +1240,21 @@ def _make_handler(ctx: PumpContext, rs: _RunState) -> LaneHandler:
 			ctx.lease_lost = rs.run_id
 
 	def on_quarantine(reason: str) -> None:
-		# The mux fenced this lane off (precious fault / overflow). Park the turn
-		# toward recovering (out of band, D5 §5-c).
+		# The mux fenced this lane off (precious fault / overflow). Flush any batched
+		# deltas (so partial content persists), then park the turn toward recovering
+		# (out of band, D5 §5-c).
 		try:
+			_flush_deltas(ctx, rs)
 			_park_recovering(ctx, rs.run_id, reason=reason)
 		except ts.LeaseLostExit:
 			ctx.lease_lost = rs.run_id
 
 	def on_closing(sentinel: str) -> None:
-		# Transport lost — nothing durable to write; the next hop re-attaches from
-		# durable state (last_event_seq). The pump's own hop ends via the reader.
+		# Transport lost — nothing durable to write here. on_closing runs on the mux
+		# READER thread (fired from _begin_closing), which has NO frappe DB
+		# connection, so it must NEVER touch the DB (no _flush_deltas). Any batched
+		# in-memory deltas are re-derived by the next hop, which re-attaches from the
+		# durable watermark (last_event_seq) and the cumulative mirror self-heals.
 		return None
 
 	return LaneHandler(
@@ -1117,12 +1292,14 @@ def _cancel_sweep(ctx: PumpContext) -> int:
 		session_key = (
 			rs.session_key if rs else _load_dispatch(_read_dispatch_row(run_id) or {}).get("session_key", "")
 		)
-		# Out-of-band abort (best-effort — the terminal frame will also arrive).
+		# Out-of-band abort (best-effort). OARF-5: ISSUE the abort without blocking on
+		# its ack — the abort result is never consulted (the terminal frame arrives
+		# regardless and the mux cancels the future on stop), so a per-abort .result()
+		# wait would only stall the reactor. We record the aborted terminal from the
+		# row + settle below, independent of the abort ack.
 		try:
 			if ctx.mux is not None and session_key:
-				ctx.mux.abort(session_key, r.get("gateway_run_id"), timeout_s=ACK_TIMEOUT_S).result(
-					ACK_TIMEOUT_S
-				)
+				ctx.mux.abort(session_key, r.get("gateway_run_id"), timeout_s=ACK_TIMEOUT_S)
 		except Exception:
 			pass
 		if not ts.record_aborted_terminal(run_id, r["state"], int(r["version"]), ctx.epoch):
@@ -1270,34 +1447,117 @@ def _reattach_or_recover(ctx: PumpContext, r: dict, active_keys) -> None:
 	"""For an adopted in-flight turn: if the gateway snapshot shows its session no
 	longer has an active run, the terminal was MISSED during the disconnect — settle
 	from the durable tail (D2 row 23, snapshot recovery, Amendment D). Otherwise
-	re-attach the lane so the future-only broadcast resumes. Only a `streaming` turn
-	(observed frames) is eligible for missed-terminal recovery; a `dispatching` turn
-	(acked, no frames) is re-attached and left to the stream / watchdog."""
-	if r.get("state") == "streaming" and active_keys is not None:
+	re-attach the lane so the future-only broadcast resumes.
+
+	OARF-2: ONLY a `streaming` turn that ACTUALLY streamed frames
+	(``last_event_seq > 0``) is missed-terminal eligible — a bare dispatching turn
+	adopted to streaming (acked, no observed output) is re-attached, never settled
+	from a session-wide tail (which could hold a PRIOR turn's answer). OARF-5: the
+	recovery tail RPC is ISSUED non-blocking and resolved by ``_poll_recoveries``,
+	so a crash-reconcile of N gone turns does not serialize N×15s of blocking waits
+	off the delta-draining critical path."""
+	if (
+		r.get("state") == "streaming"
+		and active_keys is not None
+		and int(r.get("last_event_seq") or 0) > 0
+	):
 		session_key = _load_dispatch(_read_dispatch_row(r["run_id"]) or {}).get("session_key")
 		if session_key and session_key not in active_keys:
-			if _recover_missed_terminal(ctx, r, session_key):
-				return
+			_issue_recovery_tail(ctx, r, session_key)
+			return
 	_reattach_lane(ctx, r)
 
 
-def _recover_missed_terminal(ctx: PumpContext, r: dict, session_key: str) -> bool:
-	"""Pull the durable answer for an in-flight turn whose gateway run already ended
-	(missed terminal), advance streaming->terminal_observed under this epoch, mark it
-	recovered (SUX-6 visible replacement), and settle to final. Returns True if it
-	settled; False if no durable answer is available yet (caller re-attaches)."""
-	text = _fetch_recovery_tail(ctx, session_key)
-	if text is None:
-		return False
+def _issue_recovery_tail(ctx: PumpContext, r: dict, session_key: str) -> None:
+	"""OARF-5: issue the missed-terminal ``sessions.get`` recovery-tail RPC WITHOUT
+	blocking and park it (with the OARF-2 watermark window) for ``_poll_recoveries``.
+	Falls back to re-attach when the mux is unavailable."""
+	if ctx.mux is None:
+		_reattach_lane(ctx, r)
+		return
+	min_seq, max_seq = _recovery_window(r)
+	try:
+		fut = ctx.mux.issue_rpc("sessions.get", {"key": session_key}, timeout_s=ACK_TIMEOUT_S)
+	except Exception:
+		_reattach_lane(ctx, r)
+		return
+	ctx.pending_recoveries[r["run_id"]] = _PendingRecovery(
+		fut=fut,
+		deadline=_monotonic() + ACK_TIMEOUT_S,
+		r=r,
+		session_key=session_key,
+		min_seq=min_seq,
+		max_seq=max_seq,
+	)
+
+
+def _poll_recoveries(ctx: PumpContext) -> None:
+	"""OARF-5: resolve parked recovery-tail RPCs WITHOUT blocking. On resolve the
+	tail is windowed by the turn's watermark and the turn is settled (OARF-2); on
+	the deadline / an unavailable RPC the lane re-attaches and waits (never
+	fabricates a settlement)."""
+	for run_id in list(ctx.pending_recoveries):
+		pr = ctx.pending_recoveries[run_id]
+		if not pr.fut.done and _monotonic() <= pr.deadline:
+			continue
+		ctx.pending_recoveries.pop(run_id, None)
+		try:
+			frame = pr.fut.result(0)
+		except Exception:
+			# tail RPC timed out / unavailable — re-attach and keep waiting.
+			_reattach_lane(ctx, pr.r)
+			continue
+		_resolve_recovery_tail(ctx, pr, frame)
+
+
+def _recovery_window(r: dict) -> tuple[int, int | None]:
+	"""OARF-2 recovery window for a turn: ``min_seq`` = the turn's
+	``openclaw_seq_watermark`` (captured by prepare BEFORE this turn's chat.send —
+	a transcript message at/below it predates this turn), ``max_seq`` = the next
+	turn's watermark (a message above it belongs to a later turn). Identical bound
+	to the legacy ``turn_recovery`` fix for the same 'recovered with the next
+	question's reply' incident."""
+	am = r.get("assistant_message")
+	if not am:
+		return 0, None
+	row = frappe.db.get_value(MSG, am, ["openclaw_seq_watermark", "seq"], as_dict=True) or {}
+	min_seq = int(row.get("openclaw_seq_watermark") or 0)
+	max_seq = None
+	if row.get("seq"):
+		from jarvis.chat.turn_recovery import _next_turn_watermark
+
+		max_seq = _next_turn_watermark(r["conversation"], int(row["seq"]))
+	return min_seq, max_seq
+
+
+def _resolve_recovery_tail(ctx: PumpContext, pr: _PendingRecovery, frame: dict) -> None:
+	"""OARF-2: settle a missed-terminal turn from the WINDOWED durable tail. The
+	newest assistant text WITHIN [min_seq, max_seq] wins; if the window is empty
+	the run genuinely ended with NO output beyond the watermark, so settle
+	``errored`` honestly — NEVER adopt content from before the watermark (a prior
+	turn's answer), Amendment D 'never fabricate'."""
+	payload = frame.get("payload") or frame.get("result") or {}
+	messages = payload.get("messages") or []
+	from jarvis.chat.turn_recovery import _latest_assistant_text
+
+	text = _latest_assistant_text(messages, min_seq=pr.min_seq, max_seq=pr.max_seq)
+	if text:
+		_settle_recovered_final(ctx, pr.r, text)
+	else:
+		_settle_recovered_errored(ctx, pr.r)
+
+
+def _settle_recovered_final(ctx: PumpContext, r: dict, text: str) -> None:
+	"""Genuine missed-terminal recovery: advance streaming->terminal_observed under
+	this epoch with the in-window durable text, mark ``was_recovered`` (SUX-6 — the
+	client may do a visible replacement), and settle to final."""
 	run_id = r["run_id"]
 	v = int(r["version"])
 	payload = {"text": text}
 	if not ts.mark_terminal_observed(run_id, v, ctx.epoch, "relay:final", payload):
 		if _epoch_lost(ctx, run_id):
 			ts.lease_lost_exit(run_id)
-		return False
-	# was_recovered: the client does a VISIBLE replacement (SUX-6) — the recovered
-	# answer legitimately differs from the partial stream.
+		return
 	try:
 		frappe.db.set_value(TURN, run_id, "was_recovered", 1, update_modified=False)
 		if r.get("assistant_message"):
@@ -1319,33 +1579,36 @@ def _recover_missed_terminal(ctx: PumpContext, r: dict, session_key: str) -> boo
 		deps=ctx.deps,
 	)
 	_telemetry("snapshot_recover", run_id=run_id)
-	return True
 
 
-def _fetch_recovery_tail(ctx: PumpContext, session_key: str) -> str | None:
-	"""Best-effort durable-answer fetch for snapshot recovery: pull the session's
-	message tail over the mux (``sessions.get``) and return the last assistant
-	message's text, or None when nothing durable is available. A None result means
-	're-attach and keep waiting', never a false settlement."""
-	if ctx.mux is None or not session_key:
-		return None
-	try:
-		fut = ctx.mux.issue_rpc("sessions.get", {"key": session_key}, timeout_s=ACK_TIMEOUT_S)
-		frame = fut.result(ACK_TIMEOUT_S)
-		payload = frame.get("payload") or frame.get("result") or {}
-		messages = payload.get("messages") or []
-		for msg in reversed(messages):
-			if msg.get("role") == "assistant":
-				content = msg.get("content")
-				if isinstance(content, list):
-					content = "".join(
-						b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
-					)
-				if content:
-					return content
-		return None
-	except Exception:
-		return None
+def _settle_recovered_errored(ctx: PumpContext, r: dict) -> None:
+	"""OARF-2: the run ended (session gone) with NO durable output in this turn's
+	watermark window. Settle ``errored`` with an honest user-visible reason +
+	credit release — NEVER surface a prior turn's leftover answer. Routes through
+	settlement's ``relay:error`` path (Message ``streaming=0`` + error + fenced
+	``run:error``)."""
+	run_id = r["run_id"]
+	v = int(r["version"])
+	payload = {"state": "error", "error": _STALLED_ERROR}
+	if not ts.mark_terminal_observed(run_id, v, ctx.epoch, "relay:error", payload):
+		if _epoch_lost(ctx, run_id):
+			ts.lease_lost_exit(run_id)
+		return
+	frappe.db.commit()
+	owner = frappe.db.get_value(CONV, r["conversation"], "owner")
+	ctx.deps.invoke_settlement(
+		run_id,
+		relay_target_id=ctx.relay_target_id,
+		epoch=ctx.epoch,
+		version=v + 1,
+		terminal_kind="relay:error",
+		terminal_payload=payload,
+		assistant_message=r.get("assistant_message"),
+		owner=owner,
+		conversation=r["conversation"],
+		deps=ctx.deps,
+	)
+	_telemetry("snapshot_recover_empty", run_id=run_id)
 
 
 def _reattach_lane(ctx: PumpContext, r: dict) -> None:
@@ -1380,29 +1643,124 @@ def _reattach_lane(ctx: PumpContext, r: dict) -> None:
 		)
 
 
+def _write_message_recovering(assistant_message: str | None) -> None:
+	"""SUXF-1: mirror ``mark_recovering`` onto the assistant Message row
+	(``recovering=1`` + ``recovery_started_at``, verbatim legacy
+	``turn_handler._mark_recovering``) so a reload / second tab / focus resync can
+	RECONSTRUCT the 'Reconnecting' banner + unlocked composer (ChatView keys its
+	reload reconciliation on ``Message.recovering``), AND the legacy
+	``turn_recovery`` cron backstop (``WHERE streaming=1 AND recovering=1``) can
+	sweep the row. Best-effort; a mirror failure never breaks the committed CAS."""
+	if not assistant_message:
+		return
+	try:
+		frappe.db.set_value(
+			MSG,
+			assistant_message,
+			{"recovering": 1, "recovery_started_at": frappe.utils.now_datetime()},
+			update_modified=False,
+		)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(title="pump.message_recovering", message=frappe.get_traceback())
+
+
+def _mark_recovering_mirror(
+	run_id: str,
+	version: int,
+	conversation: str,
+	assistant_message: str | None,
+	*,
+	reason: str,
+	require_deadline_passed: bool = False,
+	require_prepare_deadline: bool = False,
+) -> bool:
+	"""SUXF-1: the ONE recovering-transition path every park uses. Runs
+	``mark_recovering`` (Turn CAS), commits, MIRRORS the state onto the Message row
+	(so reload can reconstruct the banner), then publishes the fenced
+	``run:recovering`` AFTER commit (SUX-1 — the event ChatView's live banner
+	consumes). Actor-fenced, so a benign 0-rows (already parked/moved) is NOT a
+	lease loss. Returns won/lost."""
+	if not ts.mark_recovering(
+		run_id,
+		version,
+		require_deadline_passed=require_deadline_passed,
+		require_prepare_deadline=require_prepare_deadline,
+	):
+		return False
+	frappe.db.commit()
+	_write_message_recovering(assistant_message)
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if owner:
+		# message_id is what today's ChatView run:recovering consumer keys the banner
+		# on (legacy always sends it) — send it for parity.
+		ts.publish_fenced(
+			owner,
+			"run:recovering",
+			conversation_id=conversation,
+			run_id=run_id,
+			message_id=assistant_message,
+			reason=reason,
+		)
+	return True
+
+
+def _settle_recover_errored(
+	run_id: str,
+	version: int,
+	conversation: str,
+	assistant_message: str | None,
+	*,
+	error: str | None = None,
+) -> bool:
+	"""SUXF-1: budget-exhausted ``recovering -> errored`` (D2 row 24) that reaches
+	the SAME terminal user experience as a mid-stream ``relay:error`` — write the
+	Message row terminal (``streaming=0`` + error) so a budget-exhausted turn never
+	sits forever at ``streaming=1`` with an empty spinner and no backstop, then
+	publish the fenced ``run:error`` with today's classification. No
+	``changed_data`` (the interrupted run may have streamed/tool-called; we do NOT
+	claim nothing changed). Returns won/lost."""
+	err = error or _STALLED_ERROR
+	if not ts.recover_errored(run_id, version, error=err):
+		return False
+	frappe.db.commit()
+	if assistant_message:
+		try:
+			ts._run_cas(
+				f"UPDATE `tab{MSG}` SET streaming=0, error=%(e)s WHERE name=%(m)s",
+				{"e": err[:1000], "m": assistant_message},
+			)
+			frappe.db.commit()
+		except Exception:
+			frappe.log_error(title="pump.message_errored", message=frappe.get_traceback())
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if owner:
+		ts.publish_fenced(
+			owner,
+			"run:error",
+			conversation_id=conversation,
+			run_id=run_id,
+			message_id=assistant_message,
+			error=err,
+			code=_classify_error(err),
+		)
+	return True
+
+
 def _park_recovering(ctx: PumpContext, run_id: str, *, reason: str) -> None:
-	"""Park a turn toward the durable recovery route (D2 row 20) and publish the
-	fenced ``run:recovering`` AFTER commit (SUX-1 — the event name/payload the
-	ChatView 'Reconnecting' banner already consumes). Actor-fenced (the park is
-	not a pump-owned epoch write), so a benign 0-rows (already parked/moved) is
-	not a lease loss."""
+	"""Park a turn toward the durable recovery route (D2 row 20). Routes through
+	``_mark_recovering_mirror`` so EVERY park (ack-timeout, mux quarantine) writes
+	the Message-row mirror + publishes the fenced ``run:recovering`` (SUXF-1)."""
 	turn = ts.read_turn(run_id)
 	if turn is None:
 		return
-	if ts.mark_recovering(run_id, int(turn["version"])):
-		frappe.db.commit()
-		owner = frappe.db.get_value(CONV, turn_conversation(run_id), "owner")
-		if owner:
-			# SUX-1: message_id is what today's ChatView run:recovering consumer keys
-			# the banner on (legacy always sends it) — send it for parity.
-			ts.publish_fenced(
-				owner,
-				"run:recovering",
-				conversation_id=turn_conversation(run_id),
-				run_id=run_id,
-				message_id=turn.get("assistant_message"),
-				reason=reason,
-			)
+	_mark_recovering_mirror(
+		run_id,
+		int(turn["version"]),
+		turn_conversation(run_id),
+		turn.get("assistant_message"),
+		reason=reason,
+	)
 	_telemetry("park_recovering", run_id=run_id, reason=reason)
 
 
@@ -1410,11 +1768,14 @@ def _park_affected_recovering(ctx: PumpContext) -> None:
 	"""DB-disconnect park (D6 §6): mark the shard's in-flight turns ``recovering``
 	so the next hop re-attaches from durable state, then let the hop exit. Never
 	spins. Best-effort — if the DB is truly down the marks fail and we simply
-	exit; the watchdog/ensure_pump revives later."""
+	exit; the watchdog/ensure_pump revives later. SUXF-1: each park writes the
+	Message-row mirror + publishes ``run:recovering`` (via ``_mark_recovering_mirror``)
+	so a reload during the disconnect reconstructs the banner rather than a plain
+	locked composer."""
 	target = ctx.relay_target_id
 	try:
 		rows = frappe.db.sql(
-			f"""SELECT run_id, version FROM `tab{TURN}`
+			f"""SELECT run_id, version, conversation, assistant_message FROM `tab{TURN}`
 			WHERE relay_target_id=%(t)s
 			  AND state IN ('preparing','ready','dispatching','streaming','terminal_observed')""",
 			{"t": target},
@@ -1424,8 +1785,13 @@ def _park_affected_recovering(ctx: PumpContext) -> None:
 		return
 	for r in rows:
 		try:
-			if ts.mark_recovering(r["run_id"], int(r["version"])):
-				frappe.db.commit()
+			_mark_recovering_mirror(
+				r["run_id"],
+				int(r["version"]),
+				r["conversation"],
+				r.get("assistant_message"),
+				reason="db-disconnect",
+			)
 		except Exception:
 			try:
 				frappe.db.rollback()
@@ -1444,10 +1810,18 @@ def ensure_pump(relay_target_id: str, *, deps: PumpDeps | None = None) -> dict:
 	never prove vacancy. Callable after EVERY durable commit (accept_send after
 	its commit is the PRIMARY start/recovery path — effectively instant, no
 	scheduler dependency). Enqueues hop0 to ``long`` with an EXPLICIT
-	``timeout=180`` under a FRESH job id (the frappe dedupe trap)."""
+	``timeout=180`` under a FRESH job id (the frappe dedupe trap).
+
+	OARF-1: gated on ``pump_configured()`` (enabled OR draining) — flag-off is
+	INERT. Without this gate the watchdog/sender path would auto-start the pump on
+	an admission-on / pump-off site (a shipped Phase-0 mode), letting two engines
+	own the same shard and defeating the flag-off safety + the rollback ladder."""
 	deps = deps or _default_deps()
 	target = relay_target_id
 	site = frappe.local.site
+
+	if not pump_configured():
+		return {"enqueued": False, "reason": "not_configured"}
 
 	if _lease_mirror_live(target):
 		return {"enqueued": False, "reason": "mirror_live"}
@@ -1502,6 +1876,10 @@ def _handoff(ctx: PumpContext) -> None:
 	with an EXPLICIT ``timeout=180``. The lease (not the job id) enforces
 	single-instance; the successor re-acquires + bumps the epoch, fencing this
 	hop."""
+	# OARF-6: flush any sub-threshold batched deltas so a tail batch is not left in
+	# memory across the hop boundary (the next hop would re-derive it from the
+	# cumulative mirror, but flushing now keeps the streamed text current).
+	_flush_all_pending(ctx)
 	next_hop = ctx.hop_counter + 1
 	job_id = f"jarvis-pump::{ctx.site}::{ctx.relay_target_id}::hop{next_hop}"
 	frappe.db.set_value(PUMP, ctx.relay_target_id, "hop_counter", next_hop, update_modified=False)
@@ -1526,9 +1904,18 @@ def watchdog(deps: PumpDeps | None = None) -> dict:
 	nonterminal states across every shard and applies the per-state actions
 	(amended D2), then ``ensure_pump`` for any shard with live work. The one gap
 	the sender path cannot cover: a turn was committed, the pump died, and NO new
-	send arrives to fire ``ensure_pump``. Never raises out (best-effort)."""
+	send arrives to fire ``ensure_pump``. Never raises out (best-effort).
+
+	OARF-1: gated on ``pump_configured()`` (enabled OR draining) — with the flag
+	OFF the watchdog is a total no-op, so an admission-on / pump-off site's Phase-0
+	Turn rows never spuriously start a pump hop (dual-engine ownership). The
+	rollback ladder keeps the no-strand guarantee: ``enabled -> draining`` keeps
+	the pump configured (watchdog still drains in-flight rows to terminal) and only
+	then ``-> disabled``."""
 	deps = deps or _default_deps()
 	summary = {"aged_out": 0, "reclaimed": 0, "parked": 0, "finalize_requeued": 0, "errored": 0, "revived": 0}
+	if not pump_configured():
+		return summary
 	try:
 		targets = [
 			r[0]
@@ -1555,7 +1942,8 @@ def _watchdog_shard(target: str, deps: PumpDeps, summary: dict) -> None:
 	# parks only on a per-turn deadline / recovery budget.
 	rows = frappe.db.sql(
 		f"""SELECT run_id, state, version, reserved, reservation_expires_at, enqueued_at,
-		       preparing_at, deadline_at, dispatching_at, recovery_started_at, conversation, seed_message
+		       preparing_at, deadline_at, dispatching_at, recovery_started_at, conversation,
+		       assistant_message, seed_message
 		FROM `tab{TURN}`
 		WHERE relay_target_id=%(t)s AND state IN ({_in_list(ts.NONTERMINAL_STATES)})""",
 		{"t": target},
@@ -1567,26 +1955,44 @@ def _watchdog_shard(target: str, deps: PumpDeps, summary: dict) -> None:
 		state = r["state"]
 		v = int(r["version"])
 		run_id = r["run_id"]
+		conv = r["conversation"]
+		am = r.get("assistant_message")
 
 		if state == "queued":
-			# Age-out (SUX-5).
-			if _older_than(r.get("enqueued_at"), ts.QUEUED_MAX_AGE_S):
-				if ts.cancel_queued_max_age(run_id, v, _AGE_OUT_REASON):
-					frappe.db.commit()
-					_publish_cancelled(r, _AGE_OUT_REASON)
-					summary["aged_out"] += 1
-					continue
-			# Expired UNCLAIMED reservation cleanup (OAR-5): recovering->queued.
-			if int(r.get("reserved") or 0) and _expired(r.get("reservation_expires_at"), now):
+			reserved = int(r.get("reserved") or 0)
+			# (OARF-4) A turn that RESERVED a credit at promote but whose prepare
+			# never CLAIMED it (still `queued` reserved=1) is reclaimed back to
+			# `queued reserved=0` FOR RETRY at the short pre-claim dispatch deadline
+			# (120s from when the reservation was made — claim_preparing NULLs the
+			# expiry, so a still-`queued` reserved turn is one prepare never claimed),
+			# checked BEFORE age-out so reclaim (retry) WINS over cancel for a
+			# reserved turn. A turn that was admitted + given a credit must not be
+			# cancelled for a starvation that was not its fault. recover_to_queued
+			# drops the stale prepare refs so it re-prepares from scratch.
+			if reserved and _reservation_stale(
+				r.get("reservation_expires_at"), PREPARE_DISPATCH_DEADLINE_S
+			):
 				if ts.mark_recovering(run_id, v):
 					frappe.db.commit()
 					if ts.recover_to_queued(run_id, v + 1):
 						frappe.db.commit()
 						summary["reclaimed"] += 1
+				live_work = True
+				continue
+			# Age-out (SUX-5): genuinely-waiting UNRESERVED queued turns only (a
+			# reserved turn is reclaimed above, never cancelled by this path).
+			if not reserved and _older_than(r.get("enqueued_at"), ts.QUEUED_MAX_AGE_S):
+				if ts.cancel_queued_max_age(run_id, v, _AGE_OUT_REASON):
+					frappe.db.commit()
+					_publish_cancelled(r, _AGE_OUT_REASON)
+					summary["aged_out"] += 1
+					continue
 			live_work = True
 
 		elif state == "preparing":
 			# PREPARE_DEADLINE_S=300 (OAR-5): recovering->queued (fresh prepare).
+			# Pre-dispatch reclaim: recover_to_queued NULLs the assistant_message, so
+			# no Message banner is owed (the turn simply re-queues).
 			if ts.mark_recovering(run_id, v, require_prepare_deadline=True):
 				frappe.db.commit()
 				if ts.recover_to_queued(run_id, v + 1):
@@ -1597,20 +2003,25 @@ def _watchdog_shard(target: str, deps: PumpDeps, summary: dict) -> None:
 		elif state in ("ready", "dispatching", "streaming", "terminal_observed"):
 			# Deadline exceeded (per-turn soft deadline) -> park; budget exhausted
 			# -> errored. Otherwise the revived pump adopts/settles (ensure_pump).
+			# SUXF-1: the deadline park writes the Message mirror + publishes
+			# run:recovering so a reload reconstructs the banner (not a plain locked
+			# composer).
 			if _recovery_budget_exhausted(r, now):
-				if ts.recover_errored(run_id, v, error=_STALLED_ERROR):
-					frappe.db.commit()
+				if _settle_recover_errored(run_id, v, conv, am, error=_STALLED_ERROR):
 					summary["errored"] += 1
 			elif r.get("deadline_at") and _expired(r.get("deadline_at"), now):
-				if ts.mark_recovering(run_id, v, require_deadline_passed=True):
-					frappe.db.commit()
+				if _mark_recovering_mirror(
+					run_id, v, conv, am, reason="deadline", require_deadline_passed=True
+				):
 					summary["parked"] += 1
 			live_work = True
 
 		elif state == "recovering":
+			# SUXF-1: a budget-exhausted recovering turn reaches the SAME terminal UX
+			# as a mid-stream error (Message streaming=0 + error + run:error) instead
+			# of stranding the Message row at streaming=1 with no backstop.
 			if _recovery_budget_exhausted(r, now):
-				if ts.recover_errored(run_id, v):
-					frappe.db.commit()
+				if _settle_recover_errored(run_id, v, conv, am):
 					summary["errored"] += 1
 			elif r.get("dispatching_at") is None:
 				if ts.recover_to_queued(run_id, v):
@@ -1710,6 +2121,15 @@ def _resync_version(run_id: str) -> int:
 	return int(frappe.db.get_value(TURN, run_id, "version") or 0)
 
 
+def _attempt_suffix(run_id: str) -> int:
+	"""OARF-8 attempt suffix for prepare/finalize job ids: the turn's ``version``.
+	Stable across a slice's re-offers of the same not-yet-advanced turn (so dedupe
+	no-ops the re-offer), and monotonically distinct across genuine new attempts
+	(reserve/claim/recover_to_queued/finalize_done all bump version), so a
+	hard-killed job's stale STARTED registration never blocks the next attempt."""
+	return int(frappe.db.get_value(TURN, run_id, "version") or 0)
+
+
 def turn_conversation(run_id: str) -> str:
 	return frappe.db.get_value(TURN, run_id, "conversation")
 
@@ -1795,6 +2215,17 @@ def _expired(dt, now) -> bool:
 	if not dt:
 		return False
 	return frappe.utils.get_datetime(dt) < frappe.utils.get_datetime(now)
+
+
+def _reservation_stale(reservation_expires_at, deadline_s: int) -> bool:
+	"""OARF-4: True iff a reservation was made more than ``deadline_s`` ago.
+	``reserve_credit`` stamps ``reservation_expires_at = made_at + RESERVE_TTL_S``,
+	so ``made_at`` is more than ``deadline_s`` in the past exactly when
+	``reservation_expires_at < now + (RESERVE_TTL_S - deadline_s)``."""
+	if not reservation_expires_at:
+		return False
+	cutoff = frappe.utils.add_to_date(None, seconds=(ts.RESERVE_TTL_S - deadline_s))
+	return frappe.utils.get_datetime(reservation_expires_at) < frappe.utils.get_datetime(cutoff)
 
 
 def _recovery_budget_exhausted(r: dict, now) -> bool:
