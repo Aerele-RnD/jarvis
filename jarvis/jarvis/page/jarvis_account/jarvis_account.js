@@ -2077,19 +2077,29 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 						: ""
 				}
 			</div>
-			${
-				account.scheduled_plan
-					? `<p class="ja-sub" style="margin-top:8px">Switching to ${esc(
-							account.scheduled_plan_name || account.scheduled_plan
-					  )}${
-							account.scheduled_plan_on
-								? " on " + esc(String(account.scheduled_plan_on).split(" ")[0])
-								: ""
-					  }. You keep your current plan until then.</p>`
-					: ""
-			}
+			${renderScheduledSwitch()}
 			<div class="ja-err" id="ja-billing-err"></div>
 		</div>`;
+	}
+
+	// A scheduled switch is only revocable while no mandate has moved to the
+	// cheaper plan. Once one has, Razorpay already released the old mandate and
+	// there is nothing to fall back to - so say that instead of offering a
+	// button the server would refuse with DowngradeCommitted.
+	function renderScheduledSwitch() {
+		if (!account.scheduled_plan) return "";
+		const name = esc(account.scheduled_plan_name || account.scheduled_plan);
+		const on = account.scheduled_plan_on
+			? " on " + esc(String(account.scheduled_plan_on).split(" ")[0])
+			: "";
+		const revocable = account.scheduled_downgrade_revocable;
+		const locked = revocable
+			? ""
+			: " Auto-renewal has already moved to the new price, so this switch can't be undone.";
+		const keep = revocable
+			? `<button class="ja-btn ja-btn-ghost" id="ja-cta-keep" data-action="keep-plan">Keep current plan</button>`
+			: "";
+		return `<p class="ja-sub" style="margin-top:8px">Switching to ${name}${on}. You keep your current plan until then.${locked}</p>${keep}`;
 	}
 
 	function primaryCta(sub) {
@@ -2145,13 +2155,32 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function bindBilling() {
 		$body
-			.find("#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth, #ja-cta-downgrade")
+			.find("#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth, #ja-cta-downgrade, #ja-cta-keep")
 			.on("click", function () {
 				const action = $(this).data("action");
 				if (action === "upgrade") return openUpgradeModal();
 				if (action === "renew") return startRenew();
 				if (action === "reauth") return startReauthorize();
 				if (action === "downgrade") return openDowngradeModal();
+				if (action === "keep-plan") return cancelScheduledSwitch();
+			});
+	}
+
+	function cancelScheduledSwitch() {
+		setBusy("#ja-cta-keep", true);
+		frappe
+			.call({ method: "jarvis.account.cancel_scheduled_downgrade" })
+			.then(() => {
+				// loadInitial() re-renders the card, which drops the busy button.
+				frappe.show_alert({
+					message: __("Plan switch cancelled - you're staying on your current plan."),
+					indicator: "green",
+				});
+				loadInitial();
+			})
+			.catch((e) => {
+				setBusy("#ja-cta-keep", false);
+				$body.find("#ja-billing-err").text(e.message || "Couldn't cancel the plan switch.");
 			});
 	}
 
