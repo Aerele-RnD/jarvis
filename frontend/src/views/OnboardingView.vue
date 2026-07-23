@@ -420,7 +420,43 @@
 											<rect x="3" y="11" width="18" height="11" rx="2" />
 											<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 										</svg>
-										Secured by Razorpay · cards, UPI &amp; netbanking
+										Secured by
+										{{ state.paymentProvider === "cashfree" ? "Cashfree" : "Razorpay" }}
+									</div>
+									<div
+										v-if="!isFreePlan && !isTrialPlan && !state.devActive"
+										class="jv-ob-provseg"
+										role="radiogroup"
+										aria-label="Payment method"
+									>
+										<button
+											type="button"
+											class="jv-ob-provseg-opt"
+											:class="{ sel: state.paymentProvider === 'razorpay' }"
+											role="radio"
+											:aria-checked="state.paymentProvider === 'razorpay'"
+											aria-label="Razorpay"
+											@click="state.paymentProvider = 'razorpay'"
+										>
+											<span class="jv-ob-rzp-logo" aria-hidden="true">
+												<svg class="jv-ob-rzp-mark" viewBox="0 0 20 24" width="15" height="18">
+													<path fill="#3395ff" d="M14.4 0 8 12.1l1.6 3.8L18 3.5z" />
+													<path fill="#0b2a6b" d="M9.2 8 2 24h4.7l3-7.5 2.1-4.6z" />
+												</svg>
+												<span class="jv-ob-rzp-word">Razorpay</span>
+											</span>
+										</button>
+										<button
+											type="button"
+											class="jv-ob-provseg-opt"
+											:class="{ sel: state.paymentProvider === 'cashfree' }"
+											role="radio"
+											:aria-checked="state.paymentProvider === 'cashfree'"
+											aria-label="Cashfree"
+											@click="state.paymentProvider = 'cashfree'"
+										>
+											<img :src="cashfreeLogo" alt="Cashfree" class="jv-ob-cf-logo" />
+										</button>
 									</div>
 									<Banner
 										v-if="state.payErr"
@@ -758,6 +794,7 @@ import JarvisMark from "@/components/JarvisMark.vue";
 import Banner from "@/components/Banner.vue";
 import TourIntro from "@/onboarding/TourIntro.vue";
 import SetupNeuralNet from "@/onboarding/SetupNeuralNet.vue";
+import cashfreeLogo from "@/assets/cashfree.png";
 import {
 	STEPS_MANAGED,
 	STEPS_SELFHOST,
@@ -838,6 +875,7 @@ const state = reactive({
 	plansErr: "",
 	// pay (renderPay / renderVerifyEmail / startPay / openCheckout)
 	payPhase: "review", // "review" | "verify" - mirrors desk's step-3 vs "check your email" sub-screen
+	paymentProvider: "razorpay", // gateway chosen on Review & Pay: "razorpay" | "cashfree"
 	payErr: "",
 	payBusy: false,
 	// True when reconcile landed us directly on "connect" (signup + payment
@@ -1174,13 +1212,13 @@ async function proceedAfterPay() {
 
 async function runStartPay() {
 	try {
-		const d = await startSignup(state.email, state.company, state.planName);
+		const d = await startSignup(state.email, state.company, state.planName, state.paymentProvider);
 		if (d && d.pending_verification) {
 			state.payPhase = "verify";
 			state.payBusy = false;
 			return;
 		}
-		await openCheckout(d);
+		await launchCheckout(d);
 	} catch (e) {
 		state.payBusy = false;
 		state.payErr = errMsg(e);
@@ -1200,7 +1238,7 @@ async function onVerifyCheck() {
 		const d = await checkSignupPaymentState();
 		const action = verifyPollAction(d);
 		if (action.kind === "checkout") {
-			await openCheckout(d);
+			await launchCheckout(d, action.provider);
 			return;
 		}
 		if (action.kind === "complete") {
@@ -1226,10 +1264,89 @@ async function onVerifyCheck() {
 	}
 }
 
+// Cashfree Checkout v3 SDK, DOM-injected at runtime (mirrors ensureRazorpayLoaded)
+// so it stays out of the self-contained SPA bundle.
+let cashfreeLoadPromise = null;
+function ensureCashfreeLoaded() {
+	if (window.Cashfree) return Promise.resolve();
+	if (cashfreeLoadPromise) return cashfreeLoadPromise;
+	cashfreeLoadPromise = new Promise((resolve, reject) => {
+		const s = document.createElement("script");
+		s.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+		s.onload = () => resolve();
+		s.onerror = () => {
+			cashfreeLoadPromise = null;
+			reject(new Error("Couldn't load the Cashfree checkout script."));
+		};
+		document.head.appendChild(s);
+	});
+	return cashfreeLoadPromise;
+}
+
+// Provider dispatcher: the admin response (or the verify-poll action) carries a
+// payment_provider discriminator; launch the matching gateway. Defaults to
+// razorpay so nothing changes when admin returns no discriminator.
+function launchCheckout(d, provider) {
+	const p = (provider || (d && d.payment_provider) || "razorpay").toLowerCase();
+	if (p === "cashfree") return openCashfreeCheckout(d);
+	return openRazorpayCheckout(d);
+}
+
+// Cashfree checkout. Unlike Razorpay there is NO client-side signature: after
+// the modal we confirm SERVER-SIDE by polling finish_payment, which makes admin
+// fetch the real order status from Cashfree. A forged "success" can't activate.
+async function openCashfreeCheckout(d) {
+	try {
+		await ensureCashfreeLoaded();
+	} catch (e) {
+		state.payBusy = false;
+		state.payErr = "Couldn't load the payment form. Check your connection and try again.";
+		return;
+	}
+	state.payBusy = false;
+	let cf;
+	try {
+		cf = window.Cashfree({ mode: d.cashfree_env === "production" ? "production" : "sandbox" });
+	} catch (e) {
+		state.payErr = "Couldn't start Cashfree checkout.";
+		return;
+	}
+	try {
+		// _modal keeps the SPA mounted (a full redirect would tear down wizard state).
+		await cf.checkout({ paymentSessionId: d.payment_session_id, redirectTarget: "_modal" });
+	} catch (e) {
+		// modal error / user close: fall through to the confirm poll - the payment
+		// may still have succeeded, and the server-side poll is what decides.
+	}
+	state.payBusy = true;
+	await confirmCashfree(d.cashfree_order_id);
+}
+
+// Poll finish_payment (→ admin confirm_payment → Cashfree Get Order/Payments).
+// Succeeds once Cashfree reports the order PAID (sync confirm or the webhook,
+// whichever lands first); both converge idempotently on activation.
+async function confirmCashfree(cashfree_order_id) {
+	for (let i = 0; i < 12; i++) {
+		try {
+			const rr = await finishPayment({ provider: "cashfree", cashfree_order_id });
+			state.successData = rr;
+			state.payBusy = false;
+			await proceedAfterPay();
+			return;
+		} catch (e) {
+			// Not confirmed yet (order not PAID, or a transient) - wait and retry.
+			await _sleep(3000);
+		}
+	}
+	state.payBusy = false;
+	state.payErr =
+		"We couldn't confirm your payment yet. If you completed it, it'll finalize shortly — refresh in a moment.";
+}
+
 // Razorpay Checkout - options object + success handler ported verbatim from
 // desk openCheckout (jarvis_onboarding.js ~1646-1676). See task-4-report.md
 // for the field-by-field comparison against the desk source.
-async function openCheckout(d) {
+async function openRazorpayCheckout(d) {
 	try {
 		await ensureRazorpayLoaded();
 	} catch (e) {
@@ -2058,6 +2175,117 @@ onMounted(async () => {
 	justify-content: center;
 	gap: 7px;
 }
+.jv-ob-provseg {
+	max-width: 360px;
+	margin: 14px auto 0;
+	display: flex;
+	gap: 4px;
+	padding: 4px;
+	background: #eef0f3;
+	border: 1px solid #e3e6ea;
+	border-radius: 12px;
+}
+.jv-ob-provseg-opt {
+	flex: 1 1 0;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 44px;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: 9px;
+	background: transparent;
+	cursor: pointer;
+	opacity: 0.6;
+	transition: background 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+}
+.jv-ob-provseg-opt:hover {
+	opacity: 0.85;
+}
+.jv-ob-provseg-opt.sel {
+	background: #ffffff;
+	opacity: 1;
+	box-shadow: 0 1px 3px rgba(16, 24, 40, 0.16), 0 0 0 1px rgba(16, 24, 40, 0.04);
+}
+.jv-ob-provseg-opt:focus-visible {
+	outline: 2px solid #3395ff;
+	outline-offset: 2px;
+}
+.jv-ob-rzp-logo {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.jv-ob-rzp-word {
+	font-size: 15px;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	color: #0b2a6b;
+}
+.jv-ob-cf-logo {
+	height: 22px;
+	width: auto;
+	display: block;
+}
+@media (prefers-reduced-motion: reduce) {
+	.jv-ob-provseg-opt {
+		transition: none;
+	}
+}
+.jv-ob-devnote {
+	font-size: 12.5px;
+	color: var(--amber);
+	background: var(--amber-bg);
+	border: 1px solid var(--amber-bd);
+	border-radius: 8px;
+	padding: 8px 12px;
+	margin: 14px auto 0;
+	max-width: 560px;
+}
+.jv-ob-devblock {
+	font-size: 12.5px;
+	color: var(--text-2);
+	background: var(--amber-bg);
+	border: 1px solid var(--amber-bd);
+	border-radius: 8px;
+	padding: 12px 14px;
+	margin: 14px auto 0;
+	max-width: 560px;
+	text-align: left;
+}
+.jv-ob-devblock-title {
+	margin: 0 0 6px;
+	font-weight: 560;
+	color: var(--amber);
+}
+.jv-ob-devblock-body {
+	margin: 0 0 10px;
+}
+.jv-ob-devblock-steps {
+	margin: 0;
+	padding-left: 18px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.jv-ob-devblock-steps li {
+	line-height: 1.5;
+}
+.jv-ob-devblock-steps code {
+	display: block;
+	margin-top: 5px;
+	padding: 7px 9px;
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 11.5px;
+	color: var(--text);
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
 /* ---- Connect ---- */
 .jv-ob-connect {
 	max-width: 640px;

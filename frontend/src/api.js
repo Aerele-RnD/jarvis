@@ -197,8 +197,8 @@ export const testLlmApiKey = (args) => call("jarvis.llm_key_probe.test_llm_api_k
 export const listPlans = () => call("jarvis.onboarding.list_plans");
 export const getAccountDefaults = () => call("jarvis.onboarding.get_account_defaults");
 export const syncConnection = () => call("jarvis.onboarding.sync_connection");
-export const startSignup = (email, company, plan) =>
-	call("jarvis.onboarding.start_signup", { email, company, plan });
+export const startSignup = (email, company, plan, provider) =>
+	call("jarvis.onboarding.start_signup", { email, company, plan, provider });
 export const checkSignupPaymentState = () => call("jarvis.onboarding.check_signup_payment_state");
 export const finishPayment = (payload) => call("jarvis.onboarding.finish_payment", { payload });
 export const isOnboarded = () => call("jarvis.account.is_onboarded");

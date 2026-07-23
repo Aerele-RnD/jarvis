@@ -60,7 +60,7 @@ test("verifyPollAction: paid plan goes to checkout", () => {
 		amount_inr: 2000,
 		customer_password: "pw",
 	};
-	assert.deepEqual(verifyPollAction(d), { kind: "checkout" });
+	assert.deepEqual(verifyPollAction(d), { kind: "checkout", provider: "razorpay" });
 });
 
 test("verifyPollAction: autopay-trial (subscription) plan goes to checkout", () => {
@@ -74,7 +74,27 @@ test("verifyPollAction: autopay-trial (subscription) plan goes to checkout", () 
 		trial_days: 14,
 		customer_password: "pw",
 	};
-	assert.deepEqual(verifyPollAction(d), { kind: "checkout" });
+	assert.deepEqual(verifyPollAction(d), { kind: "checkout", provider: "razorpay" });
+});
+
+test("verifyPollAction: cashfree paid plan goes to checkout (provider labeled)", () => {
+	// Admin's poll shape for a Cashfree paid plan: a payment_session_id (the
+	// token the Cashfree SDK checks out against) + the provider discriminator.
+	const d = {
+		pending_verification: false,
+		payment_provider: "cashfree",
+		cashfree_order_id: "cforder_x",
+		payment_session_id: "session_x",
+		cashfree_app_id: "app_x",
+		cashfree_env: "sandbox",
+		amount_inr: 2000,
+	};
+	assert.deepEqual(verifyPollAction(d), { kind: "checkout", provider: "cashfree" });
+});
+
+test("verifyPollAction: cashfree inferred from payment_session_id when provider absent", () => {
+	const d = { pending_verification: false, payment_session_id: "session_y", amount_inr: 500 };
+	assert.deepEqual(verifyPollAction(d), { kind: "checkout", provider: "cashfree" });
 });
 
 test("verifyPollAction: free plan already Active completes without payment", () => {
