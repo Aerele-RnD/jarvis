@@ -139,21 +139,6 @@ onMounted(() => {
 			</li>
 		</ul>
 	</div>
-
-	<button class="jv-fab jv-safe-bottom" aria-label="New chat" @click="newChat">
-		<svg
-			viewBox="0 0 24 24"
-			width="22"
-			height="22"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-		>
-			<path d="M12 5v14M5 12h14" />
-		</svg>
-	</button>
 </template>
 
 <style scoped>
@@ -234,23 +219,5 @@ onMounted(() => {
 	height: 16px;
 	flex: none;
 	color: var(--ink3);
-}
-.jv-fab {
-	position: fixed;
-	right: 18px;
-	bottom: 18px;
-	width: 54px;
-	height: 54px;
-	display: grid;
-	place-items: center;
-	border: 0;
-	border-radius: 50%;
-	background: var(--accent-solid);
-	color: #fff;
-	box-shadow: 0 8px 24px rgba(113, 84, 245, 0.4);
-	cursor: pointer;
-}
-.jv-fab:active {
-	transform: scale(0.95);
 }
 </style>
