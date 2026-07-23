@@ -1133,6 +1133,29 @@ def send_message(
 	}
 
 
+def _api_key_models() -> dict[str, list[dict]]:
+	"""Provider label -> api-key-tier model rows for the pool editor's datalist.
+
+	Replaces the frontend's hardcoded STATIC_MODEL_SUGGESTIONS. Only display
+	fields cross the wire; the catalog carries no secrets by construction.
+	"""
+	from jarvis import admin_client
+
+	out: dict[str, list[dict]] = {}
+	for provider in admin_client.get_model_catalog() or []:
+		rows = [m for m in provider.get("models") or [] if m.get("tier") == "api_key"]
+		rows.sort(key=lambda m: (m.get("sort_order") or 0, m.get("model_id") or ""))
+		out[provider.get("label") or provider.get("provider_id") or ""] = [
+			{
+				"model_id": m["model_id"],
+				"label": m.get("label") or m["model_id"],
+				"is_default": bool(m.get("is_default")),
+			}
+			for m in rows
+		]
+	return out
+
+
 @frappe.whitelist()
 def get_chat_ui_settings() -> dict:
 	"""Return the bench-side LLM settings the chat UI needs to render the
@@ -1220,6 +1243,9 @@ def get_chat_ui_settings() -> dict:
 		"llm_model": settings.llm_model or "",
 		"subscription_models": dict(_SUBSCRIPTION_MODELS),
 		"default_models": dict(_DEFAULT_MODEL),
+		# api-key-tier suggestions, replacing the frontend's hardcoded
+		# STATIC_MODEL_SUGGESTIONS. Provider label -> [{model_id, label, is_default}].
+		"api_key_models": _api_key_models(),
 		# Model/provider/effort picker (see ChatView.vue). ``pool`` is the
 		# configured multi-provider catalogue; ``providers`` is empty for a
 		# single-provider customer and the UI hides the provider group then.

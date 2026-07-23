@@ -288,3 +288,69 @@ class TestSubscriptionModelsMappings(FrappeTestCase):
 		with patch.object(admin_client, "get_model_catalog", return_value=payload):
 			_clear_sub_model_cache()
 			self.assertEqual(_subscription_models.DEFAULT_MODEL["OpenAI"], "gpt-5.4")
+
+
+class TestChatUiSettingsServesApiKeyModels(FrappeTestCase):
+	def setUp(self):
+		_clear_model_catalog_cache()
+		self.addCleanup(_clear_model_catalog_cache)
+
+	def test_response_carries_api_key_models(self):
+		from jarvis.chat.api import get_chat_ui_settings
+
+		payload = [
+			{
+				"provider_id": "anthropic",
+				"label": "Anthropic",
+				"supports_subscription": False,
+				"models": [
+					{
+						"model_id": "claude-opus-4-8",
+						"label": "claude-opus-4-8",
+						"tier": "api_key",
+						"is_default": True,
+						"sort_order": 0,
+					},
+					{
+						"model_id": "claude-sonnet-4-6",
+						"label": "claude-sonnet-4-6",
+						"tier": "api_key",
+						"is_default": False,
+						"sort_order": 1,
+					},
+				],
+			}
+		]
+		with patch.object(admin_client, "get_model_catalog", return_value=payload):
+			out = get_chat_ui_settings()
+		self.assertIn("api_key_models", out)
+		self.assertEqual(
+			[m["model_id"] for m in out["api_key_models"]["Anthropic"]],
+			["claude-opus-4-8", "claude-sonnet-4-6"],
+		)
+
+	def test_subscription_models_serialises_as_a_JSON_OBJECT_not_an_array(self):
+		# R9 regression lock. A collections.abc.Mapping is Iterable, and frappe's
+		# json_handler (frappe/utils/response.py:238) tests Iterable BEFORE dict,
+		# so an unwrapped Mapping silently serialises to its KEYS: the response
+		# would carry ["OpenAI", ...] instead of {"OpenAI": [...], ...} with no
+		# error raised. chat/api.py must wrap these in dict().
+		import orjson
+		from frappe.utils.response import json_handler
+
+		from jarvis.chat.api import get_chat_ui_settings
+
+		with patch.object(admin_client, "get_model_catalog", return_value=_PAYLOAD):
+			out = get_chat_ui_settings()
+		for key in ("subscription_models", "default_models", "api_key_models"):
+			self.assertIsInstance(out[key], dict, f"{key} must be a real dict before serialisation")
+			decoded = orjson.loads(orjson.dumps(out[key], default=json_handler))
+			self.assertIsInstance(decoded, dict, f"{key} serialised to a non-object")
+
+	def test_api_key_models_excludes_subscription_rows(self):
+		from jarvis.chat.api import get_chat_ui_settings
+
+		with patch.object(admin_client, "get_model_catalog", return_value=_PAYLOAD):
+			out = get_chat_ui_settings()
+		# _PAYLOAD's only model is subscription-tier, so OpenAI has no api-key rows.
+		self.assertEqual(out["api_key_models"].get("OpenAI", []), [])
