@@ -461,26 +461,30 @@ def scenario_confirmation_storm(h: Harness, gateway: FakeGateway):
 
 
 def scenario_canary_c6(h: Harness, gateway: FakeGateway):
-	"""C6: real short+long RQ canaries + Desk HTTP every 10s, idle baseline vs
-	under a real RQ background flood (OCR-class). Also drives an in-process
-	interactive turn set during the load window for realism."""
-	idle_s = 20 if h.quick else 60
-	load_s = 20 if h.quick else 60
-	flood_n = 20 if h.quick else 60
+	"""C6: real short+long RQ canaries + Desk HTTP every ~7s, idle baseline vs a
+	sustained REAL RQ backlog (FloodPump) on jarvis_chat (chat-load model) +
+	long (probe-validity: shows the canary CAN detect a backed-up queue). Wait is
+	read from each job's own RQ enqueued_at/started_at timestamps (the running
+	workers predate this module and cannot import harness code — see probes note).
+	In-process tool-heavy turns run during load so the DB the Desk probe also
+	uses is under real chat-shaped write pressure."""
+	idle_s = 20 if h.quick else 56
+	load_s = 20 if h.quick else 56
+	cadence = 7.0
 
-	canary = P.CanaryProbe(h.site, cadence_s=10.0, desk_url=DESK_URL, desk_host=DESK_HOST).start()
+	canary = P.CanaryProbe(h.site, cadence_s=cadence, desk_url=DESK_URL, desk_host=DESK_HOST).start()
 
 	# idle baseline window
 	time.sleep(idle_s)
-	idle = canary.series()
-	idle_snapshot = {k: v for k, v in idle.items()}
+	with canary._lock:
+		idle_ct = len(canary.samples)
+		idle_samples = list(canary.samples)
 
-	# load window: real RQ flood + in-process interactive turns
+	# load window: sustained RQ backlog + in-process chat-shaped turns
 	rec = TraceRecorder(label="c6_load")
 	R.set_active_recorder(rec)
 	pool = R.WorkerPool(2, h.site, gateway, rec, flag_value=0).start()
-	P.background_flood(h.site, flood_n, queue_name="jarvis_chat", work_ms=800)
-	P.background_flood(h.site, flood_n // 2, queue_name="long", work_ms=800)
+	flood = P.FloodPump(h.site, ["jarvis_chat", "long"], per_burst=(30 if h.quick else 80), interval_s=2.0).start()
 	convs = [h.mk_conv() for _ in range(4)]
 	for c in convs:
 		h.warm_session(c, gateway)
@@ -497,34 +501,43 @@ def scenario_canary_c6(h: Harness, gateway: FakeGateway):
 			for c in convs
 		]
 		h.run_wave(pool, specs, timeout=60)
+	flood.stop()
 	pool.stop()
 	canary.stop()
-	full = canary.series()
-	# derive load-window samples = full minus idle-window count
-	idle_ct = idle_snapshot["count"]
 
-	def _tail(key):
-		return full[key][idle_ct:] if isinstance(full.get(key), list) else full.get(key)
+	with canary._lock:
+		all_samples = list(canary.samples)
+	load_samples = all_samples[idle_ct:]
 
-	load_snapshot = {
-		"short_wait_ms": P.summarize(_tail("short_wait_ms")),
-		"long_wait_ms": P.summarize(_tail("long_wait_ms")),
-		"desk_ms": P.summarize(_tail("desk_ms")),
-		"samples": full["count"] - idle_ct,
-		"starved_total": full["starved"],
-		"desk_failures_total": full["desk_failures"],
-	}
+	def _agg(samples, key, sub="wait_ms"):
+		if key == "desk":
+			return P.summarize([s["desk"]["ms"] for s in samples if s["desk"].get("ok")])
+		return P.summarize([s[key][sub] for s in samples])
+
+	def _starved(samples):
+		return sum(1 for s in samples if s["short"].get("starved") or s["long"].get("starved"))
+
 	return {
 		"idle_window_s": idle_s,
 		"load_window_s": load_s,
-		"flood_jobs": flood_n + flood_n // 2,
+		"canary_cadence_s": cadence,
+		"flood_queues": ["jarvis_chat", "long"],
+		"flood_jobs_total": flood.total,
+		"wait_ms_derivation": "RQ job started_at - enqueued_at (worker-populated); no harness code runs in the worker",
 		"idle": {
-			"short_wait_ms": P.summarize(idle_snapshot["short_wait_ms"]),
-			"long_wait_ms": P.summarize(idle_snapshot["long_wait_ms"]),
-			"desk_ms": P.summarize(idle_snapshot["desk_ms"]),
-			"samples": idle_snapshot["count"],
+			"short_wait_ms": _agg(idle_samples, "short"),
+			"long_wait_ms": _agg(idle_samples, "long"),
+			"desk_ms": _agg(idle_samples, "desk"),
+			"samples": len(idle_samples),
+			"starved": _starved(idle_samples),
 		},
-		"under_load": load_snapshot,
+		"under_load": {
+			"short_wait_ms": _agg(load_samples, "short"),
+			"long_wait_ms": _agg(load_samples, "long"),
+			"desk_ms": _agg(load_samples, "desk"),
+			"samples": len(load_samples),
+			"starved": _starved(load_samples),
+		},
 	}
 
 

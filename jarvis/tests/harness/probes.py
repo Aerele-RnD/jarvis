@@ -140,56 +140,38 @@ def ack_to_first_frame_series(gateway, run_ids) -> list:
 # --------------------------------------------------------------------------- #
 # C6 live canary — REAL RQ jobs + Desk HTTP
 # --------------------------------------------------------------------------- #
+#
+# IMPORTANT: the canary + flood targets must be CORE-frappe functions, not
+# harness code. The running RQ workers were started before this harness module
+# existed and RQ workers do not hot-reload, so they cannot import
+# jarvis.tests.harness.*. We therefore enqueue a trivial core function and read
+# the wait from the RQ job's own enqueued_at/started_at timestamps (populated by
+# the worker) rather than having our code run in the worker. This keeps C6 real
+# without restarting the pool's workers (which would mutate running state).
 
-# Module-level RQ job targets (must be importable by the worker process).
-
-
-def _canary_job(token: str, enqueued_ms: int) -> None:
-	import frappe
-
-	frappe.cache().set_value(f"harness:canary:{token}", int(time.time() * 1000), expires_in_sec=180)
-
-
-def _filler_job(work_ms: int, token: str) -> None:
-	"""Real occupancy: a little DB work + a bounded sleep, to hold an RQ worker
-	the way a chat turn holds one. Models chat-worker occupancy for C6."""
-	import frappe
-
-	try:
-		frappe.db.count("Jarvis Chat Message")
-	except Exception:
-		pass
-	time.sleep(max(0, work_ms) / 1000.0)
-	try:
-		frappe.cache().set_value(f"harness:filler:{token}", int(time.time() * 1000), expires_in_sec=180)
-	except Exception:
-		pass
+_CORE_NOOP = "frappe.utils.data.now_datetime"  # pure, present in every frappe worker
 
 
 def _enqueue_canary(queue_name: str) -> dict:
 	import frappe
 
 	token = uuid.uuid4().hex[:12]
-	enq_ms = int(time.time() * 1000)
-	frappe.enqueue(
-		"jarvis.tests.harness.probes._canary_job",
-		queue=queue_name,
-		token=token,
-		enqueued_ms=enq_ms,
-		job_id=f"harness-canary-{token}",
-	)
-	# poll for execution
+	job = frappe.enqueue(_CORE_NOOP, queue=queue_name, job_id=f"harness-canary-{token}")
 	deadline = time.time() + 65
-	start_ms = None
 	while time.time() < deadline:
-		v = frappe.cache().get_value(f"harness:canary:{token}")
-		if v:
-			start_ms = int(v)
+		try:
+			job.refresh()
+		except Exception:
+			break
+		st = str(job.get_status())
+		if st.endswith("FINISHED") or st.endswith("FAILED") or st in ("finished", "failed"):
 			break
 		time.sleep(0.05)
-	if start_ms is None:
+	enq, started = getattr(job, "enqueued_at", None), getattr(job, "started_at", None)
+	if not enq or not started:
 		return {"queue": queue_name, "wait_ms": None, "starved": True}
-	return {"queue": queue_name, "wait_ms": max(0, start_ms - enq_ms), "starved": (start_ms - enq_ms) > 60000}
+	wait_ms = (started - enq).total_seconds() * 1000.0
+	return {"queue": queue_name, "wait_ms": max(0.0, wait_ms), "starved": wait_ms > 60000}
 
 
 def desk_http_probe(url: str, host: str) -> dict:
@@ -258,23 +240,53 @@ class CanaryProbe:
 		}
 
 
-def background_flood(site: str, n: int, *, queue_name: str = "jarvis_chat", work_ms: int = 800) -> list[str]:
-	"""Enqueue n real filler jobs to occupy RQ workers (C6 load). Returns the
-	tokens (for optional completion tracking)."""
+def background_flood(site: str, n: int, *, queue_name: str = "jarvis_chat", work_ms: int = 0) -> int:
+	"""Enqueue n core no-op jobs to build a real FIFO backlog on ``queue_name``
+	(C6 load). Uses a core function (see _CORE_NOOP note) so the pre-existing
+	workers can run it. ``work_ms`` is accepted for signature stability but the
+	core no-op is quick; sustained load comes from re-flooding (FloodPump)."""
 	import frappe
 
-	tokens = []
 	for _ in range(n):
-		token = uuid.uuid4().hex[:12]
-		frappe.enqueue(
-			"jarvis.tests.harness.probes._filler_job",
-			queue=queue_name,
-			work_ms=work_ms,
-			token=token,
-			job_id=f"harness-filler-{token}",
-		)
-		tokens.append(token)
-	return tokens
+		frappe.enqueue(_CORE_NOOP, queue=queue_name, job_id=f"harness-flood-{uuid.uuid4().hex[:12]}")
+	return n
+
+
+class FloodPump:
+	"""Sustains a real RQ backlog for the load window by re-flooding target
+	queues every ``interval_s``. Its own thread + frappe connection."""
+
+	def __init__(self, site: str, queues: list[str], *, per_burst: int = 120, interval_s: float = 1.0):
+		self.site = site
+		self.queues = queues
+		self.per_burst = per_burst
+		self.interval_s = interval_s
+		self._stop = threading.Event()
+		self._thread = None
+		self.total = 0
+
+	def _loop(self):
+		import frappe
+
+		frappe.init(site=self.site)
+		frappe.connect()
+		try:
+			while not self._stop.is_set():
+				for q in self.queues:
+					self.total += background_flood(self.site, self.per_burst, queue_name=q)
+				self._stop.wait(self.interval_s)
+		finally:
+			frappe.destroy()
+
+	def start(self):
+		self._thread = threading.Thread(target=self._loop, name="harness-flood", daemon=True)
+		self._thread.start()
+		return self
+
+	def stop(self):
+		self._stop.set()
+		if self._thread:
+			self._thread.join(timeout=10)
 
 
 # --------------------------------------------------------------------------- #
