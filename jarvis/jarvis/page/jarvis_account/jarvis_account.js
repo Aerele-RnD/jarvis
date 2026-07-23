@@ -2219,13 +2219,20 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			? String(frappe.datetime.str_to_user(account.current_period_end)).split(" ")[0]
 			: "";
 		const until = endNice ? `<b>${esc(endNice)}</b>` : "your next billing cycle";
+		// Monthly switches open a Checkout to authorise auto-renewal at the new
+		// price, so say that up front rather than springing a payment sheet.
+		const monthly =
+			String((account.plan || {}).billing_cycle || "").toLowerCase() === "monthly";
+		const intro = monthly
+			? `You keep your current plan until ${until}. Switching sets up auto-renewal at the new price - nothing is charged today.`
+			: `You keep your current plan until ${until}, then move to the one you pick. Nothing is charged now.`;
 		const html = `<div class="ja-modal-bg">
 			<div class="ja-modal">
 				<div class="ja-modal-head">
 					<h2 class="ja-h">Switch to a smaller plan</h2>
 					<button class="ja-modal-close" id="ja-modal-close">✕</button>
 				</div>
-				<p class="ja-sub">You keep your current plan until ${until}, then move to the one you pick. Nothing is charged now.</p>
+				<p class="ja-sub">${intro}</p>
 				<div class="ja-up-list">${cards || `<div class="ja-empty">No smaller plans available.</div>`}</div>
 				<div class="ja-err" id="ja-dn-err"></div>
 			</div>
