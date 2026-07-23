@@ -230,6 +230,20 @@ class FakeGateway:
 			if session_key in self._sessions:
 				self._sessions[session_key]["has_active_run"] = True
 
+		if ack_behavior == "drop":
+			# WS-drop MID-ACK: close the socket on receiving chat.send WITHOUT
+			# acking. The client's pending chat.send future must fail immediately
+			# via the mux Closing path (fail-all-on-Closing, OAR-10), not
+			# dead-wait its own ack timeout. Added for the WP-1b mux tests.
+			tl.terminal_kind = "ack-drop"
+			tl.terminal_ts = time.monotonic()
+			self._clear_active(session_key)
+			try:
+				await ws.close(code=1011, reason="fake-gateway ack-drop")
+			except websockets.ConnectionClosed:
+				pass
+			return
+
 		if ack_behavior == "timeout":
 			# Hold the ack past the client window; the bench parks. Still finish
 			# server-side (the transcript "completed" but no one is listening on
