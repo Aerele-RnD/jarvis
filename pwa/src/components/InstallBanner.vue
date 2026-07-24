@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { installPrompt, isStandalone } from "../install";
+import { agentName } from "@/branding";
 import BrandMark from "./BrandMark.vue";
 
 // "Add Jarvis to your home screen." Two different worlds:
@@ -65,7 +66,7 @@ onMounted(() => {
 		<div v-if="show" class="jv-install">
 			<BrandMark :size="34" />
 			<div class="jv-install-text">
-				<strong>Install Jarvis</strong>
+				<strong>Install {{ agentName }}</strong>
 				<span v-if="insecure"
 					>Open this site over https to install it. Browsers won't install an insecure
 					page.</span

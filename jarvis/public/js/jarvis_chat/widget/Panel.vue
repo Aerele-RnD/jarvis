@@ -9,20 +9,21 @@
 		class="jvp-root"
 		:style="rootStyle"
 		role="dialog"
-		aria-label="Jarvis chat"
+		:aria-label="`${brandName} chat`"
 		@keydown.esc.stop="$emit('close')"
 	>
 		<div class="jvp-panel" :class="{ 'jvp-panel--dark': isDark }" ref="panelEl" tabindex="-1">
 			<div class="jvp-head">
 				<div class="jvp-avatar">
-					<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+					<img v-if="brandLogoUrl" :src="brandLogoUrl" class="jvp-avatar-img" alt="" />
+					<svg v-else viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
 						<path
 							d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
 						/>
 					</svg>
 					<i class="jvp-online" aria-hidden="true"></i>
 				</div>
-				<div class="jvp-title">Jarvis</div>
+				<div class="jvp-title">{{ brandName }}</div>
 				<div class="jvp-actions">
 					<button
 						class="jvp-ib"
@@ -469,6 +470,10 @@ const rootStyle = computed(() => {
 // Tool rows and empty shells are filtered out: this panel is text-only, and
 // the raw list is mostly machine chatter (see chat_stream.visibleMessages).
 const shownMessages = computed(() => visibleMessages(messages.value));
+// Whitelabel: the desk widget reads branding from bootinfo (set_jarvis_boot),
+// synchronously so there's no flash. Blank => Jarvis defaults.
+const brandName = (window.frappe?.boot?.jarvis_agent_name || "").trim() || "Jarvis";
+const brandLogoUrl = (window.frappe?.boot?.jarvis_brand_logo_url || "").trim();
 // A turn is in flight from the moment the POST is away until the first token
 // lands. Without this the panel looks inert for the whole worker round-trip.
 const greeting = computed(() => {
@@ -955,6 +960,12 @@ defineExpose({ load, startNewChat, convId });
 .jvp-avatar svg {
 	width: 17px;
 	height: 17px;
+}
+.jvp-avatar-img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border-radius: inherit;
 }
 .jvp-online {
 	position: absolute;

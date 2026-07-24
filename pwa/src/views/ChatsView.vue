@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import BrandMark from "../components/BrandMark.vue";
+import { agentName } from "@/branding";
 import { useRouter } from "vue-router";
 import { store } from "../store";
 import { relativeTime } from "../lib/time";
@@ -96,7 +97,7 @@ onMounted(() => {
 		<div v-else-if="!store.conversations.length" class="jv-empty">
 			<BrandMark :size="52" />
 			<div style="font-size: 16px; font-weight: 600; color: var(--ink9)">
-				Ask Jarvis anything
+				Ask {{ agentName }} anything
 			</div>
 			<div style="font-size: 14px; line-height: 1.5">
 				Invoices, stock, customers, reports, all in plain language. Start a chat and see.

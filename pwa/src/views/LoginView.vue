@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import BrandMark from "../components/BrandMark.vue";
+import { agentName } from "@/branding";
 import { call } from "frappe-ui";
 
 // The app's own sign-in, inside the PWA's scope.
@@ -58,7 +59,7 @@ async function submit() {
 	<div class="jv-login jv-safe-bottom">
 		<div class="jv-login-head">
 			<BrandMark :size="56" />
-			<h1>Jarvis</h1>
+			<h1>{{ agentName }}</h1>
 			<p>Your AI teammate. Sign in to pick up where you left off.</p>
 		</div>
 

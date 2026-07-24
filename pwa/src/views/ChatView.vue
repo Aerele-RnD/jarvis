@@ -10,6 +10,7 @@ import {
 	watch,
 } from "vue";
 import BrandMark from "../components/BrandMark.vue";
+import { agentName } from "@/branding";
 import { useRouter } from "vue-router";
 // The desktop SPA's renderer — dependency-free, and sharing it means an agent
 // reply reads identically on both surfaces.
@@ -277,7 +278,7 @@ async function send() {
 		}
 	} catch (e) {
 		sendBusy.value = false;
-		errorBanner.value = "That didn't reach Jarvis. Check your connection and try again.";
+		errorBanner.value = `That didn't reach ${agentName}. Check your connection and try again.`;
 		messages.value = messages.value.filter((m) => !m.optimistic);
 	}
 }
@@ -528,7 +529,7 @@ onUnmounted(() => {
 		</button>
 		<div class="jv-head">
 			<div class="jv-head-title">{{ title }}</div>
-			<div class="jv-head-sub">{{ model ? `Jarvis · ${model}` : "Jarvis" }}</div>
+			<div class="jv-head-sub">{{ model ? `${agentName} · ${model}` : agentName }}</div>
 		</div>
 		<button
 			v-if="convId"
@@ -572,7 +573,7 @@ onUnmounted(() => {
 				<template v-if="it.msg">
 					<div v-if="it.view.html" class="jv-md" v-html="it.view.html" />
 					<div v-else-if="it.view.empty" class="jv-msg-error">
-						Jarvis didn't return a reply for this turn. Try asking again.
+						{{ agentName }} didn't return a reply for this turn. Try asking again.
 					</div>
 					<!-- SIBLING of the chain above, not a v-else-if in it: a partial stop
 					     has non-empty html, so chaining this would let the first branch
@@ -632,7 +633,7 @@ onUnmounted(() => {
 		<DecisionCard
 			v-for="p in pending"
 			:key="p.token"
-			:summary="p.summary || p.tool || 'Jarvis needs your approval'"
+			:summary="p.summary || p.tool || `${agentName} needs your approval`"
 			@open="decision = p"
 		/>
 	</div>
@@ -760,7 +761,8 @@ onUnmounted(() => {
 					<div class="jv-danger-main">
 						<div class="jv-danger-title">Auto-apply changes</div>
 						<div class="jv-danger-sub">
-							Jarvis commits ERP writes without asking. Turns off approval prompts.
+							{{ agentName }} commits ERP writes without asking. Turns off approval
+							prompts.
 						</div>
 						<div v-if="menuError" class="jv-menu-error">{{ menuError }}</div>
 					</div>

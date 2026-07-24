@@ -209,6 +209,27 @@
 							</svg>
 							<span>Billing &amp; metering</span>
 						</button>
+						<button
+							class="jv-settings-navitem"
+							:class="{ on: section === 'branding' }"
+							@click="go('branding')"
+						>
+							<svg
+								width="15"
+								height="15"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<rect x="3" y="3" width="18" height="18" rx="2" />
+								<circle cx="8.5" cy="8.5" r="1.5" />
+								<path d="M21 15l-5-5L5 21" />
+							</svg>
+							<span>Branding</span>
+						</button>
 					</template>
 
 					<!-- ADMINISTRATION (Jarvis Admin role, or System Manager — server
@@ -295,6 +316,7 @@ import {
 import { useJarvisTheme } from "@/theme";
 import { useShellStore } from "@/stores/shell";
 import "@/assets/settings.css";
+import { agentName } from "@/branding";
 
 // Panes are lazy: this dialog is mounted eagerly by AppShell for EVERY user, so
 // static imports would pull each pane's dependency tree (charts + usageCharts
@@ -320,6 +342,7 @@ const BillingMeteringPane = defineAsyncComponent(() =>
 const UsageAdminPane = defineAsyncComponent(() =>
 	import("@/components/settings/UsageAdminPane.vue")
 );
+const BrandingPane = defineAsyncComponent(() => import("@/components/settings/BrandingPane.vue"));
 
 // Theme MUST come from the same singleton the header toggle WRITES to
 // (@/theme's useJarvisTheme) — @/composables/useTheme is a separate
@@ -340,7 +363,7 @@ const store = useShellStore();
 const isSM = !!window.is_system_manager;
 const isAdmin = !!window.is_jarvis_admin;
 
-const GATED_SM = ["plan", "aimodels", "connection", "billing"];
+const GATED_SM = ["plan", "aimodels", "connection", "billing", "branding"];
 const GATED_ADMIN = ["usageadmin"];
 const PANES = {
 	general: GeneralPane,
@@ -351,6 +374,7 @@ const PANES = {
 	aimodels: AiModelsPane,
 	connection: ConnectionPane,
 	billing: BillingMeteringPane,
+	branding: BrandingPane,
 	usageadmin: UsageAdminPane,
 };
 const LABELS = {
@@ -362,6 +386,7 @@ const LABELS = {
 	aimodels: "AI models",
 	connection: "Connection",
 	billing: "Billing & metering",
+	branding: "Branding",
 	usageadmin: "User usage",
 };
 // One-line pane descriptions under the header title (design.md §4.1) —
@@ -372,9 +397,10 @@ const DESCRIPTIONS = {
 	activity: "Recent tool calls in this chat.",
 	shortcuts: "Keyboard shortcuts available in chat.",
 	plan: "Your subscription, renewal and upgrade options.",
-	aimodels: "The AI connection that powers Jarvis.",
+	aimodels: `The AI connection that powers ${agentName}.`,
 	connection: "Connection status for this workspace.",
 	billing: "Live usage and cost across the model pool.",
+	branding: "Your assistant's name, logo and favicon.",
 };
 
 // Guard: a gated section requested by a non-SM/non-admin user falls back to
