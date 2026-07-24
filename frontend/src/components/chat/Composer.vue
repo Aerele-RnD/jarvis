@@ -361,6 +361,14 @@ watch(() => props.modelValue, autoGrow, { flush: "post" });
 function onInputInternal(e) {
 	// v-model has already pushed the new value up; grow, then hand the host the
 	// raw event (chat parses @/ mentions off the caret here).
+	//
+	// DO NOT "optimise" this call away as redundant with the watcher above. Yes,
+	// a normal keystroke measures twice per input (here, then post-flush) — but
+	// during IME composition Vue's vModelText suppresses the modelValue update
+	// entirely, so the watcher does NOT fire and only this call keeps the box
+	// growing mid-compose (the pre-extraction inline `autoGrow()` did grow).
+	// A dedup flag can't fix that without special-casing the IME path, which is
+	// exactly the path that has no other grower.
 	autoGrow();
 	emit("input", e);
 }
@@ -491,7 +499,21 @@ defineExpose({ el: inputEl, focusInput });
    COPIED, not moved: `.jv-iconbtn` is also worn by chat's header buttons and
    by the mic/wiki/nudge buttons it slots back in here, which carry ChatView's
    scope id — so ChatView keeps its own copy of these rules. This copy styles
-   the default attach button above (the #left-toolbar fallback). */
+   the default attach button above (the #left-toolbar fallback).
+
+   MUST STAY IN SYNC — `.jv-iconbtn` lives in THREE places on purpose:
+     1. here (scoped to Composer — its default attach button)
+     2. `views/ChatView.vue` (scoped — header buttons + the mic/attach/wiki/nudge
+        buttons chat slots BACK into this component, which carry ChatView's
+        scope id, so these rules cannot reach them)
+     3. `assets/settings.css` — GLOBAL, and DELIBERATELY DIFFERENT: the settings
+        dialog wants a quiet ghost hover (--surface-2), not this invert. Do not
+        "unify" it with these two.
+   Hoisting 1+2 into a shared sheet was evaluated and rejected: without the
+   `[data-v-*]` attribute these rules go global, and their `!important` would
+   then beat settings.css's un-!important ghost hover on SettingsDialog's close
+   button — i.e. it would silently restyle the settings dialog. Change the hover
+   here and you MUST make the same edit in ChatView. */
 .jv-iconbtn:hover {
 	background: var(--text) !important;
 	color: var(--surface) !important;

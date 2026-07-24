@@ -2044,6 +2044,13 @@
 					</button>
 				</transition>
 				<div style="max-width: 1280px; margin: 0 auto">
+					<!-- DO NOT REMOVE `@submit="send()"`: the Send BUTTON's click is
+					     `emit('submit')` inside Composer, so this binding is the
+					     button's ONLY path to send(). (It is Composer's built-in
+					     Enter→submit that is unreachable for chat — onKey
+					     preventDefaults on Enter and calls send() itself — not the
+					     click.) Composer's own test asserts the emit, not this
+					     wiring, so deleting it would kill click-to-send silently. -->
 					<Composer
 						ref="composerRef"
 						v-model="input"
@@ -7313,7 +7320,18 @@ onUnmounted(() => {
 }
 /* buttons invert to black/white on hover (theme-adaptive: black on light,
    white on dark) — var(--text)/var(--surface) flip, with an svg-stroke
-   override so the icon stays visible on the inverted background. */
+   override so the icon stays visible on the inverted background.
+
+   MUST STAY IN SYNC with the identical copy in
+   `components/chat/Composer.vue` (which styles that component's own default
+   attach button; slot content sent back into it carries THIS scope id, so
+   Composer's copy can't reach chat's mic/attach/wiki buttons). A third,
+   DELIBERATELY DIFFERENT `.jv-iconbtn` lives globally in
+   `assets/settings.css` — a quiet ghost hover for the settings dialog; do not
+   unify it with these. Hoisting these two into a shared sheet was evaluated
+   and rejected: unscoped, their `!important` would beat settings.css's
+   un-!important hover and restyle SettingsDialog's close button. Same applies
+   to the `:focus-visible` and `.jv-dark` copies further down this file. */
 .jv-iconbtn:hover {
 	background: var(--text) !important;
 	color: var(--surface) !important;
