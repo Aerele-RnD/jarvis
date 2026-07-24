@@ -10,7 +10,7 @@
 						>No access to Dashboards</span
 					>
 					<span class="text-p-base text-ink-gray-6">
-						Ask your Jarvis admin for access to dashboards.
+						Ask your {{ agentName }} admin for access to dashboards.
 					</span>
 				</div>
 			</div>
@@ -193,6 +193,7 @@ import LayoutHeader from "@/components/LayoutHeader.vue";
 import TabBar from "@/components/list/TabBar.vue";
 import { session } from "@/data/session";
 import { getCanvas } from "@/api";
+import { agentName } from "@/branding";
 import { getDashboardsCaps, getDashboard } from "@/api/dashboards";
 import { DEFAULT_THEME, THEME_OPTIONS, themeKey, themeLabel } from "@/lib/dashboardThemes";
 import DashboardCanvas from "./DashboardCanvas.vue";

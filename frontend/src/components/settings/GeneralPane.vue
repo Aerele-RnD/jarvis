@@ -40,7 +40,7 @@
 			/>
 			<ToggleRow
 				title="Notify when a reply is ready"
-				help="Browser notification when Jarvis finishes while you are in another tab."
+				:help="`Browser notification when ${agentName} finishes while you are in another tab.`"
 				:modelValue="notifyEnabled"
 				:disabled="!notifySupported"
 				@update:modelValue="onToggleNotify"
@@ -122,6 +122,7 @@ import { useShellStore } from "@/stores/shell";
 import SettingsPane from "@/components/settings/SettingsPane.vue";
 import KvRow from "@/components/settings/KvRow.vue";
 import ToggleRow from "@/components/settings/ToggleRow.vue";
+import { agentName } from "@/branding";
 import * as api from "@/api";
 
 const store = useShellStore();

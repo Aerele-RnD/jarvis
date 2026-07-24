@@ -46,3 +46,13 @@ def set_jarvis_boot(bootinfo):
 		bootinfo.jarvis_has_access = bool(has_jarvis_access())
 	except Exception:
 		bootinfo.jarvis_has_access = False  # fail-closed; the no-access page self-heals
+
+	# Whitelabel branding for the desk floating chat widget (Panel.vue / Widget.vue
+	# read window.frappe.boot.* synchronously, so no flash). Blank => the widget
+	# keeps the Jarvis defaults.
+	try:
+		bootinfo.jarvis_agent_name = frappe.db.get_single_value("Jarvis Settings", "agent_name") or ""
+		bootinfo.jarvis_brand_logo_url = frappe.db.get_single_value("Jarvis Settings", "brand_logo") or ""
+	except Exception:
+		bootinfo.jarvis_agent_name = ""
+		bootinfo.jarvis_brand_logo_url = ""

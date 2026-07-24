@@ -73,6 +73,31 @@
 				</ul>
 			</template>
 
+			<!-- A downgrade already scheduled: state it plainly, and put the one
+			     affordance that undoes it right here, mirroring the cancellation
+			     notice above. Undoing an Annual switch is a plain flag the server
+			     clears, so it happens inline; a Monthly one already migrated the
+			     mandate, so undoing needs a Razorpay checkout this pane does not
+			     host and it deep-links to Desk instead (anti-pattern 15).
+			     Subtle, never solid: Resume above is the pane's single solid
+			     button. -->
+			<div
+				v-if="scheduledDowngrade"
+				class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border p-4"
+			>
+				<span class="text-p-sm text-ink-gray-7">{{ scheduledDowngradeNotice }}</span>
+				<Button
+					v-if="account.scheduled_downgrade_revocable"
+					variant="subtle"
+					label="Keep current plan"
+					:loading="busy"
+					@click="doCancelDowngrade"
+				/>
+				<a v-else :href="billingUrl" class="text-base text-ink-blue-link hover:underline">
+					Keep current plan in Desk
+				</a>
+			</div>
+
 			<!-- Upgrade / Renew deep-link to the existing Desk billing flow
 			     (Razorpay checkout). Rendered as plain text links, not as buttons:
 			     they leave the SPA, and design.md §5 anti-pattern 15 keeps the Desk
@@ -99,6 +124,39 @@
 							class="mt-2 text-base text-ink-blue-link hover:underline"
 						>
 							Upgrade in Desk
+						</a>
+					</div>
+				</div>
+			</template>
+
+			<!-- Switch to a smaller plan. Same card grid as Upgrade rather than a
+			     second invented layout; it reads quieter purely by sitting below.
+			     Applies at the NEXT cycle, so the heading says "switch", not
+			     "downgrade now". Hidden while cancelling, and once one is already
+			     scheduled the notice above replaces it. -->
+			<template v-if="downgradePlans.length && !cancelling && !scheduledDowngrade">
+				<hr class="my-8" />
+				<h3 class="text-base font-semibold text-ink-gray-9">Switch to a smaller plan</h3>
+				<p class="mt-1 text-p-sm text-ink-gray-6">
+					You keep your current plan until the end of this billing period.
+				</p>
+				<div class="mt-3 grid grid-cols-2 gap-4">
+					<div
+						v-for="p in downgradePlans"
+						:key="p.name"
+						class="flex flex-col gap-1 rounded-md border p-4"
+					>
+						<span class="text-base font-medium text-ink-gray-8">
+							{{ p.plan_name || p.name }}
+						</span>
+						<span class="text-p-sm text-ink-gray-6">
+							{{ planPriceLabel(p.price_inr, p.billing_cycle) }}
+						</span>
+						<a
+							:href="billingUrl"
+							class="mt-2 text-base text-ink-blue-link hover:underline"
+						>
+							Switch in Desk
 						</a>
 					</div>
 				</div>
@@ -168,7 +226,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { Badge, Button, FeatherIcon } from "frappe-ui";
-import { getAccount, cancelPlanAtPeriodEnd, resumePlan } from "@/api";
+import { getAccount, cancelPlanAtPeriodEnd, resumePlan, cancelScheduledDowngrade } from "@/api";
 import {
 	statusLabel,
 	pillTone,
@@ -205,6 +263,16 @@ const planFeatures = computed(() => {
 	return [];
 });
 const upgradePlans = computed(() => account.value.upgrade_plans || []);
+const downgradePlans = computed(() => account.value.downgrade_plans || []);
+const scheduledDowngrade = computed(() => !!account.value.scheduled_plan);
+const scheduledDowngradeNotice = computed(() => {
+	const name =
+		account.value.scheduled_plan_name || account.value.scheduled_plan || "a smaller plan";
+	const on = (account.value.scheduled_plan_on || "").split(" ")[0];
+	return on
+		? `Switching to ${name} on ${on}. You keep your current plan until then.`
+		: `Switching to ${name} at your next billing cycle.`;
+});
 // A plan scheduled to end. Server keeps status "Active" through the paid
 // period, so this flag - not the status - drives the cancelling UI.
 const cancelling = computed(() => !!account.value.cancel_at_period_end);
@@ -290,6 +358,21 @@ async function doResume() {
 				? `Auto-renewal is off. Set up payment again before ${endsOn} to stay subscribed.`
 				: "Auto-renewal is off. Set up payment again before your period ends.";
 		}
+		await loadAccount();
+	} catch (e) {
+		accountErr.value = errMsg(e);
+	} finally {
+		busy.value = false;
+	}
+}
+
+async function doCancelDowngrade() {
+	// Constructive, so no danger confirm. Only offered when the server says the
+	// scheduled downgrade is revocable (no committed mandate migration).
+	busy.value = true;
+	accountErr.value = "";
+	try {
+		await cancelScheduledDowngrade();
 		await loadAccount();
 	} catch (e) {
 		accountErr.value = errMsg(e);

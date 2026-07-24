@@ -31,6 +31,7 @@ caller.
 from __future__ import annotations
 
 import contextlib
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -147,6 +148,54 @@ class TestPersonaliseRoleSeeding(PersonaliseDoctypeTestCase):
 			self.assertTrue(frappe.db.exists("Role", role), role)
 			self.assertEqual(frappe.db.get_value("Role", role, "desk_access"), 1, role)
 			self.assertEqual(frappe.db.get_value("Role", role, "is_custom"), 0, role)
+
+	def test_app_roles_are_not_marked_custom(self):
+		"""``is_custom`` must stay 0 on every role the APP ships.
+
+		All four are created by DocType sync (each is named in at least one
+		permission row), which stamps is_custom=0. The ensure_* helpers in
+		jarvis/permissions.py declare the same 0 so the two definitions agree.
+		Nothing in Frappe enforces that agreement, so this test is the guard: if
+		a future Frappe changes what sync stamps, or someone flips a helper back
+		to 1, the mismatch surfaces here instead of silently misdescribing every
+		live site.
+
+		Deliberately EXCLUDES the two support roles: no DocType names them, so
+		ensure_support_roles genuinely creates them and its is_custom=1 does take
+		effect. That asymmetry is real, and is spelled out here so it does not
+		get "fixed" by accident."""
+		learning_roles.after_migrate()
+		for role in (
+			"Jarvis User",
+			"Jarvis Admin",
+			"Jarvis Skill Reviewer",
+			"Knowledge Wiki Manager",
+		):
+			self.assertTrue(frappe.db.exists("Role", role), role)
+			self.assertEqual(frappe.db.get_value("Role", role, "is_custom"), 0, role)
+
+	def test_after_install_leaves_every_install_only_role_present(self):
+		"""The install path must end with the roles no DocType names."""
+		from jarvis.install import _INSTALL_ONLY_ROLES, after_install
+
+		after_install()  # idempotent
+		for role in _INSTALL_ONLY_ROLES:
+			self.assertTrue(frappe.db.exists("Role", role), role)
+
+	def test_after_install_raises_when_seeding_did_not_land(self):
+		"""The verification in after_install must be REAL.
+
+		Its seeder (learning.roles.after_migrate) catches everything and only
+		log_errors, never re-raising, because a failed seed must not abort a
+		migrate. At install time that would silently produce the half-seeded
+		tenant the hook exists to prevent, so after_install re-checks and
+		throws. This asserts the throw actually happens rather than the check
+		being decorative."""
+		from jarvis import install
+
+		with patch.object(install, "_INSTALL_ONLY_ROLES", ("Jarvis Nonexistent Probe Role",)):
+			with self.assertRaises(frappe.ValidationError):
+				install.after_install()
 
 	def test_settings_defaults_backfilled_when_row_absent(self):
 		"""Row-existence probe, not a value test: an absent tabSingles row for

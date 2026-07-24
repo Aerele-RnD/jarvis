@@ -188,7 +188,12 @@ website_route_rules = [
 # Serves the PWA's service worker at the root-level /jarvis-mobile.sw.js, which
 # is the only way it can claim a scope covering the app. See jarvis/pwa.py — the
 # route is deliberately outside the /jarvis-mobile/ catch-all above.
-page_renderer = ["jarvis.pwa.ServiceWorkerRenderer"]
+# ManifestRenderer serves the per-tenant whitelabel manifest at the root-level
+# /jarvis-mobile.webmanifest (same catch-all reasoning).
+page_renderer = [
+	"jarvis.pwa.ServiceWorkerRenderer",
+	"jarvis.pwa.ManifestRenderer",
+]
 
 # The agents marketplace lives at the SPA route /jarvis/agents; keep the
 # friendlier top-level /jarvis-agents spelling working as a redirect.
@@ -202,6 +207,12 @@ website_redirects = [
 # 2026-07 latency plan, Phase 1.4: kick off a (debounced) prefix warm-up on
 # login so the provider prompt cache is warm before the chat page even loads.
 on_session_creation = ["jarvis.chat.prewarm.warm_on_login"]
+
+# A fresh install runs THIS and never after_migrate, so anything a day-1 site
+# needs that DocType sync does not produce has to be seeded here: the roles no
+# DocType names ("Knowledge Wiki Manager", the two support roles) plus the
+# Personalisation Settings defaults. See jarvis/install.py.
+after_install = "jarvis.install.after_install"
 
 # Keep the Agents Marketplace catalog (Jarvis Agent Listing) in lockstep with
 # the BUNDLED jarvis/agents/registry.json on every migrate (never a runtime

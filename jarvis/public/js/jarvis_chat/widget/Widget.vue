@@ -1,8 +1,9 @@
 <template>
 	<!-- Draggable, edge-snapping Jarvis shortcut FAB, floating on every ERP Desk
-	     page. Tapping it navigates to the Jarvis chat SPA (a fresh conversation)
-	     rather than opening an in-page panel. -->
-	<div class="jvw-root">
+	     page. Tapping it opens the side chat panel in place; on a narrow
+	     viewport (where a 400px panel would be most of the screen) it falls
+	     back to navigating to the chat SPA. -->
+	<div class="jvw-root" :class="{ 'jvw-root--dark': isDark }">
 		<button
 			type="button"
 			ref="fabEl"
@@ -11,10 +12,11 @@
 				'jvw-fab--snapping': snapping,
 				'jvw-fab--dragging': dragging,
 				'jvw-fab--faded': faded && !dragging,
+				'jvw-fab--dock-left': side === 'left',
 			}"
 			:style="fabStyle"
-			title="Ask Jarvis"
-			aria-label="Ask Jarvis"
+			:aria-label="panelOpen ? `Close ${brandName}` : `Ask ${brandName}`"
+			:aria-expanded="panelOpen ? 'true' : 'false'"
 			@click="onFabClick"
 			@pointerdown="onPointerDown"
 			@pointermove="onPointerMove"
@@ -23,17 +25,35 @@
 			@pointerenter="wake"
 			@focus="wake"
 		>
-			<svg viewBox="0 0 24 24" width="24" height="24" fill="#fff">
+			<!-- Grip dots: the drag affordance. design.md 1.3 forbids hover
+			     motion, so this fades in on OPACITY alone — nothing moves. -->
+			<span class="jvw-grip" aria-hidden="true"><i></i><i></i><i></i></span>
+			<img v-if="brandLogoUrl" :src="brandLogoUrl" class="jvw-fab-img" alt="" />
+			<svg v-else viewBox="0 0 24 24" width="24" height="24" fill="#fff">
 				<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
 			</svg>
 		</button>
+
+		<Panel
+			ref="panelRef"
+			:open="panelOpen"
+			:context="effectiveContext"
+			:layout="panelBox"
+			@close="closePanel"
+			@open-full="openFull"
+			@dismiss-context="contextDismissed = true"
+		/>
 	</div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { NEW_CHAT_URL } from "./config.mjs";
+import { FULL_CHAT_URL, conversationUrl, PANEL_MIN_VIEWPORT_PX } from "./config.mjs";
+import { contextFromRoute } from "./desk_context.mjs";
+import { panelLayout } from "./panel_anchor.mjs";
+import { isDarkNow, watchTheme } from "./desk_theme.mjs";
 import * as fabPos from "./fab_position.mjs";
+import Panel from "./Panel.vue";
 
 // ---- FAB: draggable, edge-snapping, idle-fading launcher button.
 // fab_position.mjs owns the pure geometry/drag/idle-timer math (unit tested);
@@ -53,6 +73,55 @@ let snapTimeoutHandle = null;
 
 // Access gate: desk boot sets this once for the session (see Task B).
 const hasAccess = Boolean(window.frappe?.boot?.jarvis_has_access);
+// Whitelabel FAB label + mark (set_jarvis_boot); blank => Jarvis defaults.
+const brandName = (window.frappe?.boot?.jarvis_agent_name || "").trim() || "Jarvis";
+const brandLogoUrl = (window.frappe?.boot?.jarvis_brand_logo_url || "").trim();
+
+// ---- Side chat panel: open state and the Desk record it is looking at. ----
+const panelRef = ref(null);
+const isDark = ref(false);
+let unwatchTheme = null;
+const panelOpen = ref(false);
+const deskContext = ref(null);
+const contextDismissed = ref(false);
+
+// Dismissing the chip suppresses context for the current page only; a new
+// route is a new subject, so the dismissal does not carry over.
+const effectiveContext = computed(() => (contextDismissed.value ? null : deskContext.value));
+
+// The window hangs off the FAB, so it re-lays-out on every drag frame and on
+// resize. fabXY is already reactive, which is what makes the panel travel with
+// the launcher instead of being stranded across the screen from it.
+const viewportTick = ref(0);
+const panelBox = computed(() => {
+	viewportTick.value; // re-run on resize / orientation change
+	const topInset = readCssPx(document.documentElement, "--navbar-height", 48);
+	return panelLayout(
+		{ x: fabXY.value.x, y: fabXY.value.y, size: fabPos.FAB_SIZE },
+		{ vw: window.innerWidth, vh: window.innerHeight, top: topInset }
+	);
+});
+
+function readDeskContext() {
+	const route = (window.frappe && frappe.get_route && frappe.get_route()) || [];
+	let filters = null;
+	try {
+		filters = window.frappe?.query_report?.get_filter_values?.() || null;
+	} catch (e) {
+		filters = null; // report not loaded yet
+	}
+	deskContext.value = contextFromRoute(route, { filters });
+	contextDismissed.value = false;
+}
+
+function closePanel() {
+	panelOpen.value = false;
+	fabEl.value?.focus();
+}
+
+function openFull() {
+	window.location.assign(conversationUrl(panelRef.value?.convId));
+}
 
 const fabStyle = computed(() => ({
 	transform: `translate3d(${fabXY.value.x}px, ${fabXY.value.y}px, 0)`,
@@ -197,17 +266,38 @@ function onFabClick() {
 		return;
 	}
 	wake();
-	if (!hasAccess) window.location.assign("/jarvis-no-access");
-	else window.location.assign(NEW_CHAT_URL);
+	if (!hasAccess) {
+		window.location.assign("/jarvis-no-access");
+		return;
+	}
+	// Below the threshold a 400px panel is most of the screen, so fall back to
+	// the full SPA rather than designing a third layout for it.
+	if (window.innerWidth < PANEL_MIN_VIEWPORT_PX) {
+		window.location.assign(FULL_CHAT_URL);
+		return;
+	}
+	if (!panelOpen.value) readDeskContext();
+	panelOpen.value = !panelOpen.value;
 }
 
 // Re-clamps the FAB into the (possibly resized) dockable band; ratio-based
 // storage means this is enough to keep it on-screen after a viewport change.
 function onResize() {
 	applyPosition({ animate: false });
+	viewportTick.value++; // re-anchor the panel to the new viewport
 }
 
 onMounted(() => {
+	// The Desk's dark flag is read in JS, not CSS: this component's
+	// `:global([data-theme=dark]) .jvw-root` compiled to a bare
+	// `[data-theme=dark]` rule, so its custom properties landed on <html> and
+	// were overridden by .jvw-root's own light values. The accent never
+	// changed in dark mode.
+	isDark.value = isDarkNow();
+	unwatchTheme = watchTheme((d) => {
+		isDark.value = d;
+	});
+
 	// Setup-time applyPosition() ran before fabEl was live, so getViewport()
 	// couldn't read the real --jvw-safe-bottom off it and fell back to 0. Now
 	// that the DOM ref exists, correct the position so notched devices don't
@@ -225,9 +315,16 @@ onMounted(() => {
 	document.addEventListener("mousemove", onDocumentActivity, { passive: true });
 	document.addEventListener("touchstart", onDocumentActivity, { passive: true });
 	document.addEventListener("keydown", onDocumentActivity, { passive: true });
+
+	// The record under discussion changes as the user moves around the Desk, and
+	// the panel deliberately stays open across that — so re-read the context
+	// rather than closing. The chip updates live.
+	readDeskContext();
+	if (window.frappe?.router?.on) frappe.router.on("change", readDeskContext);
 });
 
 onBeforeUnmount(() => {
+	unwatchTheme?.();
 	window.removeEventListener("resize", onResize);
 	window.removeEventListener("orientationchange", onResize);
 	document.removeEventListener("mousemove", onDocumentActivity);
@@ -244,7 +341,10 @@ onBeforeUnmount(() => {
 <style scoped>
 /* Scoped tokens for the FAB (it lives in <body>). */
 .jvw-root {
-	--accent: #171717;
+	/* Brand gradient from the Jarvis Side Chat design board (a recorded
+	   divergence from design.md's near-black chrome, scoped to this widget). */
+	--accent: #6a56e8;
+	--accent-grad: linear-gradient(140deg, #8b7cf7, #6a56e8);
 	--jvw-safe-bottom: env(safe-area-inset-bottom, 0px);
 	font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
@@ -253,8 +353,9 @@ onBeforeUnmount(() => {
    <html>, which is an ancestor of this body-mounted widget: the accent becomes
    the indigo brand blue (the SPA's theme.js DARK_VARS accent) so the FAB stays
    visible against dark surfaces. */
-:global([data-theme="dark"]) .jvw-root {
-	--accent: #6e8bff;
+.jvw-root--dark {
+	--accent: #8b7cf7;
+	--accent-grad: linear-gradient(140deg, #9d90ff, #7a68f0);
 }
 
 /* ---- launcher bubble ---- */
@@ -262,13 +363,13 @@ onBeforeUnmount(() => {
 	width: 54px;
 	height: 54px;
 	border-radius: 16px;
-	background: var(--accent);
+	background: var(--accent-grad);
 	border: none;
-	cursor: pointer;
+	cursor: grab;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	box-shadow: 0 6px 20px rgba(23, 23, 23, 0.32);
+	box-shadow: 0 10px 26px -6px rgba(106, 86, 232, 0.55);
 	position: fixed;
 	left: 0;
 	top: 0;
@@ -276,6 +377,12 @@ onBeforeUnmount(() => {
 	touch-action: none;
 	will-change: transform;
 	transition: opacity 0.25s ease;
+}
+.jvw-fab-img {
+	width: 24px;
+	height: 24px;
+	object-fit: cover;
+	border-radius: 7px;
 }
 .jvw-fab:hover {
 	filter: brightness(1.06);
@@ -294,10 +401,64 @@ onBeforeUnmount(() => {
 .jvw-fab--faded {
 	opacity: 0.4;
 }
+
+/* ---- drag affordance ----
+   design.md 1.3 forbids hover motion, and 5 lists hover-lift and pulse as
+   anti-patterns to remove. So draggability is signalled without anything
+   moving at rest: the grip fades in on OPACITY, the cursor changes, and the
+   press uses the same scale(0.98) TabButtons already uses.
+
+   The scale is applied to the FAB's CHILDREN, never the FAB itself: .jvw-fab
+   carries the drag position in an inline `transform`, so scaling it here would
+   snap the button back to the origin mid-press. */
+.jvw-grip {
+	position: absolute;
+	left: 7px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: flex;
+	flex-direction: column;
+	gap: 2.5px;
+	opacity: 0;
+	transition: opacity 0.12s ease;
+	pointer-events: none;
+}
+/* Keep the grip on the edge facing into the page, not the one against the
+   viewport edge the FAB is snapped to. */
+.jvw-fab--dock-left .jvw-grip {
+	left: auto;
+	right: 7px;
+}
+.jvw-grip i {
+	display: block;
+	width: 2.5px;
+	height: 2.5px;
+	border-radius: 999px;
+	background: #fff;
+}
+.jvw-fab:hover .jvw-grip,
+.jvw-fab:focus-visible .jvw-grip,
+.jvw-fab--dragging .jvw-grip {
+	opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.jvw-fab > svg {
+		transition: transform 0.12s ease;
+	}
+	.jvw-fab:active > svg,
+	.jvw-fab--dragging > svg {
+		transform: scale(0.98);
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.jvw-fab,
 	.jvw-fab--snapping {
 		transition: opacity 0.2s ease;
+	}
+	.jvw-grip {
+		transition: none;
 	}
 }
 </style>

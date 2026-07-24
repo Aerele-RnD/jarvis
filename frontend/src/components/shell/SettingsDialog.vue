@@ -108,6 +108,7 @@ const BillingMeteringPane = defineAsyncComponent(() =>
 const UsageAdminPane = defineAsyncComponent(() =>
 	import("@/components/settings/UsageAdminPane.vue")
 );
+const BrandingPane = defineAsyncComponent(() => import("@/components/settings/BrandingPane.vue"));
 
 // ACCOUNT AND BILLING is the tenant-admin tier (System Manager OR Jarvis Admin,
 // matching the widened require_jarvis_admin endpoints). ADMINISTRATION is
@@ -124,6 +125,7 @@ const PANES = {
 	aimodels: AiModelsPane,
 	connection: ConnectionPane,
 	billing: BillingMeteringPane,
+	branding: BrandingPane,
 	usageadmin: UsageAdminPane,
 };
 
@@ -149,6 +151,7 @@ const NAV = [
 			{ key: "aimodels", label: "AI models", icon: "cpu" },
 			{ key: "connection", label: "Connection", icon: "wifi" },
 			{ key: "billing", label: "Billing and metering", icon: "dollar-sign" },
+			{ key: "branding", label: "Branding", icon: "image" },
 		],
 	},
 	{

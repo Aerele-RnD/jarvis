@@ -1,7 +1,10 @@
-// Global floating Jarvis widget — a draggable, edge-snapping shortcut FAB
-// that navigates to the Jarvis chat SPA (a fresh conversation), present on
-// every Desk page EXCEPT the full chat page (and the onboarding flow, where
-// the agent isn't ready yet).
+// Global floating Jarvis widget — a draggable, edge-snapping FAB that opens
+// the side chat panel in place, present on every Desk page EXCEPT the full
+// chat page (and the onboarding flow, where the agent isn't ready yet).
+//
+// The panel is a child of the FAB component, so hiding this host hides both.
+// On a narrow viewport the FAB navigates to the chat SPA instead of opening a
+// panel that would cover the screen (see config.mjs PANEL_MIN_VIEWPORT_PX).
 //
 // Mounted ONCE into a <body>-level host so it survives SPA navigation: its
 // dragged position persists (via localStorage) as you move between

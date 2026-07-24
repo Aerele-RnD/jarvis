@@ -14,7 +14,7 @@
 			<div class="flex flex-col gap-1">
 				<h2 class="text-lg font-semibold text-ink-gray-8">AI models</h2>
 				<p class="max-w-md text-p-sm text-ink-gray-6">
-					The AI connection that powers Jarvis.
+					The AI connection that powers {{ agentName }}.
 				</p>
 			</div>
 			<span v-if="savedNote" class="shrink-0 text-p-sm text-ink-gray-6">{{
@@ -53,6 +53,7 @@
 import { ref, onMounted } from "vue";
 import { getDirectSubscriptionStatus } from "@/api";
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue";
+import { agentName } from "@/branding";
 
 // The rail already gates this section to the tenant-admin tier; this flag
 // additionally gates the editor's edit affordances + which probes fire. PART 4

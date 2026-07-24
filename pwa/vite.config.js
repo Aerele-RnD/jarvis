@@ -36,7 +36,7 @@ export default defineConfig({
 				name: "Jarvis",
 				short_name: "Jarvis",
 				description:
-					"Your AI teammate. Ask for anything across your ERP — in plain language.",
+					"Your AI teammate. Ask for anything across your ERP, in plain language.",
 				start_url: "/jarvis-mobile",
 				scope: "/jarvis-mobile",
 				display: "standalone",
