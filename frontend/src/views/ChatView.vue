@@ -7612,15 +7612,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* Native form controls (select dropdowns, date/time pickers, scrollbars)
-   follow the app theme instead of the OS default — without this, a dark app
-   pops white select menus and calendar popups. */
-.jv-root {
-	color-scheme: light;
-}
-.jv-root.jv-dark {
-	color-scheme: dark;
-}
 /* The brand mark is now <JarvisMark> everywhere on this surface (hero, assistant
    avatars, proactive toast), so it carries its own gradient in BOTH themes.
    Deleted with this comment: a `.jv-dark .jv-logo, .jv-dark .jv-toast-ic` rule
