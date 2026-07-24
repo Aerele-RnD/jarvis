@@ -208,14 +208,25 @@ onMounted(async () => {
 // Built-in fallback: subscription providers offered for a fresh DIRECT connect
 // before the catalog fetch lands or if it fails. Model lists mirror
 // jarvis/_subscription_models.py (codex/gemini-cli catalog).
-const SUB_PROVIDERS = [
+const FALLBACK_SUB_PROVIDERS = [
 	{ provider: "OpenAI", models: ["gpt-5.5", "gpt-5.4"] },
 	{ provider: "Google Gemini", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
 ];
+// Gated server-side on a non-empty auth_profile_id (R7): supports_subscription
+// is true for xai and moonshot too (cliproxy really does serve their
+// subscription models), but only openai/google-gemini-cli support this card's
+// paste-back connect flow - Kimi is device-code and admin's push_oauth_blob
+// rejects a direct xAI blob outright. Data now, not a literal; the rendered
+// list still stays two entries because the seed only sets auth_profile_id for
+// those two.
+const SUB_PROVIDERS = computed(() => {
+	const rows = modelCatalog.value.subscription_connect_providers || [];
+	return rows.length ? rows : FALLBACK_SUB_PROVIDERS;
+});
 function _defaultProvider() {
-	if (SUB_PROVIDERS.some((p) => p.provider === props.status.provider))
+	if (SUB_PROVIDERS.value.some((p) => p.provider === props.status.provider))
 		return props.status.provider;
-	const byModel = SUB_PROVIDERS.find((p) => p.models.includes(props.status.model));
+	const byModel = SUB_PROVIDERS.value.find((p) => p.models.includes(props.status.model));
 	return byModel ? byModel.provider : "OpenAI";
 }
 const pickProvider = ref(_defaultProvider());
@@ -225,7 +236,9 @@ const pickProvider = ref(_defaultProvider());
 // copy has to follow. Shared with LlmPoolEditor via @/llm/pool.
 const codeOnly = computed(() => isCodeOnlyPaste(status.value.provider || pickProvider.value));
 const pickModels = computed(
-	() => (SUB_PROVIDERS.find((p) => p.provider === pickProvider.value) || SUB_PROVIDERS[0]).models
+	() =>
+		(SUB_PROVIDERS.value.find((p) => p.provider === pickProvider.value) || SUB_PROVIDERS.value[0])
+			.models
 );
 const pickModel = ref(
 	pickModels.value.includes(props.status.model) ? props.status.model : pickModels.value[0]
