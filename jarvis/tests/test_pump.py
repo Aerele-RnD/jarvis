@@ -103,6 +103,22 @@ class _Recorder:
 		return len(self.calls)
 
 
+class _ResolvedSnap:
+	"""CDX-17: an already-resolved snapshot future double (``.done`` True, ``.result``
+	returns a fixed reconcile dict) for driving the issue-and-poll capacity refresh in
+	tests without a real mux."""
+
+	def __init__(self, snap: dict):
+		self._snap = snap
+
+	@property
+	def done(self) -> bool:
+		return True
+
+	def result(self, timeout: float = 0) -> dict:
+		return self._snap
+
+
 class _PumpTestCase(FrappeTestCase):
 	def setUp(self):
 		_ensure_test_user()
@@ -205,13 +221,17 @@ class _PumpTestCase(FrappeTestCase):
 		self._doubles.append(d)
 		return d
 
-	def _deps(self, *, double=None, prepare=None, settlement=None, snapshot=None) -> pump.PumpDeps:
+	def _deps(
+		self, *, double=None, prepare=None, settlement=None, snapshot=None, issue_snapshot=None
+	) -> pump.PumpDeps:
 		d = pump.PumpDeps()
 		d.dispatch_prepare = prepare or _Recorder()
 		d.enqueue_finalize = _Recorder()
 		d.enqueue_pump_job = _Recorder()
 		d.apply_tool = _Recorder()
 		d.snapshot = snapshot or (lambda ctx: {"gateway_active": 0, "active_session_keys": None})
+		if issue_snapshot is not None:
+			d.issue_snapshot = issue_snapshot
 		if settlement is not None:
 			d.invoke_settlement = settlement
 		if double is not None:
@@ -1555,10 +1575,11 @@ class TestConservativeAdmission(_PumpTestCase):
 			rids.append(rid)
 		return rids
 
-	def test_snapshot_failure_holds_then_admits_reduced_cap(self):
-		from jarvis.chat import admission
-
-		# No last-known observation => truly unknown foreign usage.
+	def test_snapshot_failure_admits_zero_until_snapshot_succeeds(self):
+		# CDX-11 (fail CLOSED): unknown gateway visibility (failed snapshot AND no
+		# TTL-valid last-known) => ZERO new promotions, EVERY cycle, until a snapshot
+		# succeeds. The old cap-1 compromise is dropped — with an invisible foreign run
+		# any positive local admission can oversubscribe the container.
 		frappe.cache().delete_value(pump._gateway_active_key(self._target))
 		deps = self._deps(
 			snapshot=lambda c: {"snapshot_ok": False, "gateway_active": None, "active_session_keys": None}
@@ -1567,14 +1588,16 @@ class TestConservativeAdmission(_PumpTestCase):
 		pump._reconcile_gateway_active(ctx)
 		self.assertFalse(ctx.gateway_active_known, "snapshot failure w/ no last-known => UNKNOWN, not zero")
 		self._queue_cold(4)
-		# First batch: HOLD new promotions for one cycle (never fail-open to full cap).
-		self.assertEqual(pump._promote_queued(ctx), 0, "one-cycle hold on zero data")
-		self.assertTrue(ctx.conservative_hold_done)
-		# Next batch: admit at the REDUCED cap (cap - safety).
-		cap = admission._max_inflight()
-		self.assertEqual(
-			pump._promote_queued(ctx), cap - pump.CONSERVATIVE_CAP_SAFETY, "reduced cap, never the full cap"
-		)
+		# Every batch while unknown admits ZERO (never the full cap, never cap-1).
+		self.assertEqual(pump._promote_queued(ctx), 0, "batch 1: fail closed, zero promotions")
+		self.assertEqual(pump._promote_queued(ctx), 0, "batch 2: STILL zero — no cap-1 compromise")
+		# Once a snapshot SUCCEEDS (foreign=0), admission resumes at the real cap.
+		ctx.deps.snapshot = lambda c: {"snapshot_ok": True, "gateway_active": 0, "active_session_keys": set()}
+		pump._reconcile_gateway_active(ctx)
+		self.assertTrue(ctx.gateway_active_known)
+		from jarvis.chat import admission
+
+		self.assertEqual(pump._promote_queued(ctx), admission._max_inflight(), "full cap once visible again")
 
 	def test_snapshot_failure_reuses_last_known_within_ttl(self):
 		# CDX-11: a failed snapshot with a RECENT last-known observation reuses it
@@ -1589,21 +1612,58 @@ class TestConservativeAdmission(_PumpTestCase):
 		self.assertEqual(ctx.gateway_active, 1)
 
 	def test_foreign_run_after_hop_start_refreshed_before_promote(self):
-		# CDX-11: a foreign run that begins AFTER the hop-start snapshot is caught by
-		# the mid-hop capacity refresh before the next promotion batch — no over-admit.
+		# CDX-11 + CDX-17: a foreign run that begins AFTER the hop-start snapshot is caught
+		# by the mid-hop capacity refresh (issue-and-poll) before over-admitting — the
+		# refresh RESOLVES on a poll slice, never a blocking re-snapshot inside promote.
 		foreign = {"n": 0}
 		deps = self._deps(
-			snapshot=lambda c: {
-				"snapshot_ok": True,
-				"gateway_active": foreign["n"],
-				"active_session_keys": set(),
-			}
+			issue_snapshot=lambda c: _ResolvedSnap(
+				{"snapshot_ok": True, "gateway_active": foreign["n"], "active_session_keys": set()}
+			)
 		)
 		ctx = self._make_ctx(deps, with_mux=False)
-		pump._reconcile_gateway_active(ctx)  # hop start: 0 foreign
+		pump._reconcile_gateway_active(
+			ctx, {"snapshot_ok": True, "gateway_active": 0, "active_session_keys": set()}
+		)  # hop start: 0 foreign
 		self.assertEqual(ctx.gateway_active, 0)
 		foreign["n"] = 4  # a foreign run fills the whole cap mid-hop
 		ctx.last_snapshot_mono -= pump.SNAPSHOT_REFRESH_S + 1  # force the refresh cadence
 		self._queue_cold(1)
-		self.assertEqual(pump._promote_queued(ctx), 0, "no local admission while foreign usage fills the cap")
+		# Issue + poll the mid-hop refresh (what drain_slice does around promote).
+		pump._maybe_refresh_capacity(ctx)
+		self.assertIsNotNone(ctx.pending_snapshot, "refresh issued (non-blocking)")
+		pump._poll_snapshot(ctx)
+		self.assertIsNone(ctx.pending_snapshot, "resolved refresh folded into capacity")
 		self.assertEqual(ctx.gateway_active, 4, "capacity refreshed before the batch")
+		self.assertEqual(pump._promote_queued(ctx), 0, "no local admission while foreign usage fills the cap")
+
+	def test_stalled_snapshot_rpc_does_not_delay_delta_application(self):
+		# CDX-17: a stalled sessions.list capacity RPC must NOT block a slice / delta
+		# application. Drive frames while the control RPC hangs and prove the slice does
+		# not wait ~ACK_TIMEOUT_S and the streaming delta still lands.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="hello")
+		rid = "pmp_snap_stall"
+		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=0)
+		double = self._double()
+		double.arm_sessions_list_hang()  # the control RPC never responds
+		deps = self._deps(double=double, prepare=self._prepare_stub(conv, double, "success"))
+		ctx = self._make_ctx(deps)  # real mux -> default issue_snapshot uses it
+		# Force the mid-hop refresh cadence so the FIRST slice issues the (hanging) RPC.
+		ctx.last_snapshot_mono -= pump.SNAPSHOT_REFRESH_S + 1
+		t0 = time.monotonic()
+		# A LARGE ack window: if ANY slice blocked on the control RPC it would wait ~30s;
+		# a non-blocking issue-and-poll finishes the turn in a couple of seconds with the
+		# snapshot STILL pending. Both the wall time AND the still-pending future prove it.
+		with patch.object(pump, "ACK_TIMEOUT_S", 30.0):
+			outcome = self._pump_until(ctx, lambda: self._state(rid) in ("finalizing", "done"), max_slices=60)
+		elapsed = time.monotonic() - t0
+		self.assertIn(self._state(rid), ("finalizing", "done"), f"turn progressed (outcome={outcome})")
+		self.assertLess(elapsed, 15.0, "CDX-17: a hanging control RPC did NOT block delta application")
+		self.assertIsNotNone(ctx.pending_snapshot, "the capacity RPC is still in flight (issue-and-poll)")
+		self.assertFalse(
+			ctx.pending_snapshot.fut.done, "the control RPC genuinely hung — no slice waited on it"
+		)
+		# The delta content landed on the assistant placeholder despite the stalled RPC.
+		amsg = self._val(rid, "assistant_message")
+		self.assertTrue((frappe.db.get_value(MSG, amsg, "content") or "").strip(), "deltas applied")

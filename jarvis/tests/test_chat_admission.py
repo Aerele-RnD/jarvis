@@ -934,9 +934,10 @@ class TestCutoverPreflight(_AdmissionTestCase):
 			patch("frappe.utils.background_jobs.get_queues", return_value=[_FakeQ()]),
 			patch("rq.registry.StartedJobRegistry", self._FakeReg),
 		):
-			n, ids = admission._legacy_turn_jobs()
+			n, ids, scan_ok = admission._legacy_turn_jobs()
 		self.assertEqual(n, 1, "only the jarvis-turn::* job matched")
 		self.assertIn(legacy_id, ids)
+		self.assertTrue(scan_ok, "a clean scan reports scan_ok=True")
 
 	def test_preflight_verdict_drain_first_with_legacy_job(self):
 		legacy_id = f"{frappe.local.site}||jarvis-turn|msgY|a0"
@@ -965,3 +966,62 @@ class TestCutoverPreflight(_AdmissionTestCase):
 		self.assertTrue(res["clear"])
 		self.assertEqual(res["verdict"], "clear")
 		self.assertEqual(res["legacy_jobs"], 0)
+
+	def test_preflight_fails_closed_on_scan_exception(self):
+		# CDX-10: a queue/registry probe exception must NOT be swallowed into clear=True.
+		# The scan is incomplete => scan_ok=False => verdict "scan_failed", clear=False.
+		def _boom():
+			raise RuntimeError("redis down")
+
+		with (
+			patch("frappe.utils.background_jobs.get_queues", side_effect=_boom),
+			patch.object(admission, "_legacy_streaming_count", return_value=0),
+		):
+			res = admission.pump_cutover_preflight()
+		self.assertFalse(res["clear"], "a faulted scan can NEVER report clear")
+		self.assertEqual(res["verdict"], "scan_failed")
+		self.assertFalse(res["scan_ok"])
+		self.assertIn("error", res)
+
+	def test_cutover_execute_recheck_catches_straggler(self):
+		# CDX-10: pump_cutover_execute is ONE pass — preflight clear -> remove the kill
+		# switch -> IMMEDIATE re-check. A legacy job that raced into that window flips the
+		# re-check to drain_first, so execute RE-SETS the explicit 0 and reports RETRY.
+		clear = {"clear": True, "verdict": "clear", "scan_ok": True, "legacy_jobs": 0, "legacy_streaming": 0}
+		straggler = {
+			"clear": False,
+			"verdict": "drain_first",
+			"scan_ok": True,
+			"legacy_jobs": 1,
+			"legacy_streaming": 0,
+		}
+		cfg_writes = []
+		with (
+			patch.object(admission, "pump_cutover_preflight", side_effect=[dict(clear), dict(straggler)]),
+			patch(
+				"frappe.installer.update_site_config",
+				side_effect=lambda k, v, *a, **kw: cfg_writes.append((k, v)),
+			),
+		):
+			res = admission.pump_cutover_execute()
+		self.assertFalse(res["done"], "a straggler in the window blocks the cutover")
+		self.assertEqual(res["verdict"], "retry")
+		self.assertEqual(res["action"], "reverted")
+		# It removed the key (absent = ON), then RE-SET the explicit 0 kill switch.
+		self.assertEqual(cfg_writes, [("jarvis_pump_enabled", "None"), ("jarvis_pump_enabled", 0)])
+
+	def test_cutover_execute_commits_when_recheck_still_clear(self):
+		# CDX-10: both passes clear => remove the key ONCE, no revert, done=True.
+		clear = {"clear": True, "verdict": "clear", "scan_ok": True, "legacy_jobs": 0, "legacy_streaming": 0}
+		cfg_writes = []
+		with (
+			patch.object(admission, "pump_cutover_preflight", side_effect=[dict(clear), dict(clear)]),
+			patch(
+				"frappe.installer.update_site_config",
+				side_effect=lambda k, v, *a, **kw: cfg_writes.append((k, v)),
+			),
+		):
+			res = admission.pump_cutover_execute()
+		self.assertTrue(res["done"])
+		self.assertEqual(res["action"], "cutover")
+		self.assertEqual(cfg_writes, [("jarvis_pump_enabled", "None")], "key removed once, no revert")

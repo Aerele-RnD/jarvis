@@ -216,6 +216,8 @@ class _DoubleGateway:
 		self._ws = _FakeWs(self._on_send)
 		self._armed: dict[str, tuple[str, dict]] = {}
 		self._sessions_get: dict[str, list] = {}  # session_key -> raw transcript messages
+		self._sessions_list: list = []  # rows returned by sessions.list (foreign-usage probe)
+		self._hang_sessions_list = False  # CDX-17: when True, sessions.list never responds
 		self._closed = threading.Event()
 		self._players: list[threading.Thread] = []
 
@@ -246,6 +248,15 @@ class _DoubleGateway:
 		``__openclaw.seq`` so the pump's watermark windowing (OARF-2) is exercised."""
 		self._sessions_get[session_key] = messages
 
+	def arm_sessions_list(self, rows: list):
+		"""Arm the rows ``sessions.list`` returns (the pump's foreign-usage capacity probe)."""
+		self._sessions_list = rows
+
+	def arm_sessions_list_hang(self):
+		"""CDX-17: make ``sessions.list`` NEVER respond, simulating a stalled control RPC —
+		the pump must poll its future without blocking a slice / delta application."""
+		self._hang_sessions_list = True
+
 	def stop(self):
 		self._closed.set()
 		for t in self._players:
@@ -274,6 +285,11 @@ class _DoubleGateway:
 					"payload": {"messages": self._sessions_get.get(key, [])},
 				}
 			)
+			return
+		if method == "sessions.list":
+			if self._hang_sessions_list:
+				return  # CDX-17: stalled control RPC — never respond
+			self._push({"type": "res", "id": rid, "ok": True, "payload": {"sessions": self._sessions_list}})
 			return
 		# every other RPC (sessions.patch / sessions.create / chat.abort / ...)
 		# gets a plain ok response.

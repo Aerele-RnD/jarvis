@@ -143,7 +143,13 @@ class _PipelineCase(_PumpTestCase):
 	@contextmanager
 	def _mock_enrichment(self):
 		"""Mock the enrichment effect BOUNDARIES (real HTTP/gateway/macro) with
-		recorders; the finalize ledger loop itself stays real."""
+		recorders; the finalize ledger loop itself stays real. The USAGE effect is mocked
+		at the whole-effect boundary (``finalize._effect_usage``) rather than only its
+		inner ``record_turn_usage`` — since CDX-6 a no-session-key/unmapped turn RETRIES
+		inside ``_effect_usage`` (never a silent no-op), so a lifecycle test that just
+		needs a turn to reach ``done`` mocks the effect to a clean success that mirrors the
+		real R-4 ``usage_recorded`` guard (the real usage retry/attribution behaviour is
+		covered end-to-end by TestUsageHonesty / TestUsageIdempotency)."""
 		recs = {
 			"rich": _Recorder(),
 			"macro": _Recorder(),
@@ -151,12 +157,24 @@ class _PipelineCase(_PumpTestCase):
 			"title": _Recorder(),
 			"usage": _Recorder(),
 		}
+
+		def _usage_effect_noop(ctx):
+			recs["usage"](ctx)
+			# Mirror the real effect's at-most-once R-4 guard so lifecycle tests both reach
+			# `done` AND satisfy the guard-set assertion, without a live gateway poll.
+			ts._run_cas(
+				"UPDATE `tabJarvis Chat Turn` SET usage_recorded=1 WHERE name=%(r)s AND usage_recorded=0",
+				{"r": ctx.run_id},
+			)
+
 		with (
 			patch("jarvis.chat.turn_handler.persist_rich_outputs", recs["rich"]),
 			patch("jarvis.chat.macros.advance_after_turn", recs["macro"]),
 			patch("jarvis.learning.app_analysis.on_turn_end", recs["applearn"]),
 			patch("jarvis.chat.title.enqueue_autotitle", recs["title"]),
-			patch("jarvis.chat.usage.record_turn_usage", recs["usage"]),
+			# The runner dispatches through _RUNNERS (captured at import), so patch the dict
+			# entry — patching the module attribute alone would not reach the runner.
+			patch.dict("jarvis.chat.finalize._RUNNERS", {"usage": _usage_effect_noop}),
 			patch("jarvis.chat.wiki.wiki_enabled", return_value=False),
 		):
 			yield recs
@@ -1149,7 +1167,12 @@ class TestToolApplierEquivalence(_PipelineCase):
 		self.assertEqual(len(starts), 3, "a tool:start per tool")
 		self.assertEqual(len(ends), 3, "a tool:end per tool")
 		for p in starts + ends:
+			# CDX-3: EVERY pump tool event (built-in AND jarvis__*) carries the run-scoped
+			# fence keys — run_id + pump_epoch + event_seq — so the client can fence a stale
+			# writer's tool straggler even though jarvis__* events have no message_id.
 			self.assertEqual(p.get("pump_epoch"), ctx.epoch, "tool events epoch-fenced (P0-3 contract)")
+			self.assertEqual(p.get("run_id"), rid, "tool events carry run_id (CDX-3 run-scoped fence)")
+			self.assertIsNotNone(p.get("event_seq"), "tool events carry event_seq (CDX-3)")
 		# The built-in tool's publishes carry the receipt message_id; jarvis__ ones None.
 		bstart = next(p for p in starts if p.get("tool_call_id") == "t3")
 		self.assertEqual(bstart.get("message_id"), row["name"])
@@ -1171,13 +1194,77 @@ class TestToolApplierEquivalence(_PipelineCase):
 			owner=TEST_USER,
 			assistant_message=None,
 			session_key="s",
-			version=4,
+			version=int(frappe.db.get_value(TURN, rid, "version")),
 		)
 		ev = {"event_seq": 1, "phase": "start", "tool_name": "browser", "tool_call_id": "tz", "title": "t"}
 		pump._default_apply_tool(ctx, rs, ev)
 		pump._default_apply_tool(ctx, rs, ev)  # replay
 		rows = frappe.get_all(MSG, filters={"conversation": conv, "tool_call_id": "tz", "role": "tool"})
 		self.assertEqual(len(rows), 1, "replayed tool start reuses the durable row (idempotent)")
+
+	def test_stale_pump_tool_application_after_takeover_writes_nothing(self):
+		# CDX-15: pause A immediately before its tool application; B takes over (epoch E+1)
+		# and SETTLES the turn; A resumes and applies a tool-start. The fence CAS affects
+		# 0 rows, so A inserts NO durable tool row into the already-settled conversation
+		# and publishes NOTHING — the LeaseLostExit routes A through the shared exit.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="q")
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		rid = "pmp_tool_takeover"
+		# A owns a streaming turn. _make_ctx acquires the lease (epoch EA) and re-stamps
+		# this turn to EA — so A is the legit owner at EA with the turn's current version.
+		self._mk_turn(conv, rid, seed, "streaming", version=5, reserved=1, assistant_message=amsg)
+		frappe.db.commit()
+		ctx_a = self._make_ctx(self._deps(), with_mux=False)
+		EA = ctx_a.epoch
+		self.assertEqual(int(frappe.db.get_value(TURN, rid, "pump_epoch")), EA, "turn owned by A at EA")
+		rs_a = pump._RunState(
+			run_id=rid,
+			conversation=conv,
+			owner=TEST_USER,
+			assistant_message=amsg,
+			session_key="s",
+			version=int(frappe.db.get_value(TURN, rid, "version")),
+		)
+		# --- A pauses here. Make the lease stale so B can take over (epoch EA+1, re-stamps
+		# the turn) and SETTLES it. ---
+		frappe.db.set_value(
+			"Jarvis Relay Pump",
+			self._target,
+			"lease_expires_at",
+			frappe.utils.add_to_date(None, seconds=-5),
+			update_modified=False,
+		)
+		frappe.db.commit()
+		won, e2 = ts.lease_acquire(self._target, "hopB")
+		self.assertTrue(won)
+		self.assertEqual(e2, EA + 1)
+		vB = int(frappe.db.get_value(TURN, rid, "version"))
+		self.assertTrue(ts.mark_terminal_observed(rid, vB, e2, "relay:final", {"text": "final"}))
+		frappe.db.commit()
+		self.assertTrue(ts.settle_finalizing(rid, vB + 1, e2, required_effects=("terminal_publish",)))
+		frappe.db.commit()
+		self.assertEqual(self._state(rid), "finalizing")
+		# --- A resumes and applies the buffered tool-start. It must write/publish nothing. ---
+		self._pubs.clear()
+		ev = {
+			"event_seq": 9,
+			"phase": "start",
+			"tool_name": "browser",
+			"tool_call_id": "tk_stale",
+			"title": "t",
+		}
+		with self.assertRaises(ts.LeaseLostExit):
+			pump._default_apply_tool(ctx_a, rs_a, ev)
+		self.assertFalse(
+			frappe.db.exists(MSG, {"conversation": conv, "tool_call_id": "tk_stale", "role": "tool"}),
+			"stale pump inserted NO durable tool row into the settled conversation",
+		)
+		self.assertEqual(
+			[p for p in self._pubs if p.get("kind") in ("tool:start", "tool:end")],
+			[],
+			"stale pump published NO tool lifecycle event",
+		)
 
 
 # --------------------------------------------------------------------------- #
@@ -1238,6 +1325,38 @@ class TestUsageHonesty(_PipelineCase):
 		self.assertEqual(int(self._val("pmp_usage_delay", "usage_recorded")), 1)
 		self.assertEqual(self._state("pmp_usage_delay"), "done")
 
+	def test_no_session_key_does_not_mark_recorded(self):
+		# CDX-6: a SUCCESSFUL turn with NO session key is unattributed real usage, NOT
+		# legitimate zero — it must NOT permanently mark usage recorded; it retries (and
+		# the force-done budget logs the undercount if the key never materializes).
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="ans", streaming=0)
+		# Deliberately DO NOT set conv.session_key and no dispatch_payload session_key.
+		self._mk_turn(conv, "pmp_usage_nokey", seed, "finalizing", version=5, assistant_message=amsg)
+		ts.insert_required_effects("pmp_usage_nokey", ("usage",))
+		frappe.db.commit()
+		finalize.run_finalize("pmp_usage_nokey", self._target)
+		self.assertEqual(
+			int(self._val("pmp_usage_nokey", "usage_recorded")), 0, "no-session-key does NOT mark recorded"
+		)
+		self.assertEqual(self._effects("pmp_usage_nokey")["usage"], "pending", "usage stays pending to retry")
+
+	def test_unmapped_user_positive_delta_retries(self):
+		# CDX-6: a FRESH POSITIVE token delta whose session_key has no `Jarvis Chat
+		# Session` user mapping is unattributed real usage => USAGE_RETRY, never VALID_ZERO.
+		from jarvis.chat import usage as _usage
+
+		row = {"key": "sess-unmapped", "totalTokensFresh": True, "inputTokens": 30, "outputTokens": 12}
+		# Ensure there is no mapping row for this session key.
+		frappe.db.delete(SESSION, {"session_key": "sess-unmapped"})
+		frappe.db.commit()
+		self.assertEqual(
+			_usage.record_turn_usage("sess-unmapped", row),
+			_usage.USAGE_RETRY,
+			"positive delta + unmapped user => RETRY (not VALID_ZERO)",
+		)
+
 
 # --------------------------------------------------------------------------- #
 # 13. CDX-12 — terminal_publish backstop
@@ -1260,6 +1379,7 @@ class TestTerminalPublishBackstop(_PipelineCase):
 			"finalizing",
 			version=5,
 			pump_epoch=1,
+			last_event_seq=7,
 			assistant_message=amsg,
 			terminal_kind="relay:final",
 			terminal_payload=json.dumps({"text": "final answer"}),
@@ -1274,7 +1394,61 @@ class TestTerminalPublishBackstop(_PipelineCase):
 		ends = [p for p in self._pubs if p.get("kind") == "run:end"]
 		self.assertGreaterEqual(len(ends), 1, "finalize re-published the terminal run:end")
 		self.assertEqual(ends[0].get("run_id"), rid)
+		# CDX-12: the re-publish carries a STABLE terminal identity (run_id + epoch +
+		# terminal seq = the durable watermark) so the client one-shot fence dedupes it.
+		self.assertEqual(ends[0].get("pump_epoch"), 1)
+		self.assertEqual(ends[0].get("event_seq"), 7, "terminal seq = the durable watermark")
 		self.assertEqual(self._effects(rid)["terminal_publish"], "done")
+
+	def test_settlement_and_finalize_terminals_share_identity(self):
+		# CDX-12: settlement's authoritative terminal AND finalize's backstop re-publish
+		# carry the SAME (run_id, pump_epoch, event_seq) so the client one-shot fence
+		# recognises the backstop as a duplicate of the settled terminal (no repeated
+		# announcement / reload) — while still clearing a spinner on a genuine miss.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="hello", streaming=1)
+		rid = "pmp_term_identity"
+		E = self._acquire_fresh("hopT")
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"terminal_observed",
+			version=4,
+			pump_epoch=E,
+			last_event_seq=11,
+			assistant_message=amsg,
+			terminal_kind="relay:final",
+			terminal_payload=json.dumps({"text": "hello"}),
+		)
+		frappe.db.commit()
+		self._pubs.clear()
+		# Settlement emits the authoritative terminal.
+		settlement.invoke_settlement(
+			rid,
+			relay_target_id=self._target,
+			epoch=E,
+			version=4,
+			terminal_kind="relay:final",
+			terminal_payload={"text": "hello"},
+			assistant_message=amsg,
+			owner=TEST_USER,
+			conversation=conv,
+			deps=self._deps(),
+		)
+		settle_end = next(p for p in self._pubs if p.get("kind") == "run:end")
+		# Finalize's backstop re-publish.
+		self._pubs.clear()
+		with self._mock_enrichment():
+			finalize.run_finalize(rid, self._target)
+		fin_end = next(p for p in self._pubs if p.get("kind") == "run:end")
+		self.assertEqual(
+			(settle_end.get("run_id"), settle_end.get("pump_epoch"), settle_end.get("event_seq")),
+			(fin_end.get("run_id"), fin_end.get("pump_epoch"), fin_end.get("event_seq")),
+			"settlement + finalize terminals share a stable identity (one-shot dedup)",
+		)
+		self.assertEqual(settle_end.get("event_seq"), 11)
 
 	def test_terminal_publish_for_errored_turn_republishes_run_error(self):
 		conv = self._mk_conv()

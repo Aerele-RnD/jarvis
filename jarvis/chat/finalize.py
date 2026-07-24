@@ -281,7 +281,12 @@ def _effect_usage(ctx: _Ctx) -> None:
 		return
 	session_key = ctx.payload.get("session_key") or frappe.db.get_value(CONV, ctx.conversation, "session_key")
 	if not session_key:
-		return
+		# CDX-6: a SUCCESSFUL (non-errored) turn with no session key cannot be attributed
+		# — that is missing data, NOT legitimate zero usage. RAISE so the runner rolls the
+		# guard CAS back and RELEASES the effect to pending for the next cycle; the bounded
+		# force-done budget logs the undercount loudly rather than silently marking it
+		# recorded with nothing accrued (the original unmapped-data loss).
+		raise _UsageRetry(f"no session key for {ctx.run_id} (conversation {ctx.conversation})")
 	from jarvis.chat import openclaw_session_pool
 	from jarvis.chat import usage as _usage
 
@@ -320,6 +325,7 @@ def _effect_terminal_publish(ctx: _Ctx) -> None:
 				"terminal_kind",
 				"terminal_payload",
 				"pump_epoch",
+				"last_event_seq",
 				"cancel_requested",
 				"was_recovered",
 				"error",
@@ -349,17 +355,20 @@ def _effect_terminal_publish(ctx: _Ctx) -> None:
 			"run:end",
 			{"enrichment_pending": True, "was_recovered": bool(row.get("was_recovered"))},
 		)
-	# CDX-12: carry pump_epoch so the CLIENT fence dedupes a duplicate (it already
-	# accepted a terminal at this turn's epoch) and clears the spinner on a genuine
-	# miss — but DELIBERATELY omit relay_target_id so the server belt (a live-pump
-	# ownership check) is skipped: finalize is not the pump, the shard may have hopped
-	# to a higher epoch since settlement, and this re-publish is durable-truth of a
-	# SETTLED terminal, not a stale-writer race. The client epoch fence is the guard.
+	# CDX-12: carry pump_epoch + the SAME stable terminal seq (the durable watermark)
+	# settlement emitted, so the CLIENT one-shot fence recognises this as the identical
+	# terminal at this run's epoch and dedupes it (no repeated announcement / reload),
+	# yet still clears the spinner on a genuine settlement-publish miss. DELIBERATELY omit
+	# relay_target_id so the server belt (a live-pump ownership check) is skipped: finalize
+	# is not the pump, the shard may have hopped to a higher epoch since settlement, and
+	# this re-publish is durable-truth of a SETTLED terminal, not a stale-writer race. The
+	# client run-scoped epoch fence is the guard.
 	ts.publish_fenced(
 		ctx.owner,
 		pub_kind,
 		conversation_id=ctx.conversation,
 		run_id=ctx.run_id,
+		event_seq=int(row.get("last_event_seq") or 0),
 		message_id=am,
 		pump_epoch=row.get("pump_epoch"),
 		**extra,

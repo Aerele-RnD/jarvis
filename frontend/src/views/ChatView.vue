@@ -4022,25 +4022,38 @@ const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
-// Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3). Every pump-owned
-// realtime event carries (turn_id, pump_epoch, event_seq). We retain the GREATEST
-// accepted (epoch, seq) per message plus the epoch at which a TERMINAL was accepted,
-// and ignore any straggler from a superseded writer:
+// Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3 + CDX-12). Every
+// pump-owned realtime event carries (run_id/turn_id, pump_epoch, event_seq). The fence
+// is RUN-SCOPED — ONE entry per run_id (NOT per message_id) — and applied to EVERY event
+// type regardless of message_id: deltas, run:start/recovering/error/end, and ALL tool
+// events (built-in AND jarvis__*, which carry no message_id and previously bypassed the
+// fence entirely — the CDX-3 hole). We retain the GREATEST accepted (epoch, seq) plus the
+// epoch at which a TERMINAL was accepted, and ignore any straggler from a superseded
+// writer:
 //   * a LOWER epoch than the greatest accepted (a pump that lost the lease),
-//   * an equal-epoch lower/equal seq (a replayed/duplicate delta frame),
-//   * ANY event below the epoch of an already-accepted terminal (a stale delta /
-//     run:start that would otherwise re-open a completed reply — the bug the old
-//     terminal reset caused).
-// Legacy transport events (no pump_epoch) BYPASS the fence entirely (unchanged).
-// Keyed by message_id (stable per turn; the pump keeps the same run_id/message_id
-// across hops and only bumps pump_epoch on a takeover).
-const eventFence = ref({}); // { [message_id]: { epoch, seq, terminated } }
-function pumpFenceReject(p) {
-	if (p.pump_epoch == null || !p.message_id) return false; // legacy / non-pump -> accept
-	const f = eventFence.value[p.message_id];
+//   * an equal-epoch lower/equal seq (a replayed/duplicate frame),
+//   * ANY event below the epoch of an already-accepted terminal (a stale delta / run:start
+//     / tool event that would otherwise re-open a completed reply),
+//   * CDX-12: a REPEAT terminal at an already-terminated epoch (the finalize backstop
+//     re-publish) — one-shot per run, so no repeated announcement / reload; a strictly
+//     HIGHER-epoch terminal supersedes and is allowed through.
+// Legacy transport events (no pump_epoch) BYPASS the fence entirely (unchanged). The run
+// key is stable per turn (the pump keeps the same run_id across hops and only bumps
+// pump_epoch on a takeover); turn_id === run_id (publish_fenced sets both).
+const eventFence = ref({}); // { [run_id]: { epoch, seq, terminated } }
+function pumpFenceKey(p) {
+	return p.run_id || p.turn_id || null;
+}
+function pumpFenceReject(p, isTerminal) {
+	if (p.pump_epoch == null) return false; // legacy / non-pump -> accept
+	const k = pumpFenceKey(p);
+	if (!k) return false;
+	const f = eventFence.value[k];
 	if (!f) return false;
 	const e = p.pump_epoch;
-	if (f.terminated != null && e < f.terminated) return true; // after a higher-epoch terminal
+	if (f.terminated != null && e < f.terminated) return true; // any event below a higher-epoch terminal
+	// CDX-12: a repeat terminal at an already-terminated (same-or-lower) epoch is one-shot.
+	if (isTerminal && f.terminated != null && e <= f.terminated) return true;
 	if (f.epoch != null && e < f.epoch) return true; // superseded writer
 	if (
 		f.epoch != null &&
@@ -4052,9 +4065,11 @@ function pumpFenceReject(p) {
 		return true; // duplicate/older frame at the same epoch
 	return false;
 }
-function pumpFenceAccept(p, terminal) {
-	if (p.pump_epoch == null || !p.message_id) return;
-	const prev = eventFence.value[p.message_id] || { epoch: null, seq: null, terminated: null };
+function pumpFenceAccept(p, isTerminal) {
+	if (p.pump_epoch == null) return;
+	const k = pumpFenceKey(p);
+	if (!k) return;
+	const prev = eventFence.value[k] || { epoch: null, seq: null, terminated: null };
 	let { epoch, seq, terminated } = prev;
 	const e = p.pump_epoch;
 	if (epoch == null || e > epoch) {
@@ -4063,8 +4078,8 @@ function pumpFenceAccept(p, terminal) {
 	} else if (e === epoch && p.event_seq != null) {
 		seq = seq == null ? p.event_seq : Math.max(seq, p.event_seq);
 	}
-	if (terminal) terminated = terminated == null ? e : Math.max(terminated, e);
-	eventFence.value[p.message_id] = { epoch, seq, terminated };
+	if (isTerminal) terminated = terminated == null ? e : Math.max(terminated, e);
+	eventFence.value[k] = { epoch, seq, terminated };
 }
 // SUX-7: a settled reply whose enrichment (canvas/attachments/title) is still running.
 // run:end carries enrichment_pending; message:enriched clears it. Drives a subtle
@@ -7158,11 +7173,12 @@ function onEvent(p) {
 			break;
 		}
 		case "run:end": {
-			// CDX-3: fence a stale terminal (a superseded writer's late run:end) — it
-			// must not clear a fresher run's spinner. Accept marks this message
-			// terminated at pump_epoch E so ANY later lower-epoch straggler is blocked
-			// PERMANENTLY (the old `lastDeltaSeq = undefined` reset re-opened that window).
-			if (pumpFenceReject(p)) break;
+			// CDX-3/CDX-12: fence a stale terminal (a superseded writer's late run:end) —
+			// it must not clear a fresher run's spinner — AND dedupe a repeat equal-epoch
+			// terminal (the finalize backstop re-publish) one-shot so the announcement +
+			// reload below fire exactly once per run/epoch. Accept marks this run terminated
+			// at pump_epoch E so ANY later lower-epoch straggler is blocked PERMANENTLY.
+			if (pumpFenceReject(p, true)) break;
 			pumpFenceAccept(p, true);
 			// Defensive: if a promoted turn's run:start was missed, retire the chip.
 			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
@@ -7260,9 +7276,10 @@ function onEvent(p) {
 			break;
 		}
 		case "run:error":
-			// CDX-3: a terminal — fence a superseded writer's late error and mark this
-			// message terminated at pump_epoch E (blocks later lower-epoch stragglers).
-			if (pumpFenceReject(p)) break;
+			// CDX-3/CDX-12: a terminal — fence a superseded writer's late error, dedupe a
+			// repeat equal-epoch terminal one-shot, and mark this run terminated at
+			// pump_epoch E (blocks later lower-epoch stragglers).
+			if (pumpFenceReject(p, true)) break;
 			pumpFenceAccept(p, true);
 			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			if (p.message_id) {

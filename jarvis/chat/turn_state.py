@@ -555,6 +555,39 @@ def apply_delta(
 	return won
 
 
+def apply_tool_fenced(run_id: str, version: int, epoch: int, event_seq: int | None) -> bool:
+	"""CDX-15 — the Turn-side fence for a DURABLE tool mutation, EPOCH+version+state
+	fenced. A tool receipt insert/update is durable state, so — exactly like
+	``apply_delta`` — it must commit ONLY together with a CAS proving the turn is STILL
+	``streaming`` under epoch E (version+1, watermark advance IN THE SAME txn as the
+	caller's tool-row write). The caller (``pump._default_apply_tool``) runs this FIRST,
+	writes the tool row only on a win, and commits once; a 0-rows loss => the caller
+	applies NOTHING and publishes NOTHING and routes §10.11 (a takeover re-stamped the
+	turn to E+1 or settled it past ``streaming`` — the stale pump's write is fenced out).
+	When the tool event carries an ``event_seq`` the watermark clause
+	(``last_event_seq < seq``) also makes a re-attach/replayed frame idempotent (0 rows =
+	benign dup); a tool event with no seq fences on state/version/epoch only. No commit."""
+	if event_seq is None:
+		return (
+			_run_cas(
+				f"""UPDATE `tab{TURN}` SET version=version+1
+				WHERE name=%(r)s AND state='streaming' AND version=%(v)s AND pump_epoch=%(e)s""",
+				{"r": run_id, "v": version, "e": epoch},
+			)
+			== 1
+		)
+	return (
+		_run_cas(
+			f"""UPDATE `tab{TURN}`
+			SET last_event_seq=%(seq)s, version=version+1
+			WHERE name=%(r)s AND state='streaming' AND version=%(v)s
+			  AND pump_epoch=%(e)s AND last_event_seq < %(seq)s""",
+			{"r": run_id, "seq": event_seq, "v": version, "e": epoch},
+		)
+		== 1
+	)
+
+
 def mark_terminal_observed(
 	run_id: str,
 	version: int,
@@ -978,19 +1011,27 @@ def claim_effect(run_id: str, effect_name: str) -> tuple[str, str | None]:
 	                               failure (back to pending for the next cycle).
 	  * ``('busy', None)``       — another finalizer holds a LIVE (non-stale) claim;
 	                               skip this cycle (its owner will complete/release it).
-	  * ``('force_done', None)`` — ``attempts >= FINALIZE_MAX_ATTEMPTS``; the effect is
-	                               FORCE-DONE (status=done, logged) and skipped, so the
-	                               turn always reaches ``done`` (OAR-9).
+	                               CDX-16: returned REGARDLESS of attempt count — a live
+	                               third-attempt claim can NEVER be force-completed out
+	                               from under the finalizer executing its side effect.
+	  * ``('force_done', None)`` — ``attempts >= FINALIZE_MAX_ATTEMPTS`` on a PENDING or
+	                               stale-``running`` row; the effect is FORCE-DONE
+	                               (status=done, logged) and skipped, so the turn always
+	                               reaches ``done`` (OAR-9).
 	A ``running`` row whose ``claimed_at`` is older than ``EFFECT_CLAIM_STALE_S`` (its
-	finalizer crashed) is RECLAIMABLE by this same CAS. No commit (caller owns the txn;
-	it commits after the claim so the attempt increment survives a mid-effect crash)."""
+	finalizer crashed) is RECLAIMABLE by the claim CAS. No commit (caller owns the txn;
+	it commits after the claim so the attempt increment survives a mid-effect crash).
+
+	CDX-16 ordering: the claim CAS wins ONLY on a ``pending``/stale-``running`` row
+	UNDER budget, so a LIVE running claim affects 0 rows here. On 0 rows the disambig is
+	the ``force_done_effect`` CAS (itself guarded to pending/stale-running only): it wins
+	=> budget-exhausted force-done; it 0-rows => a live claim is running => BUSY. Both
+	the read-then-force-done TOCTOU and the attempt-vs-liveness order defect are closed
+	because liveness is proved INSIDE each mutation, never by a prior Python read."""
 	name = _effect_name(run_id, effect_name)
-	row = frappe.db.get_value(EFFECT, name, ["status", "attempts"], as_dict=True)
+	row = frappe.db.get_value(EFFECT, name, ["status"], as_dict=True)
 	if not row or row["status"] == "done":
 		return ("done", None)
-	if int(row["attempts"] or 0) >= FINALIZE_MAX_ATTEMPTS:
-		force_done_effect(run_id, effect_name)
-		return ("force_done", None)
 	token = frappe.generate_hash(length=16)
 	stale_cut = frappe.utils.add_to_date(None, seconds=-EFFECT_CLAIM_STALE_S)
 	won = (
@@ -1006,7 +1047,11 @@ def claim_effect(run_id: str, effect_name: str) -> tuple[str, str | None]:
 	)
 	if won:
 		return ("attempt", token)
-	# 0 rows: another finalizer holds a live (non-stale) running claim — skip.
+	# 0 rows. CDX-16: force-done ONLY a pending/stale-running row at/over budget; a LIVE
+	# running claim (another finalizer's, any attempt count) 0-rows the force-done CAS
+	# and is reported BUSY so its running side effect is never marked done from under it.
+	if force_done_effect(run_id, effect_name):
+		return ("force_done", None)
 	return ("busy", None)
 
 
@@ -1066,22 +1111,34 @@ def release_effect(run_id: str, effect_name: str, token: str | None = None) -> b
 def force_done_effect(run_id: str, effect_name: str) -> bool:
 	"""Effect ledger — FORCE an effect ``done`` after the attempt budget (OAR-9):
 	skipped + logged, never retried forever, so a permanently-failing enrichment
-	can never strand a settled turn. Returns won/lost. No commit."""
+	can never strand a settled turn.
+
+	CDX-16: the CAS applies ONLY to a ``pending`` or STALE-``running`` row (its
+	finalizer crashed) — a LIVE (non-stale) ``running`` claim affects 0 rows and is
+	NEVER force-completed while its finalizer may still be executing the side effect.
+	Returns won/lost (0 rows => a live claim exists, no-op). No commit. Only logs on an
+	ACTUAL force-done (a win)."""
 	name = _effect_name(run_id, effect_name)
-	try:
-		frappe.log_error(
-			title="turn_state.force_done_effect",
-			message=f"turn={run_id} effect={effect_name} force-done after {FINALIZE_MAX_ATTEMPTS} attempts",
-		)
-	except Exception:
-		pass
-	return (
+	stale_cut = frappe.utils.add_to_date(None, seconds=-EFFECT_CLAIM_STALE_S)
+	won = (
 		_run_cas(
-			f"""UPDATE `tab{EFFECT}` SET status='done', applied_at=%(now)s WHERE name=%(n)s""",
-			{"n": name, "now": _now()},
+			f"""UPDATE `tab{EFFECT}` SET status='done', applied_at=%(now)s
+			WHERE name=%(n)s AND status!='done'
+			  AND ( status='pending'
+			        OR (status='running' AND (claimed_at IS NULL OR claimed_at < %(stale)s)) )""",
+			{"n": name, "now": _now(), "stale": stale_cut},
 		)
 		== 1
 	)
+	if won:
+		try:
+			frappe.log_error(
+				title="turn_state.force_done_effect",
+				message=f"turn={run_id} effect={effect_name} force-done after {FINALIZE_MAX_ATTEMPTS} attempts",
+			)
+		except Exception:
+			pass
+	return won
 
 
 def all_required_effects_done(run_id: str) -> bool:

@@ -579,6 +579,57 @@ class TestFencingTimelines(_TurnStateTestCase):
 		self.assertTrue(ts.apply_delta("ts_d4c", 13, E + 1, 5, amsg, "fresh"))
 		frappe.db.commit()
 
+	def test_apply_tool_fenced_stale_after_takeover_affects_zero(self):
+		"""CDX-15: the tool-application fence — a stale pump's ``apply_tool_fenced`` (its
+		cached version/epoch) must affect 0 rows after a takeover re-stamped the turn, and
+		a settled turn (state past ``streaming``) must reject the tool CAS entirely, so a
+		durable tool row can never be written into an already-settled conversation."""
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		amsg = self._mk_msg(conv, 2, role="assistant", content="", streaming=1)
+		E = 4
+		self._mk_turn(
+			conv,
+			"ts_tool_fence",
+			seed,
+			"streaming",
+			version=12,
+			pump_epoch=E,
+			reserved=1,
+			assistant_message=amsg,
+		)
+		frappe.db.set_value(
+			PUMP,
+			self._target,
+			"lease_expires_at",
+			frappe.utils.add_to_date(None, seconds=-5),
+			update_modified=False,
+		)
+		frappe.db.set_value(PUMP, self._target, "pump_epoch", E, update_modified=False)
+		frappe.db.commit()
+		# Takeover: epoch -> E+1, turn re-stamped.
+		won, new_epoch = ts.lease_acquire(self._target, "hop-new")
+		self.assertTrue(won)
+		self.assertEqual(new_epoch, E + 1)
+		# The stale pump's tool CAS (cached version=12, epoch=E) affects 0 rows.
+		self.assertFalse(
+			ts.apply_tool_fenced("ts_tool_fence", 12, E, 5), "stale-epoch tool application affects 0 rows"
+		)
+		frappe.db.rollback()
+		# The fresh owner (E+1, re-stamped version 13) wins and advances the watermark.
+		self.assertTrue(ts.apply_tool_fenced("ts_tool_fence", 13, E + 1, 5))
+		frappe.db.commit()
+		self.assertEqual(int(frappe.db.get_value(TURN, "ts_tool_fence", "last_event_seq")), 5)
+		# Once the turn settles past streaming, even the current owner cannot apply a tool.
+		self.assertTrue(
+			ts.mark_terminal_observed("ts_tool_fence", 14, E + 1, "relay:final", {"text": "done"})
+		)
+		frappe.db.commit()
+		self.assertFalse(
+			ts.apply_tool_fenced("ts_tool_fence", 15, E + 1, 6), "no tool application after streaming ends"
+		)
+		frappe.db.rollback()
+
 	def test_d4d_dual_acquisition_exactly_one_wins(self):
 		"""D4 (d): two pumps race lease_acquire on the same stale lease; exactly one
 		bumps the epoch, the other re-evaluates the freshened predicate and gets 0
@@ -1008,6 +1059,41 @@ class TestEffectLedger(_TurnStateTestCase):
 		self.assertTrue(ts.finalize_done(rid, 7), "a permanently-failing effect never strands the turn")
 		frappe.db.commit()
 		self.assertEqual(self._state(rid), "done")
+
+	def test_live_third_attempt_claim_is_busy_not_force_done(self):
+		# CDX-16: A holds a LIVE (non-stale) attempt-3 running claim while executing its
+		# side effect; a second finalizer B must see BUSY and must NOT force-done it
+		# (force-done applies only to pending / stale-running rows). The attempt-vs-
+		# liveness order defect + the read-then-force-done TOCTOU are both closed.
+		rid = self._mk_finalizing(("rich_outputs",))
+		# Two failed attempts -> attempts=2, back to pending.
+		for _ in range(2):
+			o, tok = ts.claim_effect(rid, "rich_outputs")
+			self.assertEqual(o, "attempt")
+			self.assertTrue(ts.release_effect(rid, "rich_outputs", tok))
+			frappe.db.commit()
+		# A claims attempt 3 -> LIVE running, attempts=3, token A.
+		oA, tokA = ts.claim_effect(rid, "rich_outputs")
+		self.assertEqual(oA, "attempt")
+		frappe.db.commit()
+		self.assertEqual(int(frappe.db.get_value(EFFECT, f"{rid}::rich_outputs", "attempts")), 3)
+		self.assertEqual(frappe.db.get_value(EFFECT, f"{rid}::rich_outputs", "status"), "running")
+		# B (another finalizer) must NEITHER claim NOR force-done the live attempt-3 row.
+		oB, tokB = ts.claim_effect(rid, "rich_outputs")
+		self.assertEqual(oB, "busy", "a LIVE 3rd-attempt claim is BUSY, never force-done")
+		self.assertIsNone(tokB)
+		self.assertEqual(
+			frappe.db.get_value(EFFECT, f"{rid}::rich_outputs", "status"),
+			"running",
+			"still running under A — not marked done from under it",
+		)
+		# force_done_effect directly is a no-op on the live claim (affected-rows CAS).
+		self.assertFalse(ts.force_done_effect(rid, "rich_outputs"), "force-done no-ops a live claim")
+		self.assertEqual(frappe.db.get_value(EFFECT, f"{rid}::rich_outputs", "status"), "running")
+		# A completes its effect under its own token -> done (token fence intact).
+		self.assertTrue(ts.complete_effect(rid, "rich_outputs", tokA))
+		frappe.db.commit()
+		self.assertEqual(frappe.db.get_value(EFFECT, f"{rid}::rich_outputs", "status"), "done")
 
 	def test_stale_running_claim_is_reclaimable(self):
 		# CDX-4: a running effect whose claimed_at is older than the stale bound (its

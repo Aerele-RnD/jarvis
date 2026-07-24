@@ -137,10 +137,13 @@ def record_turn_usage(session_key: str, row: dict | None) -> str:
 	distinguish a real accrual from a transient no-data read instead of treating a
 	silent no-op as success:
 	  * ``USAGE_RECORDED``   — a positive delta was accrued AND committed here.
-	  * ``USAGE_VALID_ZERO`` — a legitimately-zero / unmapped read: nothing to
-	                           record and retrying will not change that (mark done).
-	  * ``USAGE_RETRY``      — stale / missing / not-fresh data: the caller must NOT
-	                           mark usage recorded; leave the effect pending to retry.
+	  * ``USAGE_VALID_ZERO`` — an ATTRIBUTED zero delta (a fresh row that legitimately
+	                           reports no usage): nothing to record and retrying will not
+	                           change that (mark done).
+	  * ``USAGE_RETRY``      — stale / missing / not-fresh data, OR a fresh POSITIVE
+	                           delta with no user mapping (unattributed real usage,
+	                           CDX-6): the caller must NOT mark usage recorded; leave the
+	                           effect pending to retry (force-done budget logs the loss).
 	Commits internally ONLY on the ``USAGE_RECORDED`` path (the standalone-caller
 	contract the usage tests rely on); the zero/retry paths do NOT commit, so a
 	finalize caller can roll back an uncommitted guard on retry. NEVER raises — a
@@ -161,7 +164,12 @@ def record_turn_usage(session_key: str, row: dict | None) -> str:
 
 		user = frappe.db.get_value(CHAT_SESSION, {"session_key": session_key}, "user")
 		if not user:
-			return USAGE_VALID_ZERO
+			# CDX-6: a FRESH POSITIVE token delta with no `Jarvis Chat Session` user
+			# mapping is unattributed real usage, NOT legitimate zero — it must NOT be
+			# permanently marked recorded. RETRY so the finalize effect leaves its guard
+			# rolled back and re-attempts (the mapping may materialize on a later cycle);
+			# the bounded force-done budget logs the undercount loudly if it never does.
+			return USAGE_RETRY
 
 		# Ensure the per-user row exists (in this same transaction) before the
 		# atomic UPDATE targets it.

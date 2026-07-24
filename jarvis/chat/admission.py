@@ -1065,14 +1065,20 @@ def active_turn_for_conversation(conversation: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def _legacy_turn_jobs() -> tuple[int, list[str]]:
+def _legacy_turn_jobs() -> tuple[int, list[str], bool]:
 	"""CDX-10: scan every RQ queue (queued + started registries) for THIS site's
 	legacy ``jarvis-turn::*`` jobs. Frappe namespaces a job id as
 	``"<site>||<job_id-with-colons-as-pipes>"`` (``create_job_id``), so a legacy
 	``jarvis-turn::<msg>::a<n>`` id becomes ``<site>||jarvis-turn|<msg>|a<n>`` — we
-	match that prefix. Best-effort; a probe failure returns what was found so far."""
+	match that prefix.
+
+	Returns ``(count, job_ids[:20], scan_ok)``. CDX-10 fail-CLOSED: ANY scan exception
+	(the outer ``get_queues`` OR any per-queue/registry probe) sets ``scan_ok=False`` so
+	the preflight cannot report ``clear=True`` on an incomplete scan (a swallowed probe
+	error must never green-light a cutover that could overlap an invisible legacy job)."""
 	prefix = f"{frappe.local.site}||jarvis-turn|"
 	found: set[str] = set()
+	scan_ok = True
 	try:
 		from frappe.utils.background_jobs import get_queues
 		from rq.registry import StartedJobRegistry
@@ -1082,20 +1088,21 @@ def _legacy_turn_jobs() -> tuple[int, list[str]]:
 			try:
 				ids += list(q.get_job_ids() or [])
 			except Exception:
-				pass
+				scan_ok = False
 			try:
 				ids += list(StartedJobRegistry(queue=q).get_job_ids() or [])
 			except Exception:
-				pass
+				scan_ok = False
 			for jid in ids:
 				if isinstance(jid, bytes):
 					jid = jid.decode()
 				if isinstance(jid, str) and jid.startswith(prefix):
 					found.add(jid)
 	except Exception:
+		scan_ok = False
 		frappe.log_error(title="admission.pump_cutover_preflight scan", message=frappe.get_traceback())
 	ordered = sorted(found)
-	return len(ordered), ordered[:20]
+	return len(ordered), ordered[:20], scan_ok
 
 
 @frappe.whitelist()
@@ -1115,26 +1122,99 @@ def pump_cutover_preflight(relay_target: str | None = None) -> dict:
 
 	Returns a verdict + counts. ``clear=True`` (verdict ``"clear"``) ⇒ no invisible
 	legacy activity — safe to unset the kill switch and enter default-ON. ``clear=
-	False`` (verdict ``"drain_first"``) ⇒ DRAIN the listed jobs / let the streams
-	finish first (PUMP-RUNBOOK §2). System-Manager gated (so ``bench execute`` as
-	Administrator works)."""
+	False`` ⇒ either ``"drain_first"`` (legacy activity present — drain the listed jobs /
+	let the streams finish, PUMP-RUNBOOK §2) or ``"scan_failed"`` (CDX-10 fail-CLOSED: a
+	queue/registry probe raised, so the scan is INCOMPLETE and cannot be trusted to say
+	clear — resolve the RQ/redis fault and re-run). System-Manager gated (so ``bench
+	execute`` as Administrator works)."""
 	if "System Manager" not in frappe.get_roles():
 		raise frappe.PermissionError("pump_cutover_preflight requires System Manager")
 	target = relay_target or DEFAULT_RELAY_TARGET
-	legacy_jobs, job_ids = _legacy_turn_jobs()
-	legacy_streaming = _legacy_streaming_count(target)
-	clear = legacy_jobs == 0 and legacy_streaming == 0
+	legacy_jobs, job_ids, scan_ok = _legacy_turn_jobs()
+	# CDX-10 fail-CLOSED: the streaming scan can also fault; treat its failure as unknown.
+	try:
+		legacy_streaming = _legacy_streaming_count(target)
+	except Exception:
+		scan_ok = False
+		legacy_streaming = -1
+		frappe.log_error(
+			title="admission.pump_cutover_preflight streaming scan", message=frappe.get_traceback()
+		)
+	clear = scan_ok and legacy_jobs == 0 and legacy_streaming == 0
+	if not scan_ok:
+		verdict = "scan_failed"
+	elif clear:
+		verdict = "clear"
+	else:
+		verdict = "drain_first"
 	result = {
 		"ok": True,
 		"clear": clear,
-		"verdict": "clear" if clear else "drain_first",
+		"verdict": verdict,
+		"scan_ok": scan_ok,
 		"legacy_jobs": legacy_jobs,
 		"legacy_streaming": legacy_streaming,
 		"job_ids": job_ids,
 		"relay_target": target,
 	}
-	_telemetry("cutover_preflight", target=target, legacy_jobs=legacy_jobs, legacy_streaming=legacy_streaming)
+	if not scan_ok:
+		result["error"] = "cutover preflight scan incomplete (RQ/redis probe failed) — failing closed"
+	_telemetry(
+		"cutover_preflight",
+		target=target,
+		legacy_jobs=legacy_jobs,
+		legacy_streaming=legacy_streaming,
+		scan_ok=int(scan_ok),
+	)
 	return result
+
+
+@frappe.whitelist()
+def pump_cutover_execute(relay_target: str | None = None) -> dict:
+	"""CDX-10 — ONE atomic cutover PASS that encodes the safe protocol (the loop is the
+	operator's; this method is one pass). It closes the TOCTOU window the read-only
+	preflight left open (a legacy job arriving AFTER ``clear=True`` and BEFORE the key is
+	removed):
+
+	  1. **Preflight.** If NOT clear (``drain_first`` / ``scan_failed``) => return
+	     ``done=False`` with the verdict; the operator drains / fixes the fault and
+	     re-runs. The kill switch is left untouched.
+	  2. **Remove the kill switch** (``jarvis_pump_enabled`` -> absent = default ON).
+	  3. **IMMEDIATE re-check.** If a legacy ``jarvis-turn::*`` job appeared in the tiny
+	     remove-vs-recheck window (or the recheck scan faulted), RE-SET the explicit ``0``
+	     (restore the kill switch) and return ``done=False, verdict="retry"`` so the
+	     operator drains the straggler and loops. Only when the re-check is STILL clear is
+	     the cutover committed (``done=True``).
+
+	Restart is not required (the flag is a cheap conf read; ``ensure_pump`` is the primary
+	start path). System-Manager gated. Run:
+	``bench --site <site> execute jarvis.chat.admission.pump_cutover_execute`` — repeat
+	until it returns ``done=True``."""
+	if "System Manager" not in frappe.get_roles():
+		raise frappe.PermissionError("pump_cutover_execute requires System Manager")
+	target = relay_target or DEFAULT_RELAY_TARGET
+	pre = pump_cutover_preflight(target)
+	if not pre["clear"]:
+		# Not safe to cut over — leave the kill switch exactly as it is.
+		return {"ok": True, "done": False, "action": "blocked", "verdict": pre["verdict"], "preflight": pre}
+
+	from frappe.installer import update_site_config
+
+	# (2) Remove the kill switch — absence is the managed default (pump ON).
+	update_site_config("jarvis_pump_enabled", "None")
+
+	# (3) IMMEDIATE re-check for a straggler that raced into the window.
+	post = pump_cutover_preflight(target)
+	if not post["clear"]:
+		# Revert: re-set the EXPLICIT kill switch so no legacy overlap can start, and tell
+		# the operator to drain + loop. (The pump never actually admitted in this window —
+		# it only became default-ON for the duration of this single pass.)
+		update_site_config("jarvis_pump_enabled", 0)
+		_telemetry("cutover_execute", target=target, done=0, verdict="retry")
+		return {"ok": True, "done": False, "action": "reverted", "verdict": "retry", "preflight": post}
+
+	_telemetry("cutover_execute", target=target, done=1, verdict="cutover")
+	return {"ok": True, "done": True, "action": "cutover", "verdict": "cutover", "preflight": post}
 
 
 def _write_cancel_marker(conversation: str, reason: str) -> None:

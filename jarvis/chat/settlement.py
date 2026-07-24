@@ -160,13 +160,17 @@ def invoke_settlement(
 
 	# S5 — authoritative fenced terminal event, ONLY after the winning commit. CDX-3:
 	# the terminal carries pump_epoch so the client permanently blocks any later
-	# lower-epoch straggler (a stale pump's late delta / run:start) for this turn.
+	# lower-epoch straggler (a stale pump's late delta / run:start) for this turn. CDX-12:
+	# it also carries a STABLE terminal identity (run_id + epoch + a terminal seq = the
+	# durable watermark at the terminal) so the client dedupes a repeat equal-epoch
+	# terminal (the finalize backstop re-publish) one-shot — no repeated announcement/reload.
 	if owner:
 		ts.publish_fenced(
 			owner,
 			pub_kind,
 			conversation_id=conversation,
 			run_id=run_id,
+			event_seq=int(row.get("last_event_seq") or 0),
 			message_id=am,
 			pump_epoch=epoch,
 			relay_target_id=relay_target_id,
