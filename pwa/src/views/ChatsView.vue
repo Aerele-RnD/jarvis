@@ -26,6 +26,8 @@ const rows = computed(() => {
 	return [...list].sort((a, b) => (b.starred || 0) - (a.starred || 0));
 });
 
+const isUnread = (c) => store.unread.has(c.name);
+
 // `last_active_at` — NOT `modified`. list_conversations doesn't return
 // `modified`, so reading it (as this screen used to) printed an empty timestamp
 // under every single chat.
@@ -98,7 +100,7 @@ onMounted(() => {
 				Ask {{ agentName }} anything
 			</div>
 			<div style="font-size: 14px; line-height: 1.5">
-				Invoices, stock, customers, reports — in plain language. Start a chat and see.
+				Invoices, stock, customers, reports, all in plain language. Start a chat and see.
 			</div>
 		</div>
 
@@ -125,6 +127,14 @@ onMounted(() => {
 						</div>
 						<div class="jv-row-time">{{ subtitle(c) }}</div>
 					</div>
+					<!-- Reserved lane, empty on read rows: the chevron must not shift
+					     column when a neighbour gains a dot. -->
+					<span
+						class="jv-row-dot"
+						:class="{ 'is-unread': isUnread(c) }"
+						:role="isUnread(c) ? 'img' : undefined"
+						:aria-label="isUnread(c) ? 'New reply' : undefined"
+					/>
 					<svg
 						class="jv-row-chev"
 						viewBox="0 0 24 24"
@@ -140,21 +150,6 @@ onMounted(() => {
 			</li>
 		</ul>
 	</div>
-
-	<button class="jv-fab jv-safe-bottom" aria-label="New chat" @click="newChat">
-		<svg
-			viewBox="0 0 24 24"
-			width="22"
-			height="22"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-		>
-			<path d="M12 5v14M5 12h14" />
-		</svg>
-	</button>
 </template>
 
 <style scoped>
@@ -230,28 +225,23 @@ onMounted(() => {
 	font-size: 12px;
 	color: var(--ink5);
 }
+/* Unread marker. The lane is always present so the chevron holds its column;
+   only the fill appears. Solid accent, no pulse: a pulse reads as "working",
+   and this reply already finished. */
+.jv-row-dot {
+	width: 8px;
+	height: 8px;
+	flex: none;
+	border-radius: 50%;
+	background: transparent;
+}
+.jv-row-dot.is-unread {
+	background: var(--accent-solid);
+}
 .jv-row-chev {
 	width: 16px;
 	height: 16px;
 	flex: none;
 	color: var(--ink3);
-}
-.jv-fab {
-	position: fixed;
-	right: 18px;
-	bottom: 18px;
-	width: 54px;
-	height: 54px;
-	display: grid;
-	place-items: center;
-	border: 0;
-	border-radius: 50%;
-	background: var(--accent-solid);
-	color: #fff;
-	box-shadow: 0 8px 24px rgba(113, 84, 245, 0.4);
-	cursor: pointer;
-}
-.jv-fab:active {
-	transform: scale(0.95);
 }
 </style>
