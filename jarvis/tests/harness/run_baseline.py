@@ -484,7 +484,9 @@ def scenario_canary_c6(h: Harness, gateway: FakeGateway):
 	rec = TraceRecorder(label="c6_load")
 	R.set_active_recorder(rec)
 	pool = R.WorkerPool(2, h.site, gateway, rec, flag_value=0).start()
-	flood = P.FloodPump(h.site, ["jarvis_chat", "long"], per_burst=(30 if h.quick else 80), interval_s=2.0).start()
+	flood = P.FloodPump(
+		h.site, ["jarvis_chat", "long"], per_burst=(30 if h.quick else 80), interval_s=2.0
+	).start()
 	convs = [h.mk_conv() for _ in range(4)]
 	for c in convs:
 		h.warm_session(c, gateway)

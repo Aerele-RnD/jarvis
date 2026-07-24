@@ -789,6 +789,7 @@ class TestEnqueueFailureCompensation(_AdmissionTestCase):
 	def test_accept_path_compensates_on_enqueue_failure(self):
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv, 1)
+
 		def boom():
 			raise RuntimeError("broker down")
 
@@ -801,9 +802,7 @@ class TestEnqueueFailureCompensation(_AdmissionTestCase):
 		)
 		self.assertFalse(out["dispatched"])
 		self.assertIsNotNone(out["queued_position"])
-		row = frappe.db.get_value(
-			"Jarvis Chat Turn", "cdx9-accept", ["state", "reserved"], as_dict=True
-		)
+		row = frappe.db.get_value("Jarvis Chat Turn", "cdx9-accept", ["state", "reserved"], as_dict=True)
 		self.assertEqual(row.state, "queued")
 		self.assertEqual(int(row.reserved), 0)
 
@@ -824,8 +823,6 @@ class TestEnqueueFailureCompensation(_AdmissionTestCase):
 			patch.object(admission, "_max_inflight", return_value=4),
 		):
 			admission.promote_next()
-		row = frappe.db.get_value(
-			"Jarvis Chat Turn", "cdx9-promote", ["state", "reserved"], as_dict=True
-		)
+		row = frappe.db.get_value("Jarvis Chat Turn", "cdx9-promote", ["state", "reserved"], as_dict=True)
 		self.assertEqual(row.state, "queued")
 		self.assertEqual(int(row.reserved), 0)
