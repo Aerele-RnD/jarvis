@@ -182,6 +182,11 @@ export const getDoctypeFields = (doctype) =>
 // --- LLM pool / models config (System-Manager only, gated server-side) ---
 export const getLlmConfig = () => call("jarvis.onboarding.get_llm_config");
 export const getPresetCatalog = () => call("jarvis.onboarding.get_preset_catalog");
+// Admin-managed model catalog slice (api_key_models, subscription_models,
+// default_models) for the pool editor + subscription card. Independent of
+// get_chat_ui_settings so it also works in the onboarding wizard, which never
+// calls that. See jarvis.chat.api.get_model_catalog_ui.
+export const getModelCatalogUi = () => call("jarvis.chat.api.get_model_catalog_ui");
 export const getLlmSyncStatus = () => call("jarvis.onboarding.get_llm_sync_status");
 export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 	call("jarvis.onboarding.save_llm_pool", {

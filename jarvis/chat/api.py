@@ -1156,6 +1156,52 @@ def _api_key_models() -> dict[str, list[dict]]:
 	return out
 
 
+def _subscription_connect_providers() -> list[dict]:
+	"""Providers offering DirectSubscriptionCard's paste-back OAuth connect flow.
+
+	Gated on a non-empty auth_profile_id (R7), NEVER on supports_subscription:
+	that flag is true for xai and moonshot too (cliproxy really does serve their
+	subscription models), but Kimi is device-code (no authorize URL to paste
+	back) and admin's push_oauth_blob rejects a direct xAI blob outright, so
+	both carry no auth_profile_id here. Filtering on supports_subscription
+	would render a connect button that can never succeed.
+	"""
+	from jarvis import admin_client
+
+	out: list[dict] = []
+	for provider in admin_client.get_model_catalog() or []:
+		if not (provider.get("auth_profile_id") or "").strip():
+			continue
+		label = provider.get("subscription_label") or provider.get("label") or ""
+		rows = [m for m in provider.get("models") or [] if m.get("tier") == "subscription"]
+		rows.sort(key=lambda m: (m.get("sort_order") or 0, m.get("model_id") or ""))
+		models = [m["model_id"] for m in rows]
+		if label and models:
+			out.append({"provider": label, "models": models})
+	return out
+
+
+@frappe.whitelist()
+def get_model_catalog_ui() -> dict:
+	"""Catalog slice the pool editor and subscription card need, independent of
+	get_chat_ui_settings so the onboarding wizard (which never calls that) works.
+
+	Deliberately NOT on the chat hot path: mount-time only.
+	"""
+	require_jarvis_access()
+
+	# dict() is MANDATORY here (R9): SUBSCRIPTION_MODELS/DEFAULT_MODEL are Mapping
+	# subclasses, and frappe's json_handler serialises a bare Mapping to its KEYS
+	# with no error. _api_key_models() and _subscription_connect_providers()
+	# already return plain dict/list structures.
+	return {
+		"api_key_models": _api_key_models(),
+		"subscription_models": dict(_SUBSCRIPTION_MODELS),
+		"default_models": dict(_DEFAULT_MODEL),
+		"subscription_connect_providers": _subscription_connect_providers(),
+	}
+
+
 @frappe.whitelist()
 def get_chat_ui_settings() -> dict:
 	"""Return the bench-side LLM settings the chat UI needs to render the
