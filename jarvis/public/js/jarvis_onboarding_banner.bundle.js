@@ -21,6 +21,12 @@
 	function shouldShow() {
 		if (!window.frappe || !frappe.boot) return false;
 		if (frappe.boot.jarvis_onboarded !== false) return false;
+		// Site setup comes first. Jarvis operates the customer's ERP, so on a
+		// site with no Company there is nothing for it to operate — nagging here
+		// lands on top of ERPNext's own setup wizard and points at a Jarvis
+		// wizard whose premise does not exist yet. Strict === false so an older
+		// boot payload without the key behaves exactly as before.
+		if (frappe.boot.jarvis_site_setup_complete === false) return false;
 		if (!frappe.user || !frappe.user.has_role || !frappe.user.has_role("System Manager"))
 			return false;
 		try {
