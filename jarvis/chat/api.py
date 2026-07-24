@@ -1201,6 +1201,75 @@ def send_message(
 	return result
 
 
+def _api_key_models() -> dict[str, list[dict]]:
+	"""Provider label -> api-key-tier model rows for the pool editor's datalist.
+
+	Replaces the frontend's hardcoded STATIC_MODEL_SUGGESTIONS. Only display
+	fields cross the wire; the catalog carries no secrets by construction.
+	"""
+	from jarvis import admin_client
+
+	out: dict[str, list[dict]] = {}
+	for provider in admin_client.get_model_catalog() or []:
+		rows = [m for m in provider.get("models") or [] if m.get("tier") == "api_key"]
+		rows.sort(key=lambda m: (m.get("sort_order") or 0, m.get("model_id") or ""))
+		out[provider.get("label") or provider.get("provider_id") or ""] = [
+			{
+				"model_id": m["model_id"],
+				"label": m.get("label") or m["model_id"],
+				"is_default": bool(m.get("is_default")),
+			}
+			for m in rows
+		]
+	return out
+
+
+def _subscription_connect_providers() -> list[dict]:
+	"""Providers offering DirectSubscriptionCard's paste-back OAuth connect flow.
+
+	Gated on a non-empty auth_profile_id (R7), NEVER on supports_subscription:
+	that flag is true for xai and moonshot too (cliproxy really does serve their
+	subscription models), but Kimi is device-code (no authorize URL to paste
+	back) and admin's push_oauth_blob rejects a direct xAI blob outright, so
+	both carry no auth_profile_id here. Filtering on supports_subscription
+	would render a connect button that can never succeed.
+	"""
+	from jarvis import admin_client
+
+	out: list[dict] = []
+	for provider in admin_client.get_model_catalog() or []:
+		if not (provider.get("auth_profile_id") or "").strip():
+			continue
+		label = provider.get("subscription_label") or provider.get("label") or ""
+		rows = [m for m in provider.get("models") or [] if m.get("tier") == "subscription"]
+		rows.sort(key=lambda m: (m.get("sort_order") or 0, m.get("model_id") or ""))
+		models = [m["model_id"] for m in rows]
+		if label and models:
+			out.append({"provider": label, "models": models})
+	return out
+
+
+@frappe.whitelist()
+def get_model_catalog_ui() -> dict:
+	"""Catalog slice the pool editor and subscription card need, independent of
+	get_chat_ui_settings so the onboarding wizard (which never calls that) works.
+
+	Deliberately NOT on the chat hot path: mount-time only.
+	"""
+	require_jarvis_access()
+
+	# dict() is MANDATORY here (R9): SUBSCRIPTION_MODELS/DEFAULT_MODEL are Mapping
+	# subclasses, and frappe's json_handler serialises a bare Mapping to its KEYS
+	# with no error. _api_key_models() and _subscription_connect_providers()
+	# already return plain dict/list structures.
+	return {
+		"api_key_models": _api_key_models(),
+		"subscription_models": dict(_SUBSCRIPTION_MODELS),
+		"default_models": dict(_DEFAULT_MODEL),
+		"subscription_connect_providers": _subscription_connect_providers(),
+	}
+
+
 @frappe.whitelist()
 def get_chat_ui_settings() -> dict:
 	"""Return the bench-side LLM settings the chat UI needs to render the
@@ -1286,8 +1355,11 @@ def get_chat_ui_settings() -> dict:
 		"llm_auth_mode": settings.llm_auth_mode or "api_key",
 		"llm_provider": settings.llm_provider or "",
 		"llm_model": settings.llm_model or "",
-		"subscription_models": _SUBSCRIPTION_MODELS,
-		"default_models": _DEFAULT_MODEL,
+		"subscription_models": dict(_SUBSCRIPTION_MODELS),
+		"default_models": dict(_DEFAULT_MODEL),
+		# api-key-tier suggestions, replacing the frontend's hardcoded
+		# STATIC_MODEL_SUGGESTIONS. Provider label -> [{model_id, label, is_default}].
+		"api_key_models": _api_key_models(),
 		# Model/provider/effort picker (see ChatView.vue). ``pool`` is the
 		# configured multi-provider catalogue; ``providers`` is empty for a
 		# single-provider customer and the UI hides the provider group then.

@@ -15,7 +15,7 @@
 				</div>
 
 				<p class="text-ink-gray-7">
-					Jarvis will analyze
+					{{ agentName }} will analyze
 					<span class="font-medium text-ink-gray-8">{{ appLine }}</span
 					><template v-if="when"
 						>, scheduled for
@@ -74,6 +74,7 @@
 import { computed } from "vue";
 import { Button, Dialog, FeatherIcon } from "frappe-ui";
 import { exactDate } from "@/utils/datetime";
+import { agentName } from "@/branding";
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },

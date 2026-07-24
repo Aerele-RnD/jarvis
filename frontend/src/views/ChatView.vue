@@ -575,8 +575,9 @@
 							line-height: 1.5;
 						"
 					>
-						Ask about your ERP data, run a workflow, or draft something. Jarvis is
-						connected to your
+						Ask about your ERP data, run a workflow, or draft something.
+						{{ agentName }}
+						is connected to your
 						<strong style="color: var(--text); font-weight: 600">ERPNext</strong>
 						instance.
 					</p>
@@ -651,7 +652,7 @@
 				ref="threadEl"
 				@scroll.passive="onThreadScroll"
 				role="log"
-				aria-label="Conversation with Jarvis"
+				:aria-label="`Conversation with ${agentName}`"
 				style="flex: 1; overflow-y: auto"
 			>
 				<div
@@ -2201,9 +2202,37 @@
 					background: var(--surface);
 				"
 			>
+				<!-- Billing lifecycle: before expiry, during grace, and after.
+					 Replaces (not stacks with) the suspended banner - its copy is
+					 the admin wording, which is wrong for a member who cannot
+					 renew. -->
+				<Banner
+					v-if="billingAlert"
+					:type="billingAlert.type"
+					:title="billingAlert.title"
+					:message="billingAlert.message"
+					style="margin-bottom: 10px"
+				>
+					<template #action>
+						<button
+							v-if="billingAlert.showRenew"
+							class="jv-btn jv-btn--sm"
+							@click="goRenew"
+						>
+							Renew
+						</button>
+						<button
+							v-if="billingAlert.dismissible"
+							class="jv-btn jv-btn--sm jv-btn--ghost"
+							@click="dismissBillingAlert"
+						>
+							Dismiss
+						</button>
+					</template>
+				</Banner>
 				<!-- Lapsed sub: container stopped, so every send would fail. -->
 				<Banner
-					v-if="suspendedNotice"
+					v-else-if="suspendedNotice"
 					type="warning"
 					title="Chat is paused"
 					:message="suspendedNotice"
@@ -2213,6 +2242,18 @@
 						<button class="jv-btn jv-btn--sm" @click="goRenew">Renew</button>
 					</template>
 				</Banner>
+				<!-- Not chat-ready for a NON-billing reason (e.g. the connected LLM account
+					 itself is out of quota, or a container is still coming up). No CTA: unlike
+					 a lapsed subscription there's nothing to renew via us here - the detail
+					 IS the admin's own diagnosis (jarvis.account.is_ready_for_chat), not a
+					 guess this UI is making up. -->
+				<Banner
+					v-else-if="notReadyNotice"
+					type="warning"
+					title="Chat may not work yet"
+					:message="notReadyNotice"
+					style="margin-bottom: 10px"
+				/>
 
 				<!-- floats just above the composer; jumps the thread to the newest message -->
 				<transition name="jv-sd">
@@ -2309,7 +2350,7 @@
 									:title="
 										nudge.mode === 'recording'
 											? 'Stop and transcribe'
-											: 'Record a voice note (saved for Jarvis to learn from)'
+											: `Record a voice note (saved for ${agentName} to learn from)`
 									"
 									@click="
 										nudge.mode === 'recording'
@@ -2389,7 +2430,7 @@
 								v-model="nudge.text"
 								rows="3"
 								class="jv-nudge-ta"
-								placeholder="What should Jarvis remember?"
+								:placeholder="`What should ${agentName} remember?`"
 							></textarea>
 							<div class="jv-nudge-foot">
 								<button
@@ -2598,7 +2639,7 @@
 							@keydown="onKey"
 							@paste="onPaste"
 							rows="1"
-							placeholder="Ask Jarvis…   @ to mention a user, / for a doctype or tool"
+							:placeholder="`Ask ${agentName}…   @ to mention a user, / for a doctype or tool`"
 							style="
 								width: 100%;
 								border: none;
@@ -2871,8 +2912,8 @@
 							margin-top: 8px;
 						"
 					>
-						Jarvis can make mistakes. Verify important actions before submitting to
-						ERPNext.
+						{{ agentName }} can make mistakes. Verify important actions before
+						submitting to ERPNext.
 					</div>
 				</div>
 			</div>
@@ -3579,6 +3620,7 @@ import {
 import { useRoute, useRouter } from "vue-router";
 import * as api from "@/api";
 import * as voice from "@/api/voice";
+import { agentName } from "@/branding";
 import { useAudioRecorder } from "@/composables/useAudioRecorder";
 import { setMacroPrefill } from "@/composables/macroPrefill";
 import { takeChatPrefill } from "@/composables/chatPrefill";
@@ -3595,8 +3637,10 @@ import ActionError from "@/components/ActionError.vue";
 import Banner from "@/components/Banner.vue";
 import PendingCard from "@/components/PendingCard.vue";
 import ReceiptChip from "@/components/ReceiptChip.vue";
-import { checkReady } from "@/onboarding/readiness.js";
+import { checkReady, readinessDetailOf } from "@/onboarding/readiness.js";
 import { suspensionNotice, SUSPENDED_FALLBACK } from "@/onboarding/steps.js";
+import { billingBanner } from "@/account/format.js";
+import { billingNoticeOf } from "@/onboarding/readiness.js";
 import { useShellStore } from "@/stores/shell";
 import { useJarvisTheme } from "@/theme";
 import { displayName } from "@/lib/user";
@@ -3666,6 +3710,29 @@ const ui = ref({});
 // Renew-banner copy when the subscription has lapsed; null while entitled.
 // The composer is disabled alongside it (no send can succeed while stopped).
 const suspendedNotice = ref(null);
+// A DIFFERENT not-ready reason (container_provisioning - e.g. the connected LLM
+// account itself ran out of quota, or a container is still coming up) - never a
+// billing lapse, so it gets its own quiet copy instead of suspendedNotice's "Chat is
+// paused" / Renew framing (2026-07-23 trace: a customer who forced their way past
+// onboarding's "Continue to Jarvis" while genuinely not ready used to land here to
+// dead silence - the real reason existed the whole time, nobody rendered it).
+const notReadyNotice = ref("");
+// Billing lifecycle banner. Dismissal is session-only (a ref, not storage): the
+// pre-expiry nudge should return on the next visit, since the deadline has not.
+const billingNotice = ref({});
+const billingDismissedPhase = ref("");
+// Renewing is gated on require_jarvis_admin(), which accepts Jarvis Admin OR
+// System Manager - match it, or a System Manager who CAN renew is told to ask
+// their admin.
+const canRenewPlan = !!(window.is_jarvis_admin || window.is_system_manager);
+const billingAlert = computed(() => {
+	const b = billingBanner(billingNotice.value, canRenewPlan);
+	if (!b || billingDismissedPhase.value === b.phase) return null;
+	return b;
+});
+function dismissBillingAlert() {
+	billingDismissedPhase.value = (billingAlert.value && billingAlert.value.phase) || "";
+}
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
 // THIS chat. autoApplyNote surfaces the admin-only-enable message.
@@ -4162,7 +4229,10 @@ const liveStatus = computed(() => {
 // hiccup. Both mean "still working, in the background" — not an error.
 // Renew CTA → Settings ▸ Plan & billing, the only surface that takes payment.
 function goRenew() {
-	store.openSettings("plan");
+	// Straight to our renewal flow (the Desk billing page's Razorpay checkout),
+	// not the settings pane the customer would then have to click through. The
+	// Renew button only shows for someone who can actually renew.
+	window.location.assign("/app/jarvis-account?billing=1");
 }
 const recoveringLabel = computed(() =>
 	recovering.value && recovering.value.reason === "compacting"
@@ -6901,7 +6971,7 @@ async function send(textArg) {
 			}
 			notify(
 				r.reason === "usage_limit"
-					? "Monthly usage limit reached. Ask your Jarvis admin to raise your limit."
+					? `Monthly usage limit reached. Ask your ${agentName} admin to raise your limit.`
 					: r.reason || "Couldn't send your message.",
 				{ type: "error" }
 			);
@@ -6978,7 +7048,7 @@ function onEvent(p) {
 		store.applyRemoteNew();
 		proactiveToast.value = {
 			id: p.conversation_id,
-			title: p.title || "Message from Jarvis",
+			title: p.title || `Message from ${agentName}`,
 			preview: p.preview || "",
 		};
 		return;
@@ -7219,7 +7289,7 @@ function onEvent(p) {
 			// (browser notification moved to the app-scoped global notifier —
 			// AppShell attaches it, so it fires on every route, not just here)
 			recovering.value = null;
-			announceSR("Jarvis replied.");
+			announceSR(`${agentName} replied.`);
 			store.loadConversations();
 			// SUX-6 identical-skip (OARF-7): the streamed deltas already painted the
 			// final cumulative text, so on the normal path a full reload would just
@@ -7542,7 +7612,7 @@ async function saveNudgeNote() {
 			entities: JSON.stringify(n.entities || []),
 			source: "Chat Nudge",
 		});
-		notify("Noted — Jarvis will remember this", { type: "success" });
+		notify(`Noted — ${agentName} will remember this`, { type: "success" });
 		nudge.value = null;
 	} catch (e) {
 		n.saving = false;
@@ -7815,6 +7885,13 @@ onMounted(async () => {
 	// legacy #hash deep-links moved to the router, §9.)
 	const uiP = api.getChatUiSettings().catch(() => null);
 	const convsP = store.loadConversations().catch(() => {});
+	// Billing banner rides the memoized readiness verdict already fetched for
+	// this page load - no extra round-trip. Never blocks the mount.
+	billingNoticeOf()
+		.then((n) => {
+			billingNotice.value = n || {};
+		})
+		.catch(() => {});
 	socket?.on("jarvis:event", onEvent);
 	socket?.on("connect", onResync);
 	document.addEventListener("visibilitychange", onVisibility);
@@ -7829,7 +7906,23 @@ onMounted(async () => {
 	// AppShell). Not awaited here: it must never delay painting the chat.
 	checkReady()
 		.then((r) => {
-			suspendedNotice.value = suspensionNotice(r);
+			// suspensionNotice (steps.js) now ALSO surfaces container_provisioning's
+			// detail (the same drop-the-real-reason bug applied there), but this
+			// banner's "Chat is paused" title + Renew CTA is billing-specific - a
+			// provisioning stall or an out-of-quota LLM account has nothing to renew
+			// via US. Keep it scoped to an actual lapsed subscription; the other
+			// reason gets its own honest, CTA-less banner below.
+			suspendedNotice.value =
+				r && r.reason === "subscription_suspended" ? suspensionNotice(r) : null;
+		})
+		.catch(() => {});
+	// Same boot promise, the container_provisioning half: readinessDetailOf reads the
+	// admin's own explanation straight off account.py's is_ready_for_chat. Never
+	// awaited, never blocks the mount - a slow or unreachable admin just leaves this
+	// blank, same fail-open posture as the rest of readiness.js.
+	readinessDetailOf()
+		.then((detail) => {
+			notReadyNotice.value = detail;
 		})
 		.catch(() => {});
 	document.addEventListener("pointerdown", onDocClick);

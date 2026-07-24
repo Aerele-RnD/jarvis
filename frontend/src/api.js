@@ -61,6 +61,11 @@ export const adminSetUserModelLimit = (user, model, monthlyTokenLimit) =>
 	});
 export const adminSyncUsage = () => call(US + "admin_sync_usage");
 
+// --- Whitelabel branding (tenant-admin only; server re-checks) ---
+const BR = "jarvis.branding.";
+export const getBranding = () => call(BR + "get_branding");
+export const updateBranding = (p) => call(BR + "update_branding", p || {});
+
 // --- Mobile app onboarding: QR the phone scans to learn the site connection
 // details (no secret — just where to reach this site). ---
 export const getPairingQr = () => call("jarvis.mobile.auth.get_pairing_qr");
@@ -192,6 +197,11 @@ export const getDoctypeFields = (doctype) =>
 // --- LLM pool / models config (System-Manager only, gated server-side) ---
 export const getLlmConfig = () => call("jarvis.onboarding.get_llm_config");
 export const getPresetCatalog = () => call("jarvis.onboarding.get_preset_catalog");
+// Admin-managed model catalog slice (api_key_models, subscription_models,
+// default_models) for the pool editor + subscription card. Independent of
+// get_chat_ui_settings so it also works in the onboarding wizard, which never
+// calls that. See jarvis.chat.api.get_model_catalog_ui.
+export const getModelCatalogUi = () => call("jarvis.chat.api.get_model_catalog_ui");
 export const getLlmSyncStatus = () => call("jarvis.onboarding.get_llm_sync_status");
 export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 	call("jarvis.onboarding.save_llm_pool", {
@@ -272,12 +282,35 @@ export const getAccount = () => call("jarvis.account.get_account");
 export const cancelPlanAtPeriodEnd = () => call("jarvis.account.cancel_plan_at_period_end");
 export const resumePlan = () => call("jarvis.account.resume_plan");
 export const reauthorizeAutopay = () => call("jarvis.account.reauthorize_autopay");
+export const previewDowngrade = (targetPlan) =>
+	call("jarvis.account.preview_downgrade", { target_plan: targetPlan });
+export const startDowngrade = (targetPlan) =>
+	call("jarvis.account.start_downgrade", { target_plan: targetPlan });
+export const cancelScheduledDowngrade = () => call("jarvis.account.cancel_scheduled_downgrade");
 
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {
 	const fd = new FormData();
 	fd.append("file", file, file.name);
 	fd.append("is_private", "1");
+	const r = await fetch("/api/method/upload_file", {
+		method: "POST",
+		headers: { "X-Frappe-CSRF-Token": window.csrf_token || "" },
+		body: fd,
+		credentials: "include",
+	});
+	if (!r.ok) throw new Error(`upload failed (${r.status})`);
+	const data = await r.json();
+	const f = data.message || data;
+	return { file_url: f.file_url, file_name: f.file_name || file.name };
+}
+
+// Branding logo/favicon: PUBLIC file (the favicon <link> and the PWA manifest
+// must fetch it without a session cookie), unlike the private uploadFile above.
+export async function uploadBrandAsset(file) {
+	const fd = new FormData();
+	fd.append("file", file, file.name);
+	fd.append("is_private", "0");
 	const r = await fetch("/api/method/upload_file", {
 		method: "POST",
 		headers: { "X-Frappe-CSRF-Token": window.csrf_token || "" },
