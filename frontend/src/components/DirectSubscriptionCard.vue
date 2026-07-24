@@ -234,7 +234,12 @@ const pickProvider = ref(_defaultProvider());
 // (which only gates NEW connections), so a tenant already stored as "xAI Grok"
 // can reach this flow. xAI shows a bare code, not a callback URL, so the step-2
 // copy has to follow. Shared with LlmPoolEditor via @/llm/pool.
-const codeOnly = computed(() => isCodeOnlyPaste(status.value.provider || pickProvider.value));
+// props.status, NOT status.value: there is no local `status` ref in this file, so the
+// bare name resolved to the browser global `window.status` (a string). `.value` on it
+// is undefined, so this computed threw every time it evaluated - i.e. whenever the
+// paste-back screen rendered, which is the entire xAI bare-code flow. Every other
+// reference here already uses props.status.
+const codeOnly = computed(() => isCodeOnlyPaste(props.status.provider || pickProvider.value));
 const pickModels = computed(
 	() =>
 		(
