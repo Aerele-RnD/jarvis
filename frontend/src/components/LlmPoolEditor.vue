@@ -1610,6 +1610,16 @@ const emit = defineEmits(["saved", "ready", "direct-changed"]);
 // ---- state ---------------------------------------------------------------
 const cfg = ref({ models: [], preset: "", routing_mode: "failover", proxy_active: false });
 const catalog = ref([]);
+// Admin-managed model catalog (jarvis.chat.api.get_model_catalog_ui): api-key
+// suggestions, subscription suggestions, and per-provider defaults. Fetched on
+// mount (see load()) independent of get_chat_ui_settings so this also works in
+// the onboarding wizard, which never calls that. Falls back to the built-in
+// literals below when the fetch fails or hasn't landed yet - never blank.
+const modelCatalog = ref({
+	api_key_models: {},
+	subscription_models: {},
+	default_models: {},
+});
 const rows = ref([]); // canonical camelCase rows (single source of truth)
 const llmMode = ref("quick"); // "quick" | "preset" | "custom"
 const selectedPreset = ref("");
@@ -2857,6 +2867,11 @@ async function load() {
 		catalog.value = (await api.getPresetCatalog()) || [];
 	} catch (e) {
 		/* backend bundled fallback */
+	}
+	try {
+		modelCatalog.value = (await api.getModelCatalogUi()) || modelCatalog.value;
+	} catch (e) {
+		/* built-in literal fallbacks below cover this */
 	}
 }
 

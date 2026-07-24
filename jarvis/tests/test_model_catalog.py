@@ -368,3 +368,95 @@ class TestChatUiSettingsServesApiKeyModels(FrappeTestCase):
 			out = get_chat_ui_settings()
 		# _PAYLOAD's only model is subscription-tier, so OpenAI has no api-key rows.
 		self.assertEqual(out["api_key_models"].get("OpenAI", []), [])
+
+
+class TestModelCatalogUiEndpoint(FrappeTestCase):
+	def setUp(self):
+		_clear_model_catalog_cache()
+		_clear_sub_model_cache()
+		self.addCleanup(_clear_model_catalog_cache)
+		self.addCleanup(_clear_sub_model_cache)
+
+	def test_returns_the_three_catalog_slices_as_json_objects(self):
+		import orjson
+		from frappe.utils.response import json_handler
+
+		from jarvis.chat.api import get_model_catalog_ui
+
+		with patch.object(admin_client, "get_model_catalog", return_value=_PAYLOAD):
+			out = get_model_catalog_ui()
+		for key in ("api_key_models", "subscription_models", "default_models"):
+			self.assertIn(key, out)
+			# R9: a bare Mapping would serialise to its KEYS with no error.
+			self.assertIsInstance(out[key], dict)
+			self.assertIsInstance(orjson.loads(orjson.dumps(out[key], default=json_handler)), dict)
+
+	def test_kimi_is_keyed_by_its_subscription_label(self):
+		from jarvis.chat.api import get_model_catalog_ui
+
+		payload = [
+			{
+				"provider_id": "moonshot",
+				"label": "Moonshot (Kimi)",
+				"subscription_label": "Kimi (Moonshot)",
+				"supports_subscription": True,
+				"models": [
+					{
+						"model_id": "kimi-k2.7-code",
+						"label": "kimi-k2.7-code",
+						"tier": "subscription",
+						"is_default": True,
+						"sort_order": 0,
+					}
+				],
+			}
+		]
+		with patch.object(admin_client, "get_model_catalog", return_value=payload):
+			out = get_model_catalog_ui()
+		self.assertIn("Kimi (Moonshot)", out["subscription_models"])
+		self.assertNotIn("Moonshot (Kimi)", out["subscription_models"])
+
+	def test_connect_providers_gate_on_auth_profile_id_not_supports_subscription(self):
+		# R7: supports_subscription is true for xai and moonshot too (cliproxy
+		# really does serve their models), but only openai/google support the
+		# paste-back connect card. Gating on supports_subscription would render
+		# a connect button that can never succeed.
+		from jarvis.chat.api import get_model_catalog_ui
+
+		payload = [
+			{
+				"provider_id": "openai",
+				"label": "OpenAI",
+				"auth_profile_id": "openai",
+				"supports_subscription": True,
+				"models": [
+					{
+						"model_id": "gpt-5.5",
+						"label": "gpt-5.5",
+						"tier": "subscription",
+						"is_default": True,
+						"sort_order": 0,
+					}
+				],
+			},
+			{
+				"provider_id": "xai",
+				"label": "xAI Grok",
+				"auth_profile_id": "",
+				"supports_subscription": True,
+				"models": [
+					{
+						"model_id": "grok-4.3",
+						"label": "grok-4.3",
+						"tier": "subscription",
+						"is_default": True,
+						"sort_order": 0,
+					}
+				],
+			},
+		]
+		with patch.object(admin_client, "get_model_catalog", return_value=payload):
+			out = get_model_catalog_ui()
+		providers = {p["provider"] for p in out["subscription_connect_providers"]}
+		self.assertIn("OpenAI", providers)
+		self.assertNotIn("xAI Grok", providers)

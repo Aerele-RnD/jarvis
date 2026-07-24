@@ -170,7 +170,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import * as api from "@/api";
 import { errMessage as _err } from "@/lib/errors";
 import { isCodeOnlyPaste } from "@/llm/pool";
@@ -190,7 +190,23 @@ const props = defineProps({
 // sync). disconnected: the subscription was torn down.
 const emit = defineEmits(["reauthorized", "disconnected"]);
 
-// Subscription providers offered for a fresh DIRECT connect. Model lists mirror
+// Admin-managed model catalog (jarvis.chat.api.get_model_catalog_ui), fetched
+// on mount. subscription_connect_providers is gated on a non-empty
+// auth_profile_id (R7 - openai + google-gemini-cli today), never on
+// supports_subscription, so it never offers a provider whose OAuth blob admin
+// would reject. Falls back to the built-in SUB_PROVIDERS literal below when
+// the fetch fails or hasn't landed yet - never blank.
+const modelCatalog = ref({ subscription_connect_providers: [] });
+onMounted(async () => {
+	try {
+		modelCatalog.value = (await api.getModelCatalogUi()) || modelCatalog.value;
+	} catch (e) {
+		/* built-in SUB_PROVIDERS fallback below covers this */
+	}
+});
+
+// Built-in fallback: subscription providers offered for a fresh DIRECT connect
+// before the catalog fetch lands or if it fails. Model lists mirror
 // jarvis/_subscription_models.py (codex/gemini-cli catalog).
 const SUB_PROVIDERS = [
 	{ provider: "OpenAI", models: ["gpt-5.5", "gpt-5.4"] },
