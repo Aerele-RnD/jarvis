@@ -954,13 +954,21 @@ const isTrialPlan = computed(() => trialDays.value > 0);
 // decide something already decided, and the "Secured by X" line below already
 // names it. Free/trial plans collect no payment at all.
 const providerChoices = computed(() => state.availableProviders || []);
-const showProviderChooser = computed(
-	() =>
-		!isFreePlan.value &&
-		!isTrialPlan.value &&
-		!state.devActive &&
-		providerChoices.value.length > 1,
-);
+// Two terms the old template carried are gone, both leftovers of features that
+// were removed (the free plan; dev-signup/sandbox mode) whose identifiers no
+// longer exist anywhere:
+//
+//   isFreePlan       never defined. Harmless in a template - Vue resolves an
+//                    unknown identifier to undefined and only warns, so
+//                    `!isFreePlan` was permanently true - but a hard
+//                    ReferenceError once moved into a computed, which is how
+//                    the dead condition finally surfaced.
+//   state.devActive  never assigned. Reads as undefined rather than throwing,
+//                    so it silently never fired.
+//
+// Dropped rather than carried forward: a condition that cannot fire reads as a
+// rule someone still has to reason about.
+const showProviderChooser = computed(() => !isTrialPlan.value && providerChoices.value.length > 1);
 const providerAvailable = (p) => providerChoices.value.includes(p);
 
 // Ask the control plane which gateways are live and preselect its default.
