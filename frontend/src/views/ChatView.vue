@@ -2116,6 +2116,18 @@
 						<button class="jv-btn jv-btn--sm" @click="goRenew">Renew</button>
 					</template>
 				</Banner>
+				<!-- Not chat-ready for a NON-billing reason (e.g. the connected LLM account
+					 itself is out of quota, or a container is still coming up). No CTA: unlike
+					 a lapsed subscription there's nothing to renew via us here - the detail
+					 IS the admin's own diagnosis (jarvis.account.is_ready_for_chat), not a
+					 guess this UI is making up. -->
+				<Banner
+					v-else-if="notReadyNotice"
+					type="warning"
+					title="Chat may not work yet"
+					:message="notReadyNotice"
+					style="margin-bottom: 10px"
+				/>
 
 				<!-- floats just above the composer; jumps the thread to the newest message -->
 				<transition name="jv-sd">
@@ -3498,7 +3510,7 @@ import ActionError from "@/components/ActionError.vue";
 import Banner from "@/components/Banner.vue";
 import PendingCard from "@/components/PendingCard.vue";
 import ReceiptChip from "@/components/ReceiptChip.vue";
-import { checkReady } from "@/onboarding/readiness.js";
+import { checkReady, readinessDetailOf } from "@/onboarding/readiness.js";
 import { suspensionNotice, SUSPENDED_FALLBACK } from "@/onboarding/steps.js";
 import { billingBanner } from "@/account/format.js";
 import { billingNoticeOf } from "@/onboarding/readiness.js";
@@ -3556,6 +3568,13 @@ const ui = ref({});
 // Renew-banner copy when the subscription has lapsed; null while entitled.
 // The composer is disabled alongside it (no send can succeed while stopped).
 const suspendedNotice = ref(null);
+// A DIFFERENT not-ready reason (container_provisioning - e.g. the connected LLM
+// account itself ran out of quota, or a container is still coming up) - never a
+// billing lapse, so it gets its own quiet copy instead of suspendedNotice's "Chat is
+// paused" / Renew framing (2026-07-23 trace: a customer who forced their way past
+// onboarding's "Continue to Jarvis" while genuinely not ready used to land here to
+// dead silence - the real reason existed the whole time, nobody rendered it).
+const notReadyNotice = ref("");
 // Billing lifecycle banner. Dismissal is session-only (a ref, not storage): the
 // pre-expiry nudge should return on the next visit, since the deadline has not.
 const billingNotice = ref({});
@@ -7406,7 +7425,23 @@ onMounted(async () => {
 	// AppShell). Not awaited here: it must never delay painting the chat.
 	checkReady()
 		.then((r) => {
-			suspendedNotice.value = suspensionNotice(r);
+			// suspensionNotice (steps.js) now ALSO surfaces container_provisioning's
+			// detail (the same drop-the-real-reason bug applied there), but this
+			// banner's "Chat is paused" title + Renew CTA is billing-specific - a
+			// provisioning stall or an out-of-quota LLM account has nothing to renew
+			// via US. Keep it scoped to an actual lapsed subscription; the other
+			// reason gets its own honest, CTA-less banner below.
+			suspendedNotice.value =
+				r && r.reason === "subscription_suspended" ? suspensionNotice(r) : null;
+		})
+		.catch(() => {});
+	// Same boot promise, the container_provisioning half: readinessDetailOf reads the
+	// admin's own explanation straight off account.py's is_ready_for_chat. Never
+	// awaited, never blocks the mount - a slow or unreachable admin just leaves this
+	// blank, same fail-open posture as the rest of readiness.js.
+	readinessDetailOf()
+		.then((detail) => {
+			notReadyNotice.value = detail;
 		})
 		.catch(() => {});
 	document.addEventListener("pointerdown", onDocClick);

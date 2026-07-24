@@ -1,3 +1,5 @@
+import re
+
 import frappe
 from frappe.model.document import Document
 
@@ -1093,6 +1095,44 @@ def _cleared_subscription_status_fields() -> dict:
 	}
 
 
+# admin_client wraps EVERY non-2xx/4xx admin response in the SAME
+# AdminUnreachableError class - a genuine network timeout, an admin-side 500
+# traceback, AND a DEFINITIVE, already-decided rejection (e.g. fleet's hard
+# gate on a subscription-only pool's first activation, which rolls back and
+# NEVER records applied - see jarvis_admin_v2's ProvisionError raise) all
+# surface identically here. The first two are exactly what the F2 "converge,
+# don't fail" handling below exists for; the third is not "maybe still
+# landing" at all - there is nothing to converge to until the customer's own
+# account changes (e.g. its usage limit resets), so treating it as pending
+# would strand the customer in a spinner despite admin already knowing the
+# real, customer-facing reason (the 2026-07-23 out-of-quota trace).
+#
+# There is no extra structured field on this wire to key off (the customer
+# bench only ever sees the flattened string admin_client assembles), so this
+# recognises admin's OWN sentence convention instead: jarvis_admin_v2.fleet.
+# pool._pool_route_reason / _quota_exhausted_sentence are the only places
+# admin deliberately writes second-person customer prose, and both always
+# read "Your <something> ..." - every other message this exception class
+# carries (a network error, a raw diagnostic, an internal 500) reads as
+# technical text and never takes this shape.
+_ADMIN_WRAPPED_ERROR_RE = re.compile(r"^admin returned an? \d+ error: (.*)$", re.S)
+
+
+def _admin_customer_facing_reason(message: str) -> str:
+	"""Extract admin's own customer-facing sentence out of an
+	AdminUnreachableError's message, or "" when the message does not look
+	like one (a network failure, a generic diagnostic, ...). See the module
+	note above _ADMIN_WRAPPED_ERROR_RE for why this text-shape check is the
+	only signal available."""
+	text = (message or "").strip()
+	wrapped = _ADMIN_WRAPPED_ERROR_RE.match(text)
+	if wrapped:
+		text = wrapped.group(1).strip()
+	if text.startswith("Your ") and text.endswith("."):
+		return text
+	return ""
+
+
 def _post_pool_with_retry(spec, api_keys, oauth_blobs):
 	"""post_update_llm_pool, retrying only the transient AdminUnreachableError.
 	Re-raises the last unreachable error after exhausting retries; other Admin*
@@ -1335,6 +1375,34 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
 				message=_frappe.get_traceback(),
 			)
 		except admin_client.AdminUnreachableError as e:
+			# This fix (2026-07-23 out-of-quota trace): admin's fleet layer can
+			# raise a DEFINITIVE, already-decided rejection - e.g. a
+			# subscription-only pool's first activation whose probe came back
+			# exhausted (fleet's hard gate rolls back and NEVER records
+			# applied) - wrapped in this SAME AdminUnreachableError class as a
+			# genuine transient timeout/connection failure. There is nothing
+			# to converge to for that case (the account's own quota has to
+			# reset; no reconcile poll will ever see chat_readiness go
+			# "Ready" until it does), so the F2 handling below would strand
+			# the customer in "pending:" despite admin already knowing the
+			# real, customer-facing reason. Recognise it first and write it
+			# TERMINAL, exactly like the neighbouring auth/rate-limit/
+			# validation branches, before falling through to F2's converge.
+			reason = _admin_customer_facing_reason(str(e))
+			if reason:
+				settings.db_set(
+					{
+						"last_sync_at": _frappe.utils.now(),
+						"last_sync_status": f"failed: {reason}",
+						**_cleared_subscription_status_fields(),
+					}
+				)
+				_commit_terminal_sync_status()
+				terminal_written = True
+				_frappe.logger().info(
+					"jarvis_settings: pool sync rejected with a customer-facing reason: %s", reason
+				)
+				return
 			# F2: an unreachable/timeout is NOT a lost apply. The admin persists
 			# desired-first (committed) and reconciles a late-landing apply, so
 			# writing a terminal "failed:" here is exactly the livelock that
