@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyReadiness, degradedMessage } from "./panel_readiness.mjs";
+import {
+  classifyReadiness,
+  degradedMessage,
+  SUSPENDED_FALLBACK,
+} from "./panel_readiness.mjs";
 
 test("classifyReadiness: ready is ready regardless of a leftover reason", () => {
   assert.equal(classifyReadiness({ ready: true, reason: null }), "ready");
@@ -67,5 +71,40 @@ test("degradedMessage: falls back to generic copy when there is no detail", () =
   assert.equal(
     degradedMessage({ ready: false, reason: "llm_credentials", detail: "" }),
     msg
+  );
+});
+
+// A lapsed subscription must not fall through to the generic "ask your
+// administrator" line: no administrator can reconnect their way out of a
+// billing problem. Mirrors steps.js's suspensionNotice.
+test("degradedMessage: a suspended subscription gets the renewal line, not the generic one", () => {
+  assert.equal(
+    degradedMessage({ ready: false, reason: "subscription_suspended" }),
+    SUSPENDED_FALLBACK
+  );
+  assert.match(SUSPENDED_FALLBACK, /Renew/);
+  // admin's own sentence still wins when it has one
+  assert.equal(
+    degradedMessage({
+      ready: false,
+      reason: "subscription_suspended",
+      detail: "Your plan ended on 1 August.",
+    }),
+    "Your plan ended on 1 August."
+  );
+});
+
+// The reason set belongs to account.py. Printing a raw detail for a reason this
+// module does not recognise would leak whatever wording a future backend change
+// happens to attach, into a banner written for a different situation.
+test("degradedMessage: never prints a raw detail for an unrecognised reason", () => {
+  const generic = degradedMessage({ ready: false, reason: "llm_credentials" });
+  assert.equal(
+    degradedMessage({
+      ready: false,
+      reason: "something_new",
+      detail: "internal: shard 4 unreachable",
+    }),
+    generic
   );
 });

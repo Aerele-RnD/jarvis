@@ -320,8 +320,15 @@
 			<!-- Hidden entirely in the gate state, not merely disabled: there is
 			     nothing to send to yet, and a live-but-disabled composer would
 			     imply chat almost works. The "degraded" state keeps this, on
-			     purpose - see the jvp-notice banner above. -->
-			<div v-if="readiness !== 'gate'" class="jvp-foot">
+			     purpose - see the jvp-notice banner above.
+			     Also hidden while the verdict is still unresolved. Rendering a
+			     live composer before the check returns let a user send into a
+			     workspace that turned out to be gated: the send succeeded, then
+			     the gate replaced the body and swallowed the message and any
+			     reply, with no error shown. Waiting costs nothing in practice -
+			     the panel mounts at Desk page load and is toggled with v-show, so
+			     the check has almost always resolved before it is first opened. -->
+			<div v-if="readinessResolved && readiness !== 'gate'" class="jvp-foot">
 				<!-- attached files, above the input -->
 				<div v-if="attachments.length" class="jvp-atts">
 					<span v-for="a in attachments" :key="a.file_url" class="jvp-att">
@@ -522,13 +529,20 @@ let recorder = null;
 let recChunks = [];
 let recStartedAt = 0;
 
-// Chat-readiness gate: "ready" | "gate" | "degraded" (panel_readiness.mjs).
-// Resolved ONCE in onMounted below and cached for the panel's lifetime - this
-// component is kept mounted and toggled with v-show (see the template comment
-// up top), so "once per mount" already means "once per Desk page load", not
-// once per open. There is deliberately no poll here: a workspace's onboarding
-// state does not change while a chat panel sits open.
-const readiness = ref("ready");
+// Chat-readiness gate: null until resolved, then "ready" | "gate" | "degraded"
+// (panel_readiness.mjs). Resolved ONCE in onMounted below and cached for the
+// panel's lifetime - this component is kept mounted and toggled with v-show
+// (see the template comment up top), so "once per mount" already means "once
+// per Desk page load", not once per open. There is deliberately no poll here: a
+// workspace's onboarding state does not change while a chat panel sits open.
+//
+// It starts null, NOT "ready". Defaulting to "ready" rendered a live composer
+// during the round-trip, so on a gated workspace a fast user could send a
+// message that the arriving verdict then hid along with its reply, silently.
+// Mirrors AppShell.vue's `gatedOnboarding = ref(null)` and its `shellReady`
+// hold for the same reason.
+const readiness = ref(null);
+const readinessResolved = computed(() => readiness.value !== null);
 const readinessNotice = ref("");
 // Only an admin who can actually reach the wizard gets the CTA button in the
 // gate state, mirroring OnboardingGate.vue's isSystemManager split. Read off
@@ -684,6 +698,26 @@ function goOnboard() {
 	window.location.assign(ONBOARDING_URL);
 }
 
+// The mic button lives in the footer, and the footer unmounts the moment the
+// readiness verdict comes back "gate". Without this, a recording started during
+// the round-trip loses its only stop control: MediaRecorder and the getUserMedia
+// stream keep running with the mic light on, and onstop never fires, so the
+// audio is lost too. Stop it from outside the template instead.
+function abortRecording() {
+	if (!recording.value) return;
+	try {
+		recorder?.stop();
+	} catch {
+		// Already stopped or torn down; the track cleanup below still matters.
+	}
+	recorder?.stream?.getTracks?.().forEach((t) => t.stop());
+	recording.value = false;
+}
+
+watch(readiness, (v) => {
+	if (v === "gate") abortRecording();
+});
+
 // Hold-free toggle: click to start, click to stop. The transcript lands in the
 // composer rather than sending, so a misheard word can be fixed first.
 async function toggleVoice() {
@@ -734,10 +768,12 @@ async function toggleVoice() {
 }
 
 async function send() {
-	// Belt and braces: the composer is hidden whenever readiness is "gate" (see
-	// the template), but a stray call (e.g. Enter fired before that re-render)
-	// must not reach the backend for a workspace that was never onboarded.
-	if (readiness.value === "gate") return;
+	// Belt and braces: the composer is hidden whenever readiness is "gate" or
+	// still unresolved (see the template), but a stray call (e.g. Enter fired
+	// before that re-render) must not reach the backend for a workspace that was
+	// never onboarded. Unresolved counts too: sending into a verdict that has not
+	// landed is exactly how a message got swallowed by the arriving gate.
+	if (readiness.value === null || readiness.value === "gate") return;
 	const text = draft.value.trim();
 	const atts = attachments.value.slice();
 	if ((!text && !atts.length) || sending.value || stream.value.live) return;
@@ -955,6 +991,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+	// A live recording outlives this component otherwise: the mic stays hot and
+	// the getUserMedia tracks are never released.
+	abortRecording();
 	unwatchTheme?.();
 	if (rtTimer) {
 		window.clearInterval(rtTimer);
