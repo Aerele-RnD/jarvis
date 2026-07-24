@@ -68,11 +68,22 @@ export function suspensionNotice(readyResp) {
 // for yet) or blank; only then does the generic copy apply - it must never
 // overwrite a real explanation such as "Your OpenAI account has reached its
 // usage limit. It resets in about 27 hours."
-export const GENERIC_NOT_READY_NOTE =
-	"Still finishing setup. This can take a few seconds. You can continue to Jarvis now, or wait and try again.";
-export function notReadyNote(detail) {
+//
+// Whitelabelling: develop moved the wizard's copy onto `agentName` (@/branding,
+// window.agent_name with a "Jarvis" default). This module stays PURE on purpose
+// - node --test runs it with no `window` and no `@` alias - so the agent name
+// arrives as an argument instead of an import, and OnboardingView passes its
+// already-imported `agentName`. The default keeps every existing caller and the
+// exported constant byte-identical for a non-whitelabeled tenant.
+export const DEFAULT_AGENT_NAME = "Jarvis";
+
+export function genericNotReadyNote(agent = DEFAULT_AGENT_NAME) {
+	return `Still finishing setup. This can take a few seconds. You can continue to ${agent} now, or wait and try again.`;
+}
+export const GENERIC_NOT_READY_NOTE = genericNotReadyNote();
+export function notReadyNote(detail, agent = DEFAULT_AGENT_NAME) {
 	const d = (detail || "").trim();
-	return d || GENERIC_NOT_READY_NOTE;
+	return d || genericNotReadyNote(agent);
 }
 
 // A terminal `last_sync_status` ("failed: ..." / "skipped: ...") reason ALWAYS
@@ -89,14 +100,14 @@ export function notReadyNote(detail) {
 // shape check on the admin/bench side in this same regex.
 const SYNC_STATUS_REASON_RE = /^(?:failed|skipped):\s*(.*)$/s;
 
-export function syncStatusNote(status) {
+export function syncStatusNote(status, agent = DEFAULT_AGENT_NAME) {
 	const s = (status || "").trim();
 	const m = SYNC_STATUS_REASON_RE.exec(s);
 	const reason = (m ? m[1] : "").trim();
 	if (reason.startsWith("Your ") && reason.endsWith(".")) {
 		return reason;
 	}
-	return `Setup hit a problem (${s}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`;
+	return `Setup hit a problem (${s}). Check the AI connection and save again - or continue to ${agent} and retry from Settings.`;
 }
 
 // Branch decision for the "I've verified my email" poll. Admin's

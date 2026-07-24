@@ -10,6 +10,32 @@ LLM_FIELDS_TRIGGERING_SYNC = (
 	"llm_base_url",
 )
 
+# Whitelabel branding (Single-stored, tenant-admin editable). AGENT_NAME_MAX
+# also bounds the per-turn [Context:] clause turn_handler injects.
+AGENT_NAME_MAX = 40
+_BRAND_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".ico", ".gif")
+
+
+def validate_branding_inputs(agent_name, logo_url, favicon_url):
+	"""Normalize + validate whitelabel inputs; return the cleaned triple or
+	throw. Shared by the doctype validate() and the branding API so the two
+	never drift."""
+	name = (agent_name or "").strip()
+	if len(name) > AGENT_NAME_MAX:
+		frappe.throw(
+			f"Assistant name must be {AGENT_NAME_MAX} characters or fewer.",
+			frappe.ValidationError,
+		)
+	logo = (logo_url or "").strip()
+	favicon = (favicon_url or "").strip()
+	for url in (logo, favicon):
+		if url and not url.lower().split("?")[0].endswith(_BRAND_IMAGE_EXTS):
+			frappe.throw(
+				"Logo and favicon must be image files (png, jpg, jpeg, svg, webp, ico, gif).",
+				frappe.ValidationError,
+			)
+	return name, logo, favicon
+
 
 # Subscription-mode auth modes - the container owns credentials, so the
 # bench's classifier treats a save with no structural change as a no-op.
@@ -303,6 +329,7 @@ class JarvisSettings(Document):
 		self._validate_auth_mode_requirements()
 		self._validate_pattern_window()
 		self._validate_conversation_retention()
+		self._validate_branding()
 
 	def _validate_conversation_retention(self):
 		"""Retention floor. The daily sweep frees idle chats' openclaw sessions
@@ -319,6 +346,18 @@ class JarvisSettings(Document):
 				"Reclaim idle chat memory after must be 0 (never) or at least 7 days.",
 				frappe.ValidationError,
 			)
+
+	def _validate_branding(self):
+		"""Whitelabel identity store-side guard. The name's per-turn injection
+		is sanitized separately in turn_handler (trusted-bracket safety)."""
+		name, logo, favicon = validate_branding_inputs(
+			getattr(self, "agent_name", ""),
+			getattr(self, "brand_logo", ""),
+			getattr(self, "brand_favicon", ""),
+		)
+		self.agent_name = name
+		self.brand_logo = logo
+		self.brand_favicon = favicon
 
 	def _validate_pattern_window(self):
 		"""Behavioural-learning window must be at least 1 hour when enabled.

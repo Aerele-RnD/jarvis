@@ -6,6 +6,7 @@ import InstallBanner from "./components/InstallBanner.vue";
 import { store } from "./store";
 import { sessionUser } from "./router";
 import { prefs } from "./lib/prefs";
+import { agentName } from "@/branding";
 import { recordEvent } from "./lib/notifications";
 
 const socket = inject("$socket");
@@ -48,11 +49,11 @@ function onEvent(p) {
 	} else if (p.kind === "conversation:new") {
 		store.loadConversations();
 	} else if (p.kind === "run:end" && !p.stopped && prefs.notifyDone) {
-		const title = store.conversations.find((c) => c.name === conv)?.title || "Jarvis";
-		notify("Jarvis finished", title, conv);
+		const title = store.conversations.find((c) => c.name === conv)?.title || agentName;
+		notify(`${agentName} finished`, title, conv);
 	} else if (p.kind === "action:pending" && prefs.notifyDecision) {
 		notify(
-			"Jarvis needs your approval",
+			`${agentName} needs your approval`,
 			p.summary || p.tool || "A change is waiting for you",
 			conv
 		);

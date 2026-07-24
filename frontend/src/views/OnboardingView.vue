@@ -6,7 +6,7 @@
 					<!-- brand header: JarvisMark + name + per-step subtitle (preview .brand) -->
 					<div class="jv-ob-brand">
 						<JarvisMark :size="30" :radius="8" />
-						<span class="jv-ob-brand-name">Jarvis</span>
+						<span class="jv-ob-brand-name">{{ agentName }}</span>
 						<span class="jv-ob-brand-sub">{{ frameSub }}</span>
 					</div>
 
@@ -162,8 +162,8 @@
 								<div class="jv-ob-head">
 									<h1>Your details</h1>
 									<p>
-										We'll set Jarvis up for this workspace and send receipts
-										here.
+										We'll set {{ agentName }} up for this workspace and send
+										receipts here.
 									</p>
 								</div>
 								<div class="jv-ob-form">
@@ -304,8 +304,8 @@
 													? "Auto-pay authorized — nothing charged until your trial ends."
 													: "Payment received."
 											}}
-											We're provisioning your Jarvis workspace. This usually
-											takes under a minute…
+											We're provisioning your {{ agentName }} workspace. This
+											usually takes under a minute…
 										</p>
 									</div>
 									<div
@@ -467,7 +467,7 @@
 							<div class="jv-ob-body">
 								<div v-show="state.finishing">
 									<div class="jv-ob-head">
-										<h1>Setting up Jarvis</h1>
+										<h1>Setting up {{ agentName }}</h1>
 										<p>
 											{{
 												state.finishSubtitle ||
@@ -481,10 +481,10 @@
 								</div>
 								<div v-show="!state.finishing">
 									<div class="jv-ob-head">
-										<h1>Give Jarvis a brain</h1>
+										<h1>Give {{ agentName }} a brain</h1>
 										<p>
-											Pick which AI powers Jarvis. You can change this
-											anytime in Settings → AI models.
+											Pick which AI powers {{ agentName }}. You can change
+											this anytime in Settings → AI models.
 										</p>
 									</div>
 									<div class="jv-ob-connect">
@@ -507,7 +507,7 @@
 												class="jv-ob-btn jv-ob-btn-primary"
 												@click="forceContinue"
 											>
-												Continue to Jarvis
+												Continue to {{ agentName }}
 											</button>
 										</template>
 									</Banner>
@@ -557,7 +557,8 @@
 								<div class="jv-ob-head">
 									<h1>Connect your openclaw</h1>
 									<p>
-										Point Jarvis at <b>your own</b> openclaw server. Jarvis
+										Point {{ agentName }} at <b>your own</b> openclaw server.
+										{{ agentName }}
 										connects over HTTP with a bearer token. No Aerele
 										persona/skills. Validate first, then connect.
 									</p>
@@ -702,7 +703,7 @@
 												class="jv-ob-btn jv-ob-btn-primary"
 												@click="forceContinue"
 											>
-												Continue to Jarvis
+												Continue to {{ agentName }}
 											</button>
 										</template>
 									</Banner>
@@ -781,6 +782,7 @@ import {
 	syncConnection,
 } from "@/api";
 import { errMessage as errMsg } from "@/lib/errors";
+import { agentName } from "@/branding";
 
 const { effectiveDark: dark, paletteVars } = useJarvisTheme();
 
@@ -806,7 +808,7 @@ const FRAME_SUBS = {
 	plan: "Choose your plan",
 	details: "Your details",
 	pay: "Review & pay",
-	connect: "Give Jarvis a brain",
+	connect: `Give ${agentName} a brain`,
 	selfhost: "Self-hosted setup",
 };
 
@@ -1248,10 +1250,10 @@ async function openCheckout(d) {
 	// razorpay_subscription_id; finishPayment forwards whichever is present.
 	const rzOpts = {
 		key: d.razorpay_key_id,
-		name: "Jarvis",
+		name: agentName,
 		description: d.razorpay_subscription_id
-			? "Jarvis subscription (auto-pay after trial)"
-			: "Jarvis subscription",
+			? `${agentName} subscription (auto-pay after trial)`
+			: `${agentName} subscription`,
 		handler: (res) => {
 			state.payBusy = true;
 			finishPayment({
@@ -1430,7 +1432,9 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 			// should never have to parse. syncStatusNote keeps the wrapper for
 			// statuses that are genuinely opaque ("failed: unexpected error; see
 			// Error Log", "failed: auth: ...", "skipped: no longer proxy-valid...").
-			state.finishNote = syncStatusNote(status);
+			// The wrapper copy itself lives in steps.js and is whitelabelled there
+			// via `agentName`, so develop's branding is preserved.
+			state.finishNote = syncStatusNote(status, agentName);
 			return;
 		}
 	}
@@ -1448,10 +1452,11 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 	// resets in about 27 hours.") instead of a made-up generic one. notReadyNote falls
 	// back to the old generic copy only when the backend truly has no wording for this
 	// reason yet (an older admin, or a reason account.py hasn't wired a sentence for) -
-	// see steps.js. The "Continue to Jarvis" action below now sits right next to
+	// see steps.js, where that fallback is whitelabelled via `agentName` so develop's
+	// branding survives. The "Continue to <agent>" action below now sits right next to
 	// whichever of the two is showing, so it always reads as an honest choice rather
 	// than an unexplained escape hatch.
-	state.finishNote = notReadyNote(result.detail);
+	state.finishNote = notReadyNote(result.detail, agentName);
 }
 
 // ---- Connect (renders <LlmPoolEditor>) - the component itself owns

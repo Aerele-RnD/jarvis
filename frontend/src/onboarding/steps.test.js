@@ -177,6 +177,32 @@ test("notReadyNote: falls back to the generic copy only when detail is genuinely
 	assert.equal(notReadyNote("   "), GENERIC_NOT_READY_NOTE); // whitespace-only
 });
 
+// Whitelabelling (merge with develop): the wizard renders `agentName`, so the
+// fallback copy that moved into this module must not hardcode "Jarvis". These
+// helpers stay pure - the name arrives as an argument, never as a window read.
+test("notReadyNote: the generic fallback is whitelabelled, the real detail is untouched", () => {
+	assert.match(notReadyNote("", "Aerele Bot"), /continue to Aerele Bot now/);
+	assert.equal(notReadyNote("", "Jarvis"), GENERIC_NOT_READY_NOTE);
+	// A real backend sentence is the admin's own wording and must never have a
+	// tenant's agent name spliced into it.
+	assert.equal(
+		notReadyNote("Your OpenAI account has reached its usage limit.", "Aerele Bot"),
+		"Your OpenAI account has reached its usage limit."
+	);
+});
+
+test("syncStatusNote: the opaque-status wrapper is whitelabelled", () => {
+	assert.match(
+		syncStatusNote("failed: unexpected error; see Error Log", "Aerele Bot"),
+		/continue to Aerele Bot and retry from Settings/
+	);
+	// An unwrapped real sentence stays byte-identical regardless of agent name.
+	assert.equal(
+		syncStatusNote("failed: Your OpenAI account has reached its usage limit.", "Aerele Bot"),
+		"Your OpenAI account has reached its usage limit."
+	);
+});
+
 // ---- syncStatusNote: the "Setup hit a problem (...)" banner's copy --------------
 // Before this fix, EVERY "failed:"/"skipped:" last_sync_status was wrapped verbatim
 // in "Setup hit a problem (${status})..." - so a real reason (jarvis_settings.py now

@@ -244,7 +244,7 @@
 				</svg>
 				<span
 					><b>No backup yet.</b> If this model fails or hits its limit, chat stops. Add a
-					second one and Jarvis switches over automatically.</span
+					second one and {{ agentName }} switches over automatically.</span
 				>
 			</div>
 
@@ -1582,6 +1582,7 @@ import { useConfirm } from "@/composables/useConfirm";
 import JvCombo from "@/components/JvCombo.vue";
 import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue";
 import ProviderLogo from "@/components/ProviderLogo.vue";
+import { agentName } from "@/branding";
 
 const { confirm } = useConfirm();
 
@@ -2257,7 +2258,7 @@ async function removeDirect() {
 	if (
 		!(await confirm({
 			title: "Disconnect chat subscription?",
-			message: "Jarvis chat will stop working until you reconnect.",
+			message: `${agentName} chat will stop working until you reconnect.`,
 			confirmLabel: "Disconnect",
 			danger: true,
 		}))

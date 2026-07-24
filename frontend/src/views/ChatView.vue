@@ -575,8 +575,9 @@
 							line-height: 1.5;
 						"
 					>
-						Ask about your ERP data, run a workflow, or draft something. Jarvis is
-						connected to your
+						Ask about your ERP data, run a workflow, or draft something.
+						{{ agentName }}
+						is connected to your
 						<strong style="color: var(--text); font-weight: 600">ERPNext</strong>
 						instance.
 					</p>
@@ -651,7 +652,7 @@
 				ref="threadEl"
 				@scroll.passive="onThreadScroll"
 				role="log"
-				aria-label="Conversation with Jarvis"
+				:aria-label="`Conversation with ${agentName}`"
 				style="flex: 1; overflow-y: auto"
 			>
 				<div
@@ -2223,7 +2224,7 @@
 									:title="
 										nudge.mode === 'recording'
 											? 'Stop and transcribe'
-											: 'Record a voice note (saved for Jarvis to learn from)'
+											: `Record a voice note (saved for ${agentName} to learn from)`
 									"
 									@click="
 										nudge.mode === 'recording'
@@ -2303,7 +2304,7 @@
 								v-model="nudge.text"
 								rows="3"
 								class="jv-nudge-ta"
-								placeholder="What should Jarvis remember?"
+								:placeholder="`What should ${agentName} remember?`"
 							></textarea>
 							<div class="jv-nudge-foot">
 								<button
@@ -2512,7 +2513,7 @@
 							@keydown="onKey"
 							@paste="onPaste"
 							rows="1"
-							placeholder="Ask Jarvis…   @ to mention a user, / for a doctype or tool"
+							:placeholder="`Ask ${agentName}…   @ to mention a user, / for a doctype or tool`"
 							style="
 								width: 100%;
 								border: none;
@@ -2785,8 +2786,8 @@
 							margin-top: 8px;
 						"
 					>
-						Jarvis can make mistakes. Verify important actions before submitting to
-						ERPNext.
+						{{ agentName }} can make mistakes. Verify important actions before
+						submitting to ERPNext.
 					</div>
 				</div>
 			</div>
@@ -3493,6 +3494,7 @@ import {
 import { useRoute, useRouter } from "vue-router";
 import * as api from "@/api";
 import * as voice from "@/api/voice";
+import { agentName } from "@/branding";
 import { useAudioRecorder } from "@/composables/useAudioRecorder";
 import { setMacroPrefill } from "@/composables/macroPrefill";
 import { takeChatPrefill } from "@/composables/chatPrefill";
@@ -6657,7 +6659,7 @@ async function send(textArg) {
 			}
 			notify(
 				r.reason === "usage_limit"
-					? "Monthly usage limit reached. Ask your Jarvis admin to raise your limit."
+					? `Monthly usage limit reached. Ask your ${agentName} admin to raise your limit.`
 					: r.reason || "Couldn't send your message.",
 				{ type: "error" }
 			);
@@ -6722,7 +6724,7 @@ function onEvent(p) {
 		store.applyRemoteNew();
 		proactiveToast.value = {
 			id: p.conversation_id,
-			title: p.title || "Message from Jarvis",
+			title: p.title || `Message from ${agentName}`,
 			preview: p.preview || "",
 		};
 		return;
@@ -6890,7 +6892,7 @@ function onEvent(p) {
 			// (browser notification moved to the app-scoped global notifier —
 			// AppShell attaches it, so it fires on every route, not just here)
 			recovering.value = null;
-			announceSR("Jarvis replied.");
+			announceSR(`${agentName} replied.`);
 			store.loadConversations();
 			loadConversation(currentId.value);
 			// Re-render charts after the reload settles — late re-renders can swap a
@@ -7129,7 +7131,7 @@ async function saveNudgeNote() {
 			entities: JSON.stringify(n.entities || []),
 			source: "Chat Nudge",
 		});
-		notify("Noted — Jarvis will remember this", { type: "success" });
+		notify(`Noted — ${agentName} will remember this`, { type: "success" });
 		nudge.value = null;
 	} catch (e) {
 		n.saving = false;

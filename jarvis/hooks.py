@@ -188,7 +188,12 @@ website_route_rules = [
 # Serves the PWA's service worker at the root-level /jarvis-mobile.sw.js, which
 # is the only way it can claim a scope covering the app. See jarvis/pwa.py — the
 # route is deliberately outside the /jarvis-mobile/ catch-all above.
-page_renderer = ["jarvis.pwa.ServiceWorkerRenderer"]
+# ManifestRenderer serves the per-tenant whitelabel manifest at the root-level
+# /jarvis-mobile.webmanifest (same catch-all reasoning).
+page_renderer = [
+	"jarvis.pwa.ServiceWorkerRenderer",
+	"jarvis.pwa.ManifestRenderer",
+]
 
 # The agents marketplace lives at the SPA route /jarvis/agents; keep the
 # friendlier top-level /jarvis-agents spelling working as a redirect.
