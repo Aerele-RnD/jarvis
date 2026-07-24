@@ -7,6 +7,8 @@
  "engine": "InnoDB",
  "field_order": [
   "relay_target_id",
+  "transport_mode",
+  "mode_epoch",
   "pump_epoch",
   "lease_holder",
   "lease_expires_at",
@@ -23,6 +25,24 @@
    "in_list_view": 1,
    "length": 140,
    "description": "The shard key; the container/gateway this pump serves. The admission serializer takes SELECT ... FOR UPDATE on it (OAR-1)."
+  },
+  {
+   "fieldname": "transport_mode",
+   "fieldtype": "Select",
+   "label": "Transport Mode",
+   "options": "\npump\ndraining\nlegacy",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "CDX-10 — the DB-AUTHORITATIVE transport decision for this shard: which machine owns a NEW turn's dispatch. 'pump' = the Relay Pump owns dispatch; 'draining' = no new pump admissions (new turns fall through to legacy) while existing pump Turn rows drain; 'legacy' = the kill switch (byte-identical worker-per-turn). This ROW — read under the shard control-row FOR UPDATE — is the fenced decision value at every dispatch-deciding point (accept_or_queue's pump branch, _dispatch_turn's enqueue-boundary re-check); jarvis_pump_enabled in site_config is the operator-facing MIRROR only, never the decider (an already-initialized request's frappe.local.conf can be stale across a cutover). Empty = not yet reconciled; readers fall back to the config-derived mode until pump_cutover_execute / a reconcile writes it."
+  },
+  {
+   "fieldname": "mode_epoch",
+   "fieldtype": "Int",
+   "label": "Mode Epoch",
+   "default": "0",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "CDX-10 — the transport_mode fencing generation. Advanced (+1) under the shard control-row FOR UPDATE on every DELIBERATE transport_mode change (pump_cutover_execute and any operator-driven mode flip), so a mode transition is observable/orderable and a stale actor's cached mode can be fenced. Distinct from pump_epoch (which fences pump LEASE ownership)."
   },
   {
    "fieldname": "pump_epoch",

@@ -4435,14 +4435,25 @@ const thinkTick = ref(0);
 let _thinkTimer = null;
 const thinkingWord = computed(() => THINK_WORDS[thinkTick.value % THINK_WORDS.length]);
 // Persisted per-reply tool count + duration so they survive a refresh (runMeta
-// is live-session only): count from the saved tool messages, duration from the
-// assistant row's modified-minus-creation span (clamped to a sane window).
+// is live-session only): count from the saved tool messages, duration on ONE
+// baseline shared with the live timer (CDX-20). The live value (runMeta.ms) is the
+// client-side run:start -> run:end span; the persisted value (reply_duration_ms,
+// stamped at settlement) is the server-side dispatching_at(run:start) -> settlement
+// span — the SAME boundary, so a reloaded reply matches its live reading within
+// network tolerance. reply_duration_ms is NULL on legacy (non-pump) rows, which fall
+// back to the modified-creation span (creation is NO LONGER rewritten as a metric).
 function toolCountOf(m) {
 	return (activityByAssistant.value[m.name] || []).length;
 }
 function elapsedOf(m) {
 	const live = runMeta.value[m.name] && runMeta.value[m.name].ms;
 	if (live) return (live / 1000).toFixed(1);
+	if (m.reply_duration_ms != null && m.reply_duration_ms !== "") {
+		const d = Number(m.reply_duration_ms) / 1000;
+		if (d >= 0 && d < 1800) return d.toFixed(1);
+	}
+	// Legacy fallback: rows with no persisted duration (pre-pump / legacy transport)
+	// use the assistant row's modified-minus-creation span.
 	if (m.creation && m.modified) {
 		const d =
 			(new Date(m.modified.replace(" ", "T")) - new Date(m.creation.replace(" ", "T"))) /

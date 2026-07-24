@@ -1080,7 +1080,7 @@ class TestCutoverPreflight(_AdmissionTestCase):
 			order.append("lock")
 			return real_lock(t)
 
-		def rec_mode():
+		def rec_mode(*a, **k):
 			order.append("mode")
 			return False  # legacy branch — avoids pump ensure/wake side effects
 
@@ -1098,22 +1098,84 @@ class TestCutoverPreflight(_AdmissionTestCase):
 		self.assertIn("mode", order, "pump mode is read")
 		self.assertLess(order.index("lock"), order.index("mode"), "pump mode read UNDER the shard lock")
 
-	def test_paused_legacy_sender_lands_no_job_after_cutover_done(self):
-		# CDX-10 (concurrent — codex's required test): a REAL legacy sender is paused at the
-		# enqueue boundary (between turn_machine_enabled()==False and frappe.enqueue) while a
-		# REAL pump_cutover_execute runs to done=True on a SEPARATE DB connection; when the
-		# sender is released it acquires the (now-free) shard control-row lock, re-checks under
-		# it, sees pump-ON and PROVES no legacy job lands (it reroutes instead). The shard
-		# control row FOR UPDATE that both paths take is the serialization point.
+
+# --------------------------------------------------------------------------- #
+# CDX-10 — DB-authoritative transport mode (honest real-config-snapshot tests)
+# --------------------------------------------------------------------------- #
+
+
+class TestCutoverDbAuthoritativeMode(FrappeTestCase):
+	"""CDX-10 — the transport decision is DB-AUTHORITATIVE: every dispatch-deciding read takes
+	the shard control row's ``transport_mode`` under the lock it holds, NOT the request-local
+	``frappe.conf`` snapshot (which frappe.init froze at request start and a cutover's
+	update_site_config never refreshes for an already-initialized request). These tests
+	initialize requests with GENUINELY DIFFERENT frappe.local.conf snapshots + a REAL committed
+	row — no patched turn_machine_enabled / pump_mode_active shared flag — so they exercise the
+	exact Frappe request-local-config behavior codex flagged. Only selfhost.is_self_hosted (a
+	static per-bench property, not the raced value) is pinned to the managed value."""
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup()
+		admission._ensure_control_row(admission.DEFAULT_RELAY_TARGET)
+		self._selfhost = patch("jarvis.selfhost.is_self_hosted", return_value=False)
+		self._selfhost.start()
+
+	def tearDown(self):
+		self._selfhost.stop()
+		# Reset the fenced ROW so other suites fall back to config (patterntest: pump ABSENT).
+		try:
+			frappe.db.set_value(
+				PUMP, admission.DEFAULT_RELAY_TARGET, "transport_mode", None, update_modified=False
+			)
+			frappe.db.commit()
+		except Exception:
+			frappe.db.rollback()
+		_cleanup()
+		frappe.set_user(self._orig_user)
+
+	# ---- helpers ---------------------------------------------------------- #
+
+	def _mk_conv(self):
+		doc = frappe.get_doc({"doctype": CONV, "title": "New chat", "status": "Active"})
+		doc.flags.ignore_permissions = True
+		doc.insert()
+		frappe.db.commit()
+		return doc.name
+
+	def _mk_msg(self, conv, seq, role="user", content="hi", **extra):
+		doc = frappe.get_doc(
+			{"doctype": MSG, "conversation": conv, "seq": seq, "role": role, "content": content, **extra}
+		)
+		doc.flags.ignore_permissions = True
+		doc.insert()
+		frappe.db.commit()
+		return doc.name
+
+	def _set_row_mode(self, mode):
+		frappe.db.set_value(
+			PUMP, admission.DEFAULT_RELAY_TARGET, "transport_mode", mode, update_modified=False
+		)
+		frappe.db.commit()
+
+	# ---- forward (a): a paused legacy sender routes per the ROW after cutover ---- #
+
+	def _run_forward_paused_sender(self, phase0):
+		# A REAL legacy sender (its frappe.local.conf pinned to the explicit kill switch = 0) is
+		# paused at the enqueue boundary while a REAL pump_cutover_execute flips the DB-authoritative
+		# transport_mode ROW to 'pump' on a SEPARATE connection. Released, the sender re-checks under
+		# the shard lock and — because it reads the ROW, not its stale conf — reroutes: NO legacy job.
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv, 1)
-		run_id = "cutover_race_S"
+		run_id = f"cdx10_fwd_p{phase0}"
+		self._set_row_mode(pump._MODE_LEGACY)  # pre-cutover committed state
 		site = frappe.local.site
-		state = {"pump_on": False}
 		c_done = threading.Event()
 		enqueued, rerouted, errors = [], [], []
 
-		def fake_scan(*a, **k):  # both cutover passes report clear (RQ scan stubbed)
+		def fake_scan(*a, **k):
 			return {
 				"clear": True,
 				"verdict": "clear",
@@ -1122,10 +1184,6 @@ class TestCutoverPreflight(_AdmissionTestCase):
 				"legacy_streaming": 0,
 			}
 
-		def fake_flip(key, value, *a, **kw):  # cutover's flip toggles the shared, cross-thread holder
-			if key == "jarvis_pump_enabled":
-				state["pump_on"] = value == "None"
-
 		def cutover_worker():
 			frappe.init(site=site)
 			frappe.connect()
@@ -1133,13 +1191,14 @@ class TestCutoverPreflight(_AdmissionTestCase):
 			try:
 				with (
 					patch.object(admission, "pump_cutover_preflight", side_effect=fake_scan),
-					patch("frappe.installer.update_site_config", side_effect=fake_flip),
+					patch("frappe.installer.update_site_config", side_effect=lambda *a, **k: None),
+					patch("jarvis.selfhost.is_self_hosted", return_value=False),
 				):
 					res = admission.pump_cutover_execute()
 					if not res.get("done"):
 						errors.append(("C", res))
 			except Exception as e:
-				errors.append(("C", e))
+				errors.append(("C", repr(e)))
 			finally:
 				try:
 					frappe.db.commit()
@@ -1152,17 +1211,14 @@ class TestCutoverPreflight(_AdmissionTestCase):
 			frappe.connect()
 			frappe.set_user(TEST_USER)
 			try:
-				# Paused at the enqueue boundary until the cutover has committed done=True.
-				c_done.wait(timeout=20)
-				kwargs = {
-					"conversation_id": conv,
-					"message_id": seed,
-					"run_id": run_id,
-					"enqueued_at_ms": 1,
-				}
+				# GENUINE stale snapshot: this request initialized while the kill switch was ON.
+				frappe.local.conf["jarvis_pump_enabled"] = 0
+				frappe.local.conf[admission.FLAG] = phase0
+				c_done.wait(timeout=20)  # paused at the boundary until the cutover committed
+				kwargs = {"conversation_id": conv, "message_id": seed, "run_id": run_id, "enqueued_at_ms": 1}
 				with (
-					patch.object(admission, "turn_machine_enabled", side_effect=lambda: state["pump_on"]),
 					patch("frappe.enqueue", side_effect=lambda *a, **k: enqueued.append(k.get("job_id"))),
+					patch("jarvis.selfhost.is_self_hosted", return_value=False),
 					patch.object(
 						admission,
 						"accept_or_queue",
@@ -1172,7 +1228,7 @@ class TestCutoverPreflight(_AdmissionTestCase):
 				):
 					chat_api._dispatch_turn(kwargs, cutover_gate=True)
 			except Exception as e:
-				errors.append(("S", e))
+				errors.append(("S", repr(e)))
 			finally:
 				try:
 					frappe.db.commit()
@@ -1186,6 +1242,117 @@ class TestCutoverPreflight(_AdmissionTestCase):
 		tC.join(timeout=30)
 		tS.join(timeout=30)
 		self.assertEqual(errors, [], f"worker error: {errors}")
-		self.assertTrue(state["pump_on"], "cutover reached done=True and flipped to pump-ON")
-		self.assertEqual(enqueued, [], "CDX-10: NO legacy job landed after the cutover committed")
+		self.assertEqual(
+			frappe.db.get_value(PUMP, admission.DEFAULT_RELAY_TARGET, "transport_mode"),
+			pump._MODE_PUMP,
+			"the cutover committed transport_mode=pump on the ROW",
+		)
+		self.assertEqual(
+			enqueued, [], "CDX-10: NO legacy job landed — the sender routed per the ROW, not its stale conf=0"
+		)
 		self.assertEqual(rerouted, [run_id], "the paused legacy sender rerouted to the pump accept path")
+
+	def test_paused_legacy_sender_routes_per_row_phase0_on(self):
+		self._run_forward_paused_sender(phase0=1)
+
+	def test_paused_legacy_sender_routes_per_row_phase0_off(self):
+		self._run_forward_paused_sender(phase0=0)
+
+	# ---- reverse (b): a sender with a stale ON conf, ROW reverted to legacy ---- #
+
+	def _run_reverse_reverted_sender(self, phase0):
+		# A sender whose frappe.local.conf initialized in the brief absent/ON window (pump ON) reaches
+		# accept_or_queue AFTER the executor reverted the ROW to legacy. Because accept reads the ROW
+		# under the lock (not its stale ON conf), it must NOT create a pump-owned Turn.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		run_id = f"cdx10_rev_p{phase0}"
+		self._set_row_mode(pump._MODE_LEGACY)  # the executor reverted here (committed)
+		dispatched = []
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_pump_enabled": None, admission.FLAG: phase0}),
+			patch.object(admission, "_max_inflight", return_value=4),
+		):
+			# Sanity: the STALE conf snapshot genuinely says pump-ON (what a conf-based decision
+			# would wrongly follow).
+			self.assertTrue(pump.pump_mode_active(), "the request's conf snapshot says pump-ON")
+			res = admission.accept_or_queue(
+				conversation=conv,
+				run_id=run_id,
+				seed_message=seed,
+				dispatch=lambda: dispatched.append(run_id),
+			)
+		# The decision followed the ROW (legacy), NOT the conf (ON): never a pump-owned Turn.
+		self.assertFalse(
+			res.get("pump"), "CDX-10: no pump-owned turn — the ROW (legacy) decided, not the stale ON conf"
+		)
+		turn_state = frappe.db.get_value(TURN, run_id, "state")
+		if phase0:
+			# Phase-0 still owns it (admission on, pump legacy) → a legacy-driven phase-0 Turn.
+			self.assertIsNotNone(turn_state, "phase-0 admits/queues the turn (legacy-driven, not pump-owned)")
+		else:
+			# Both pump and Phase-0 off → NO machine Turn (would strand); legacy fallback dispatches.
+			self.assertIsNone(turn_state, "no stranded machine Turn row is created when the machine is off")
+			self.assertTrue(res.get("legacy_fallback"), "reverts to a pure-legacy dispatch")
+			self.assertEqual(dispatched, [run_id], "the legacy job is dispatched exactly once")
+
+	def test_reverted_sender_no_pump_turn_phase0_on(self):
+		self._run_reverse_reverted_sender(phase0=1)
+
+	def test_reverted_sender_no_pump_turn_phase0_off(self):
+		self._run_reverse_reverted_sender(phase0=0)
+
+
+class TestRerouteResultPropagation(_AdmissionTestCase):
+	"""CDX-19 — the legacy->pump reroute must PROPAGATE accept_or_queue's result (queued
+	position / honest overload rejection) back through _dispatch_turn to the caller, exactly
+	like the machine branch. Under _AdmissionTestCase the pump predicates are pinned off and
+	Phase-0 admission is on, so turn_machine_enabled(from_db=True) is True and _dispatch_turn's
+	cutover gate reroutes into the (real) Phase-0 accept path."""
+
+	def test_reroute_returns_queued_result_with_position(self):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		# Occupy the conversation with a live dispatching turn (single-flight → the new turn queues).
+		self._insert_turn(conv, "occupier", seed, "dispatching")
+		seed2 = self._mk_msg(conv, 2)
+		run_id = "reroute_queued"
+		kwargs = {"conversation_id": conv, "message_id": seed2, "run_id": run_id, "enqueued_at_ms": 1}
+		with patch.object(admission, "_max_inflight", return_value=4):
+			res = chat_api._dispatch_turn(kwargs, cutover_gate=True)
+		self.assertIsInstance(res, dict, "CDX-19: the reroute result propagates through _dispatch_turn")
+		self.assertFalse(res.get("dispatched"), "the rerouted turn is queued behind the occupier")
+		self.assertIsNotNone(res.get("queued_position"), "the queued reroute carries a position (chip works)")
+		self.assertEqual(self._state(run_id), "queued", "a durable queued Turn row exists (no orphan)")
+
+	def test_full_queue_reroute_rejects_no_orphan_no_silent_ok(self):
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		run_id = "reroute_overload"
+		kwargs = {"conversation_id": conv, "message_id": seed, "run_id": run_id, "enqueued_at_ms": 1}
+		with patch.object(admission, "MAX_QUEUE_DEPTH", 0):
+			res = chat_api._dispatch_turn(kwargs, cutover_gate=True)
+		self.assertIsInstance(res, dict)
+		self.assertFalse(res.get("ok"), "CDX-19: a full-queue reroute is an HONEST rejection, not ok:true")
+		self.assertTrue(res.get("overloaded"))
+		self.assertIsNone(self._state(run_id), "no orphan Turn row created on overload rejection")
+
+	def test_continuation_reroute_at_overload_still_queues(self):
+		# R-7: a confirm CONTINUATION keeps its overload EXEMPTION through the reroute — it must
+		# QUEUE (never reject) even at MAX_QUEUE_DEPTH. exempt_overload must survive the handoff:
+		# _dispatch_turn -> _reroute_legacy_to_pump -> accept_or_queue.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		run_id = "reroute_cont"
+		kwargs = {"conversation_id": conv, "message_id": seed, "run_id": run_id, "enqueued_at_ms": 1}
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 0),
+			patch.object(admission, "_max_inflight", return_value=0),
+		):
+			res = chat_api._dispatch_turn(kwargs, cutover_gate=True, exempt_overload=True)
+		self.assertIsInstance(res, dict)
+		self.assertTrue(res.get("ok"), "the continuation is accepted (never rejected)")
+		self.assertFalse(
+			res.get("overloaded"), "R-7: the exemption survived the reroute — no overload rejection"
+		)
+		self.assertEqual(self._state(run_id), "queued", "the continuation is durably queued with a position")

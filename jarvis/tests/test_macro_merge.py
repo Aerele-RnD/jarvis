@@ -62,7 +62,28 @@ def _mk_conv(assistant=None, streaming=0, error=""):
 	return conv.name
 
 
-class TestSummarizeMacro(FrappeTestCase):
+class _MacroMergeBase(FrappeTestCase):
+	"""Isolation base for the macro-merge tests.
+
+	Several of these flows COMMIT mid-test — summarize/run dispatch through
+	``api._enqueue_turn`` (which commits) and ``_pending_macro_with_reply`` /
+	``advance_after_turn`` commit outright — so a macro created by ``_mk_macro`` is
+	made durable and survives the per-test rollback. Counted against the per-owner
+	cap (``MAX_MACROS_PER_OWNER`` = 25), leaked survivors from earlier tests/runs
+	eventually make EVERY ``_mk_macro`` insert throw "You can have at most 25
+	macros." Clear the committed test macros up front so the cap is never exhausted.
+	Transport-independent: the leak is the commit, not the pump."""
+
+	def setUp(self):
+		super().setUp()
+		for n in frappe.get_all(
+			"Jarvis Macro", filters={"macro_name": ["like", "merge-test-%"]}, pluck="name"
+		):
+			frappe.delete_doc("Jarvis Macro", n, force=True, ignore_permissions=True)
+		frappe.db.commit()
+
+
+class TestSummarizeMacro(_MacroMergeBase):
 	def test_enqueues_one_turn_with_steps_and_skill(self):
 		m = _mk_macro(
 			[
@@ -101,7 +122,7 @@ class TestSummarizeMacro(FrappeTestCase):
 			summarize_macro(m.name)
 
 
-class TestGetMacroMerge(FrappeTestCase):
+class TestGetMacroMerge(_MacroMergeBase):
 	def _cleanup_conv(self, conv):
 		self.addCleanup(
 			lambda: (
@@ -152,7 +173,7 @@ class TestGetMacroMerge(FrappeTestCase):
 			frappe.set_user("Administrator")
 
 
-class TestApplyMacroMerge(FrappeTestCase):
+class TestApplyMacroMerge(_MacroMergeBase):
 	def test_stores_summary_and_keeps_steps(self):
 		# The sequence stays as the editable source; the summary rides alongside
 		# and (see TestMergedRun) is what run_macro executes.
@@ -210,7 +231,7 @@ class TestApplyMacroMerge(FrappeTestCase):
 		self.assertEqual(get_macro(m.name)["merged_prompt"], "edited summary")
 
 
-class TestMergeApplyHook(FrappeTestCase):
+class TestMergeApplyHook(_MacroMergeBase):
 	"""The worker-side apply: advance_after_turn lands the summary on the macro
 	when the background summarize turn ends — no browser needed."""
 
@@ -278,7 +299,7 @@ class TestMergeApplyHook(FrappeTestCase):
 			macros.run_macro(m.name)
 
 
-class TestMergedRun(FrappeTestCase):
+class TestMergedRun(_MacroMergeBase):
 	def test_run_macro_uses_summary_as_single_turn(self):
 		from jarvis.chat import macros
 

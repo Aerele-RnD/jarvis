@@ -561,6 +561,7 @@ def get_conversation(conversation: str) -> dict:
 			"tool_status",
 			"action_outcome",
 			"canvas",
+			"reply_duration_ms",
 			"creation",
 			"modified",
 		],
@@ -1156,7 +1157,21 @@ def send_message(
 				frappe.log_error(title="send_message overload seed cleanup", message=frappe.get_traceback())
 			return {"ok": False, "reason": _adm.get("reason")}
 	else:
-		_dispatch_turn(enqueue_kwargs, interactive=_interactive, cutover_gate=True)
+		# CDX-19: the legacy path may REROUTE to the pump accept path under the cutover gate
+		# (if the site flipped to pump-ON since the entry check). _dispatch_turn then returns
+		# the admission result; merge it EXACTLY like the machine branch above — a full-queue
+		# reroute rejects (delete the orphan seed, no silent ok:true), and a queued reroute
+		# flows into the queued-chip block below via _adm. A normal legacy enqueue returns None.
+		_adm = _dispatch_turn(enqueue_kwargs, interactive=_interactive, cutover_gate=True)
+		# _dispatch_turn returns dict|None (a reroute's admission result, else None); the isinstance
+		# guard treats only a real dict as a result (None ⇒ normal legacy dispatch).
+		if isinstance(_adm, dict) and _adm.get("overloaded"):
+			try:
+				frappe.delete_doc(MSG, msg_doc.name, ignore_permissions=True, force=True)
+				frappe.db.commit()
+			except Exception:
+				frappe.log_error(title="send_message overload seed cleanup", message=frappe.get_traceback())
+			return {"ok": False, "reason": _adm.get("reason")}
 
 	# Latency telemetry (plan Phase 0): one line per send so the web-request
 	# segments are measurable. total_ms should now sit in the tens of ms even
@@ -1180,7 +1195,7 @@ def send_message(
 	# streaming) so it renders the "~N ahead" chip + cancel affordance instead
 	# of a spinner that would otherwise wait for a run:start that only arrives
 	# on promotion.
-	if _adm is not None and not _adm.get("dispatched", True):
+	if isinstance(_adm, dict) and not _adm.get("dispatched", True):
 		result["queued"] = True
 		result["queued_position"] = _adm.get("queued_position")
 	return result
@@ -1661,8 +1676,18 @@ def retry_message(message: str) -> dict:
 			out["queued"] = True
 			out["queued_position"] = _adm.get("queued_position")
 		return out
-	_dispatch_turn(payload, cutover_gate=True)
-	return {"ok": True, "run_id": run_id}
+	# CDX-19: the legacy path may REROUTE to the pump accept path under the cutover gate; merge
+	# the returned admission result exactly like the machine branch (overload reject / queued
+	# chip). Retry reuses the existing user message as the seed, so — like the machine branch —
+	# there is no seed row to clean up on overload. A normal legacy enqueue returns None.
+	_adm = _dispatch_turn(payload, cutover_gate=True)
+	if isinstance(_adm, dict) and _adm.get("overloaded"):
+		return {"ok": False, "reason": _adm.get("reason")}
+	out = {"ok": True, "run_id": run_id}
+	if isinstance(_adm, dict) and not _adm.get("dispatched", True):
+		out["queued"] = True
+		out["queued_position"] = _adm.get("queued_position")
+	return out
 
 
 @frappe.whitelist()
@@ -1827,13 +1852,20 @@ def _redispatch_orphan(
 	_dispatch_turn(payload, interactive=False, cutover_gate=True)
 
 
-def _reroute_legacy_to_pump(enqueue_kwargs: dict, interactive: bool) -> None:
+def _reroute_legacy_to_pump(enqueue_kwargs: dict, interactive: bool, exempt_overload: bool = False) -> dict:
 	"""CDX-10: a PURE-LEGACY sender reached the enqueue boundary just as the cutover flipped
 	the site to pump-ON. Rather than drop an INVISIBLE legacy worker job the pump can't
 	coordinate (per-conversation ordering / container-cap violation), route the turn through
 	the ONE admission chokepoint so it becomes a durable Turn row the pump owns. Chosen over
 	failing the request with a retryable error because it is strictly safer — the turn is
-	never stranded, and the user's already-committed message gets an answer."""
+	never stranded, and the user's already-committed message gets an answer.
+
+	CDX-19: RETURNS the ``accept_or_queue`` result (queued/queued_position, or the honest
+	``{ok:false, overloaded:true}`` rejection) so ``_dispatch_turn`` and every pure-legacy
+	caller can merge it exactly like their machine branch — a queued reroute renders the chip,
+	a full-queue reroute is rejected (no orphan seed, no silent ok:true). ``exempt_overload``
+	is passed through so a confirm CONTINUATION keeps its overload EXEMPTION across the handoff
+	(R-7) — it always queues, never rejects."""
 	from jarvis.chat import admission
 
 	conversation = enqueue_kwargs.get("conversation_id")
@@ -1848,7 +1880,7 @@ def _reroute_legacy_to_pump(enqueue_kwargs: dict, interactive: bool) -> None:
 		payload["attachments"] = enqueue_kwargs["attachments"]
 	if enqueue_kwargs.get("context"):
 		payload["context"] = enqueue_kwargs["context"]
-	admission.accept_or_queue(
+	return admission.accept_or_queue(
 		conversation=conversation,
 		run_id=run_id,
 		seed_message=seed_message,
@@ -1857,10 +1889,13 @@ def _reroute_legacy_to_pump(enqueue_kwargs: dict, interactive: bool) -> None:
 		# unused); the phase-0 fallback dispatches the legacy worker WITHOUT re-gating.
 		dispatch=lambda: _dispatch_turn(enqueue_kwargs, interactive=interactive),
 		dispatch_payload=payload or None,
+		exempt_overload=exempt_overload,
 	)
 
 
-def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True, cutover_gate: bool = False) -> None:
+def _dispatch_turn(
+	enqueue_kwargs: dict, interactive: bool = True, cutover_gate: bool = False, exempt_overload: bool = False
+) -> dict | None:
 	"""Route a prepared turn to the worker. On the default Node socketio backend
 	we use the ``jarvis_chat`` RQ queue when the bench provisions one, else
 	``long`` (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
@@ -1874,11 +1909,19 @@ def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True, cutover_gate:
 	``cutover_gate`` (CDX-10): set by the PURE-LEGACY callers (the ``else`` branch of
 	``turn_machine_enabled()``). Before dispatching, re-validate the legacy/pump gate under
 	the per-shard control row FOR UPDATE — the SAME lock ``pump_cutover_execute`` holds across
-	its scan -> flip -> recheck. If the world flipped to pump-ON since the branch decision, we
-	do NOT enqueue an invisible legacy job (the pump can't see it); the turn is rerouted to
-	the pump accept path. If still legacy, the lock is HELD through the enqueue below, so a
-	concurrent cutover that acquires the lock next scans the just-enqueued job and will NOT
-	flip. The lock is released by the commit in the ``finally``."""
+	its scan -> flip -> recheck. The gate reads the DB-AUTHORITATIVE shard ``transport_mode``
+	ROW (``from_db=True``), NOT the request-local conf (which can be stale across a cutover). If
+	the ROW says pump-ON since the branch decision, we do NOT enqueue an invisible legacy job
+	(the pump can't see it); the turn is rerouted to the pump accept path. If still legacy, the
+	lock is HELD through the enqueue below, so a concurrent cutover that acquires the lock next
+	scans the just-enqueued job and will NOT flip. The lock is released by the commit in the
+	``finally``.
+
+	CDX-19: when the gate reroutes, this RETURNS the admission result (``accept_or_queue``'s
+	dict — queued/queued_position or overloaded) so the pure-legacy caller can merge it exactly
+	like its machine branch (render the queued chip / friendly overload). On the normal legacy
+	enqueue path it returns ``None`` (dispatched). ``exempt_overload`` is threaded to the
+	reroute so a confirm CONTINUATION keeps its overload exemption through the handoff (R-7)."""
 	_gate_ts = None
 	if cutover_gate:
 		from jarvis.chat import admission
@@ -1887,13 +1930,13 @@ def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True, cutover_gate:
 		_gate_ts = _gate_ts_mod
 		_gate_target = admission.relay_target_id(enqueue_kwargs.get("conversation_id"))
 		_gate_ts._lock_shard(_gate_target)  # commit-first; the FOR UPDATE is the first statement
-		if admission.turn_machine_enabled():
-			# Flipped to pump-ON inside the window: release the gate lock and reroute so no
-			# invisible legacy job lands after a cutover reached done=True.
+		if admission.turn_machine_enabled(from_db=True, target=_gate_target):
+			# Flipped to pump-ON inside the window (per the DB-authoritative ROW): release the gate
+			# lock and reroute so no invisible legacy job lands after a cutover reached done=True.
+			# CDX-19: return the reroute's admission result so the caller merges queued/overloaded.
 			frappe.db.commit()
 			_gate_ts.reset_lock_tracking()
-			_reroute_legacy_to_pump(enqueue_kwargs, interactive)
-			return
+			return _reroute_legacy_to_pump(enqueue_kwargs, interactive, exempt_overload=exempt_overload)
 	try:
 		if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
 			from jarvis.chat import dispatch
@@ -2048,7 +2091,16 @@ def _enqueue_turn(
 			out["queued"] = True
 			out["queued_position"] = _adm.get("queued_position")
 		return out
-	_dispatch_turn(_kwargs, interactive=interactive, cutover_gate=True)
+	# CDX-19: the legacy path may REROUTE under the cutover gate; merge the queued result exactly
+	# like the machine branch above. R-7: exempt_overload is threaded through so a confirm
+	# CONTINUATION keeps its overload EXEMPTION across the handoff (it always queues, never
+	# rejects). A normal legacy enqueue returns None.
+	_adm = _dispatch_turn(
+		_kwargs, interactive=interactive, cutover_gate=True, exempt_overload=exempt_overload
+	)
+	if isinstance(_adm, dict) and not _adm.get("dispatched", True):
+		out["queued"] = True
+		out["queued_position"] = _adm.get("queued_position")
 	return out
 
 

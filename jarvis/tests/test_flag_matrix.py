@@ -89,7 +89,18 @@ class _FlagMatrixCase(_PipelineCase):
 		the differential that proves absent (the new default = ON) ≠ explicit-0 (the
 		kill switch). ``ensure_pump``/``lpush_wake`` are NOT stubbed: on the explicit-0
 		Phase-0 path ``accept_or_queue`` never calls them, and the tests assert the REAL
-		``ensure_pump`` no-op directly."""
+		``ensure_pump`` no-op directly.
+
+		CDX-10: the kill switch is a DELIBERATE mode change, so it updates BOTH the config
+		mirror (for the cheap readers — ensure_pump/watchdog/promote/sweep) AND the
+		DB-AUTHORITATIVE ``transport_mode`` ROW to ``legacy`` (the fenced value
+		accept_or_queue reads under the shard lock). The shard row was created 'pump' by
+		setUp under patterntest's ambient absent (default-ON) conf; the kill switch flips it
+		to 'legacy', matching what pump_set_transport_mode does in production."""
+		frappe.db.set_value(
+			"Jarvis Relay Pump", self._target, "transport_mode", pump._MODE_LEGACY, update_modified=False
+		)
+		frappe.db.commit()
 		with (
 			patch.dict(frappe.local.conf, {"jarvis_pump_enabled": 0}),
 			patch.object(admission, "relay_target_id", lambda conversation=None: self._target),

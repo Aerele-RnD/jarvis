@@ -1519,15 +1519,17 @@ class TestTerminalPublishBackstop(_PipelineCase):
 		self.assertEqual(settle_end.get("event_seq"), 11)
 
 	def test_completed_pump_turn_persists_real_duration(self):
-		# F4: the pump projects the assistant row via raw SQL (and the streaming batcher writes
-		# deltas with update_modified=False), so `modified` never advanced past the placeholder
-		# insert — the SPA's persisted duration (modified - creation in ChatView.elapsedOf) read
-		# 0.0s even after a refresh. Settlement now stamps the REAL elapsed span onto the exact
-		# row the UI reads, derived from the durable Turn-row timestamps (creation = first-event,
-		# modified = terminal instant). Assert the field is written with a plausible nonzero span.
+		# CDX-20 / F4: the pump projects the assistant row via raw SQL (and the streaming batcher
+		# writes deltas with update_modified=False), so `modified` never advanced past the
+		# placeholder insert — a reload's duration read 0.0s. Settlement now stamps a dedicated
+		# `reply_duration_ms` on ONE baseline SHARED with the live timer: run:start (dispatching_at,
+		# stamped immediately before run:start is published) -> settlement (now). It must NOT rewrite
+		# the `creation` audit field, and must anchor on dispatching_at (run:start ~15s ago), NOT
+		# first_event_at (the chat.send ACK ~12s ago, which undercounts the span the user watched).
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv)
 		amsg = self._mk_msg(conv, role="assistant", content="hi", streaming=1)
+		creation_before = frappe.db.get_value(MSG, amsg, "creation")
 		rid = "pmp_duration"
 		E = self._acquire_fresh("hopDur")
 		self._mk_turn(
@@ -1541,8 +1543,8 @@ class TestTerminalPublishBackstop(_PipelineCase):
 			assistant_message=amsg,
 			terminal_kind="relay:final",
 			terminal_payload=json.dumps({"text": "hi"}),
-			# The reply started ~12s ago (first token), dispatch ~15s ago — persisted state a
-			# refresh would read. Before the fix, modified==creation (placeholder insert) => 0.0s.
+			# run:start (dispatching_at) ~15s ago; first token (first_event_at) ~12s ago. The live
+			# timer measured run:start->run:end, so the persisted value must anchor on dispatching_at.
 			dispatching_at=frappe.utils.add_to_date(None, seconds=-15),
 			first_event_at=frappe.utils.add_to_date(None, seconds=-12),
 		)
@@ -1559,12 +1561,22 @@ class TestTerminalPublishBackstop(_PipelineCase):
 			conversation=conv,
 			deps=self._deps(),
 		)
-		row = frappe.db.get_value(MSG, amsg, ["creation", "modified"], as_dict=True)
-		elapsed = frappe.utils.time_diff_in_seconds(row.modified, row.creation)
+		row = frappe.db.get_value(MSG, amsg, ["creation", "reply_duration_ms"], as_dict=True)
+		# CDX-20: the `creation` audit field is UNTOUCHED (no longer repurposed as a metric).
+		self.assertEqual(row.creation, creation_before, "creation (the audit field) must not be rewritten")
+		# Live-definition equality within tolerance: the persisted span == now - dispatching_at
+		# (run:start->settlement) ≈ 15s. This distinguishes the correct dispatching_at anchor from
+		# the round-3 first_event_at anchor, which would read ~12s.
+		self.assertIsNotNone(row.reply_duration_ms, "a dedicated reply_duration_ms is persisted")
+		secs = row.reply_duration_ms / 1000
 		self.assertGreaterEqual(
-			elapsed, 10, f"persisted turn duration must be a plausible nonzero value, got {elapsed}s"
+			secs,
+			14,
+			f"duration anchors on dispatching_at (run:start ~15s), not first_event_at (~12s); got {secs}s",
 		)
-		self.assertLess(elapsed, 1800, "duration stays within the UI's sane (<30min) window")
+		self.assertLess(
+			secs, 30, "duration stays within the UI's sane window (test-timing tolerance around 15s)"
+		)
 
 	def test_terminal_publish_for_errored_turn_republishes_run_error(self):
 		conv = self._mk_conv()

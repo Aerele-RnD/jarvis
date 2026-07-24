@@ -226,7 +226,13 @@ def _ensure_control_row(target: str) -> None:
 	if frappe.db.exists(PUMP, target):
 		return
 	try:
-		doc = frappe.get_doc({"doctype": PUMP, "relay_target_id": target})
+		from jarvis.chat import pump
+
+		# CDX-10: stamp the DB-authoritative transport_mode from config at creation so a fresh
+		# shard's fenced decision value is correct from the first dispatch (never left empty).
+		doc = frappe.get_doc(
+			{"doctype": PUMP, "relay_target_id": target, "transport_mode": pump._config_transport_mode()}
+		)
 		doc.flags.ignore_permissions = True
 		doc.insert()
 		frappe.db.commit()

@@ -193,25 +193,38 @@ def invoke_settlement(
 
 
 def _stamp_reply_duration(assistant_message: str, run_id: str) -> None:
-	"""F4 — the persisted turn-duration fix. The pump projects the assistant row via raw SQL
-	(``ts._run_cas``), and the streaming batcher writes deltas with ``update_modified=False``,
-	so the assistant Message's ``modified`` never advances past the placeholder insert — the
-	SPA's persisted duration (``modified - creation`` in ChatView.elapsedOf) reads 0.0s even
-	after a refresh. Stamp the REAL elapsed span onto the exact row the UI reads, derived from
-	the durable Turn-row timestamps (``first_event_at`` — the reply's first token — else
-	``dispatching_at``): ``creation`` = the reply start, ``modified`` = the terminal instant
-	(now). This is contract-identical to the legacy path, which bumps ``modified`` via ORM
-	``set_value`` on its final write and leaves ``creation`` at the placeholder/dispatch
-	insert — so old legacy messages still render unchanged. Runs inside the fenced settlement
-	txn (no commit here); a stale-pump loss rolls it back with the rest."""
-	start = frappe.db.get_value(TURN, run_id, "first_event_at") or frappe.db.get_value(
-		TURN, run_id, "dispatching_at"
-	)
+	"""CDX-20 / F4 — the persisted turn-duration fix, on ONE durable baseline shared with the
+	live timer. The pump projects the assistant row via raw SQL (``ts._run_cas``) and the
+	streaming batcher writes deltas with ``update_modified=False``, so the row's ``modified``
+	never advances past the placeholder insert — a reload's duration read 0.0s. The FIX stamps a
+	dedicated ``reply_duration_ms`` metric (NOT a rewrite of Frappe's ``creation`` audit field —
+	CDX-20) computed on the SAME boundary the live timer uses:
+
+	    run:start (the pump's ``dispatching_at`` — stamped at ready->dispatching, IMMEDIATELY
+	    before ``run:start`` is published in _dispatch_one) -> settlement (now, the terminal).
+
+	The SPA's live timer runs from the ``run:start`` event to the ``run:end`` event; the reload
+	path reads THIS ``reply_duration_ms`` (ChatView.elapsedOf), so both anchor on run:start↔
+	settlement and agree within network tolerance. ``dispatching_at`` is used — NOT
+	``first_event_at`` (which the round-3 code used): first_event_at is written only at the
+	chat.send ACK (dispatching->streaming), i.e. AFTER run:start, so it undercounts the span the
+	user watched tick. ``modified`` IS bumped to now — honest (the row is genuinely finalized in
+	this txn), which also fixes the assistant row's hover timestamp — but ``creation`` is left
+	untouched. Runs inside the fenced settlement txn (no commit here); a stale-pump loss rolls
+	it back with the rest."""
+	start = frappe.db.get_value(TURN, run_id, "dispatching_at")
 	if not start:
-		return  # a degenerate turn with no dispatch/first-event stamp — leave the row as-is
+		# A degenerate turn with no dispatch stamp — still bump modified (finalized now) but
+		# record no duration; the UI then falls back to its legacy modified-creation read.
+		ts._run_cas(
+			f"UPDATE `tab{MSG}` SET modified=%(now)s WHERE name=%(m)s",
+			{"now": frappe.utils.now(), "m": assistant_message},
+		)
+		return
+	duration_ms = int(max(0, frappe.utils.time_diff_in_seconds(frappe.utils.now(), start) * 1000))
 	ts._run_cas(
-		f"UPDATE `tab{MSG}` SET creation=%(start)s, modified=%(now)s WHERE name=%(m)s",
-		{"start": start, "now": frappe.utils.now(), "m": assistant_message},
+		f"UPDATE `tab{MSG}` SET reply_duration_ms=%(d)s, modified=%(now)s WHERE name=%(m)s",
+		{"d": duration_ms, "now": frappe.utils.now(), "m": assistant_message},
 	)
 
 

@@ -217,35 +217,127 @@ def _pump_flag_draining(flag) -> bool:
 	return flag is not None and str(flag).strip().lower() == "draining"
 
 
-def pump_mode_active() -> bool:
+# --------------------------------------------------------------------------- #
+# CDX-10 — DB-AUTHORITATIVE transport mode (the fenced dispatch decision)
+# --------------------------------------------------------------------------- #
+#
+# The site_config flag `jarvis_pump_enabled` is copied into `frappe.local.conf` ONCE at
+# request initialization (frappe.init) and is NOT refreshed when an operator flips it
+# mid-flight (update_site_config rewrites the JSON + clears caches but never rewrites an
+# already-initialized request's local copy). So a request that chose a route, then paused
+# on the shard lock across a cutover, would decide on a STALE conf snapshot. The fix: the
+# per-shard `Jarvis Relay Pump.transport_mode` column IS the fenced decision value. Every
+# dispatch-DECIDING read (accept_or_queue's pump branch, _dispatch_turn's enqueue-boundary
+# re-check) reads that ROW under the shard control-row FOR UPDATE it already holds; the
+# conf flag is the operator-facing MIRROR only. Cheap NON-deciding readers (watchdog gating,
+# telemetry, the callers' fast entry hints) keep reading conf as before — the `from_db`
+# path below is used ONLY at the two fenced points.
+
+# transport_mode values.
+_MODE_PUMP = "pump"
+_MODE_DRAINING = "draining"
+_MODE_LEGACY = "legacy"
+
+
+def _config_transport_mode() -> str:
+	"""Derive the transport_mode a shard SHOULD have from the site_config flag (the
+	initial/reconcile source). Shares ``_pump_flag_explicit_off`` verbatim so absent-vs-
+	explicit-0 never diverges from the conf predicates. Self-host is orthogonal (handled
+	at the decision points by ANDing ``not is_self_hosted()``), so this maps only the flag."""
+	flag = frappe.conf.get("jarvis_pump_enabled")
+	if _pump_flag_explicit_off(flag):
+		return _MODE_LEGACY
+	if _pump_flag_draining(flag):
+		return _MODE_DRAINING
+	return _MODE_PUMP
+
+
+def _row_transport_mode(target: str) -> str:
+	"""Read the shard control row's ``transport_mode`` — the DB-authoritative decision.
+	Callers at the fenced points already hold that row FOR UPDATE, so this non-locking
+	read (in the same txn) sees the latest committed value + any own-txn write. An EMPTY
+	value (a pre-migration / not-yet-reconciled row) falls back to the config-derived mode
+	WITHOUT writing — that fallback is only ever hit before any cutover, when conf and the
+	row agree anyway; a committed cutover always leaves the row non-empty."""
+	tm = frappe.db.get_value(PUMP, target, "transport_mode")
+	if not tm:
+		return _config_transport_mode()
+	return str(tm).strip().lower()
+
+
+def reconcile_transport_mode(target: str) -> str:
+	"""Boot/reconcile (ruling): derive the row's initial transport_mode from the config
+	flag ONCE when it is empty (a fresh row, or a pre-migration one), and persist it so the
+	ROW becomes authoritative thereafter. Idempotent — a non-empty row is returned as-is,
+	never re-derived from conf (that would let the file re-decide). Ensures the row exists
+	first. Best-effort; commits its own write. Called from ``ensure_pump``/``watchdog``."""
+	from jarvis.chat import turn_state as _ts
+
+	_ts._ensure_control_row(target)
+	tm = frappe.db.get_value(PUMP, target, "transport_mode")
+	if tm:
+		return str(tm).strip().lower()
+	derived = _config_transport_mode()
+	try:
+		frappe.db.set_value(PUMP, target, "transport_mode", derived, update_modified=False)
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+	return derived
+
+
+def set_transport_mode(target: str, mode: str) -> int:
+	"""Deliberately change the shard's transport_mode under the shard control-row lock the
+	CALLER already holds (pump_cutover_execute), advancing ``mode_epoch`` by 1 so the change
+	is observable/orderable (CDX-10). No commit here — the caller commits the flip atomically
+	(or rolls it back on a straggler/fault). Returns the new mode_epoch (best-effort read)."""
+	frappe.db.sql(
+		f"""UPDATE `tab{PUMP}` SET transport_mode=%(m)s, mode_epoch=mode_epoch+1
+		WHERE relay_target_id=%(t)s""",
+		{"m": mode, "t": target},
+	)
+	return int(frappe.db.get_value(PUMP, target, "mode_epoch") or 0)
+
+
+def pump_mode_active(from_db: bool = False, target: str | None = None) -> bool:
 	"""True when the Relay Pump owns NEW turn dispatch on this bench: the per-site
 	``jarvis_pump_enabled`` flag is NOT an explicit-off kill switch AND not
 	``'draining'``, AND the transport is managed relay. The pump is the DEFAULT
 	transport, so an UNSET flag is ACTIVE — only an explicit ``0``/``false`` disables
 	it (§10.9 — self-host turns keep the legacy worker-per-turn path regardless).
-	Cheap conf read + one selfhost check."""
+	Cheap conf read + one selfhost check.
+
+	``from_db=True`` (CDX-10, the FENCED path): read ``transport_mode`` from the shard
+	control ROW instead of the request-local conf snapshot — the caller MUST already hold
+	that row FOR UPDATE. Used only at the two dispatch-deciding points; every other reader
+	keeps the cheap conf read."""
+	from jarvis import selfhost
+
+	if from_db:
+		return _row_transport_mode(target or "default") == _MODE_PUMP and not selfhost.is_self_hosted()
 	flag = frappe.conf.get("jarvis_pump_enabled")
 	if _pump_flag_explicit_off(flag) or _pump_flag_draining(flag):
 		return False
-	from jarvis import selfhost
-
 	return not selfhost.is_self_hosted()
 
 
-def pump_draining() -> bool:
-	"""True when ``jarvis_pump_enabled == 'draining'`` on a managed bench: NO new
-	pump admissions (new turns fall through to the legacy path), while the pump keeps
-	draining its existing Turn-row turns to terminal (OAR-11 coexistence). Draining is
-	ALWAYS an explicit sentinel, so the default-ON inversion does not touch it."""
+def pump_draining(from_db: bool = False, target: str | None = None) -> bool:
+	"""True when the shard is DRAINING on a managed bench: NO new pump admissions (new
+	turns fall through to the legacy path), while the pump keeps draining its existing
+	Turn-row turns to terminal (OAR-11 coexistence). Draining is ALWAYS an explicit
+	sentinel, so the default-ON inversion does not touch it. ``from_db=True`` reads the
+	fenced ROW (caller holds the shard lock)."""
+	from jarvis import selfhost
+
+	if from_db:
+		return _row_transport_mode(target or "default") == _MODE_DRAINING and not selfhost.is_self_hosted()
 	flag = frappe.conf.get("jarvis_pump_enabled")
 	if not _pump_flag_draining(flag):
 		return False
-	from jarvis import selfhost
-
 	return not selfhost.is_self_hosted()
 
 
-def pump_configured() -> bool:
+def pump_configured(from_db: bool = False, target: str | None = None) -> bool:
 	"""True when the pump is on in ANY form (active OR draining) on a managed bench —
 	i.e. NOT the explicit-off kill switch. The pump is the DEFAULT transport, so an
 	UNSET flag IS configured; only an explicit falsy value (``0``/``"0"``/``false``)
@@ -253,11 +345,14 @@ def pump_configured() -> bool:
 	pump OWNS every ``Jarvis Chat Turn`` row, so Phase-0 admission's promote/sweep step
 	back (they must never legacy-dispatch or reconcile a pump-owned Turn row) — the
 	coexistence discriminator that keeps the two machines from fighting over the same
-	rows."""
-	if _pump_flag_explicit_off(frappe.conf.get("jarvis_pump_enabled")):
-		return False
+	rows. ``from_db=True`` (CDX-10) reads the fenced ROW (caller holds the shard lock);
+	configured == transport_mode is NOT ``legacy``."""
 	from jarvis import selfhost
 
+	if from_db:
+		return _row_transport_mode(target or "default") != _MODE_LEGACY and not selfhost.is_self_hosted()
+	if _pump_flag_explicit_off(frappe.conf.get("jarvis_pump_enabled")):
+		return False
 	return not selfhost.is_self_hosted()
 
 
@@ -2538,6 +2633,10 @@ def ensure_pump(relay_target_id: str, *, deps: PumpDeps | None = None) -> dict:
 		return {"enqueued": False, "reason": "mirror_live"}
 
 	ts._ensure_control_row(target)
+	# CDX-10: derive the row's transport_mode from config ONCE when it is empty (a fresh /
+	# pre-migration shard), so the ROW is authoritative before any turn is dispatched. A
+	# non-empty row is left as-is (a committed cutover, not conf, decides thereafter).
+	reconcile_transport_mode(target)
 	row = frappe.db.get_value(PUMP, target, ["lease_expires_at", "hop_counter"], as_dict=True)
 	now = ts._now()
 	if row and row.get("lease_expires_at"):
