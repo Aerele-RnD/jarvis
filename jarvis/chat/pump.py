@@ -777,14 +777,29 @@ def _default_apply_tool(ctx: "PumpContext", rs: "_RunState", event: dict) -> Non
 			frappe.db.rollback()
 			rs.version = _resync_version(rs.run_id)
 			return
-		rs.version += 1
-		if owns_row:
-			if phase == "start":
-				message_id = _insert_tool_start_row(conversation, tool_call_id, tool_name)
-			else:
-				message_id = _update_tool_end_row(conversation, tool_call_id, event.get("status"), rs.run_id)
-		frappe.db.commit()  # fence + durable tool row commit ATOMICALLY
-		committed = True
+		# CDX-18: the fence CAS has WON — this uncommitted txn already advanced the Turn
+		# version + last_event_seq watermark. If the durable tool-row write or the atomic
+		# commit below now raises, RelayMux._apply catches the (precious) exception and
+		# invokes quarantine; _park_recovering -> _mark_recovering_mirror would then COMMIT
+		# its recovery CAS, and that commit would ALSO flush this half-done txn (watermark
+		# advanced, tool row missing => replay skips the precious event). Roll the partial
+		# txn back and re-sync the in-memory version from the durable row BEFORE the
+		# exception propagates, so quarantine/recovery starts from a FRESH transaction.
+		try:
+			rs.version += 1
+			if owns_row:
+				if phase == "start":
+					message_id = _insert_tool_start_row(conversation, tool_call_id, tool_name)
+				else:
+					message_id = _update_tool_end_row(
+						conversation, tool_call_id, event.get("status"), rs.run_id
+					)
+			frappe.db.commit()  # fence + durable tool row commit ATOMICALLY
+			committed = True
+		except Exception:
+			frappe.db.rollback()
+			rs.version = _resync_version(rs.run_id)
+			raise
 	finally:
 		if need_lock:
 			ts.reset_lock_tracking()
@@ -1302,12 +1317,17 @@ def drain_slice(ctx: PumpContext) -> str:
 	"""
 	drain_wake(ctx.relay_target_id)
 
-	# CDX-17: ISSUE the mid-hop capacity refresh (non-blocking) BEFORE promote so a fresh
-	# foreign count is on the way; promote reads the last-known view — never blocks on it.
+	# CDX-11 + CDX-17: issue -> POLL -> promote. ISSUE the due mid-hop capacity refresh
+	# (non-blocking), then RESOLVE it BEFORE promotion so an already-resolved refresh that
+	# raised the foreign count is folded before ANY cold admission (no stale-count admit),
+	# and a due-but-unresolved refresh holds NEW cold promotions at ZERO for this slice
+	# (_promote_queued gates on ctx.pending_snapshot). In-flight lanes keep applying deltas
+	# regardless — the snapshot poll never blocks and mux.dispatch runs below.
 	_maybe_refresh_capacity(ctx)
+	_poll_snapshot(ctx)  # CDX-11: fold a resolved refresh (or fail-close a timed-out one) pre-promote
 	_promote_queued(ctx)
 	_dispatch_ready(ctx)  # OARF-5: issues chat.send acks, parks them (never blocks)
-	_poll_pending(ctx)  # OARF-5: resolve done acks/recovery tails/snapshot; ack-timeout deadlines
+	_poll_pending(ctx)  # OARF-5: resolve done acks/recovery tails; ack-timeout deadlines
 
 	if ctx.mux is not None:
 		ctx.mux.dispatch(block_s=SLICE_BLOCK_S)
@@ -1415,7 +1435,16 @@ def _promote_queued(ctx: PumpContext) -> int:
 			promoted_convs.add(conv)
 
 		# (b) cold queued turns (reserved=0): reserve under the credit ceiling.
-		while True:
+		# CDX-11: a DUE capacity refresh that has not yet resolved (issued this slice or a
+		# still-pending prior one) means the foreign count is UNCONFIRMED — hold NEW cold
+		# promotions at ZERO for this slice rather than admit against a possibly-stale count
+		# (drain_slice polls the refresh BEFORE this pass, so a resolved one is already
+		# folded and pending_snapshot is None here). Reserved-already winners (step a) and
+		# in-flight lanes are untouched; only new cold admission waits one slice. A timed-out
+		# refresh clears pending_snapshot and engages the _pump_usable_credit fail-closed path.
+		if ctx.pending_snapshot is not None:
+			_telemetry("capacity_refresh_hold", target=target, cold_held=1)
+		while ctx.pending_snapshot is None:
 			usable = _pump_usable_credit(ctx)
 			if usable <= 0:
 				break
@@ -1666,7 +1695,8 @@ def _poll_pending(ctx: PumpContext) -> None:
 	the shared hop exit."""
 	_poll_acks(ctx)
 	_poll_recoveries(ctx)
-	_poll_snapshot(ctx)  # CDX-17: fold the mid-hop capacity refresh (issue-and-poll)
+	# NB: the capacity-refresh snapshot is polled in drain_slice BEFORE promote (CDX-11 —
+	# issue -> poll -> promote), not here, so a resolved refresh folds ahead of admission.
 
 
 def _poll_acks(ctx: PumpContext) -> None:

@@ -3585,6 +3585,7 @@ import { takeChatPrefill } from "@/composables/chatPrefill";
 import { useConfirm } from "@/composables/useConfirm";
 // timezone-safe: naive server datetimes must go through dayjsLocal (site tz)
 import { formatDate, exactDate, dayLabel } from "@/utils/datetime";
+import { fenceReject, fenceAccept } from "@/utils/eventFence";
 import { renderMarkdown } from "@/markdown";
 import JvChart from "@/charts/JvChart.vue";
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue";
@@ -4022,64 +4023,45 @@ const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
-// Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3 + CDX-12). Every
-// pump-owned realtime event carries (run_id/turn_id, pump_epoch, event_seq). The fence
-// is RUN-SCOPED — ONE entry per run_id (NOT per message_id) — and applied to EVERY event
-// type regardless of message_id: deltas, run:start/recovering/error/end, and ALL tool
-// events (built-in AND jarvis__*, which carry no message_id and previously bypassed the
-// fence entirely — the CDX-3 hole). We retain the GREATEST accepted (epoch, seq) plus the
-// epoch at which a TERMINAL was accepted, and ignore any straggler from a superseded
-// writer:
-//   * a LOWER epoch than the greatest accepted (a pump that lost the lease),
-//   * an equal-epoch lower/equal seq (a replayed/duplicate frame),
-//   * ANY event below the epoch of an already-accepted terminal (a stale delta / run:start
-//     / tool event that would otherwise re-open a completed reply),
-//   * CDX-12: a REPEAT terminal at an already-terminated epoch (the finalize backstop
-//     re-publish) — one-shot per run, so no repeated announcement / reload; a strictly
-//     HIGHER-epoch terminal supersedes and is allowed through.
-// Legacy transport events (no pump_epoch) BYPASS the fence entirely (unchanged). The run
-// key is stable per turn (the pump keeps the same run_id across hops and only bumps
-// pump_epoch on a takeover); turn_id === run_id (publish_fenced sets both).
+// Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3 + CDX-12). The pure fence
+// logic lives in @/utils/eventFence.js (extracted so it is unit-tested by a real node test
+// — jarvis/tests/test_event_fence_client.py runs frontend/src/utils/eventFence.test.js).
+// The fence is RUN-SCOPED — ONE entry per run_id — and is applied to EVERY pump event type
+// (deltas, run:start/recovering/error/end, and ALL tool events incl. jarvis__*). CDX-12:
+// the FIRST terminal at the current epoch is accepted on seq equality (it shares the delta
+// watermark's seq), and a REPEAT terminal is then rejected one-shot; without this the
+// normal terminal was bounced and the run:end UI cleanup never ran (stuck spinner / Stop
+// state / duplicate activity block — F3). Legacy events (no pump_epoch) bypass entirely.
 const eventFence = ref({}); // { [run_id]: { epoch, seq, terminated } }
-function pumpFenceKey(p) {
-	return p.run_id || p.turn_id || null;
-}
 function pumpFenceReject(p, isTerminal) {
-	if (p.pump_epoch == null) return false; // legacy / non-pump -> accept
-	const k = pumpFenceKey(p);
-	if (!k) return false;
-	const f = eventFence.value[k];
-	if (!f) return false;
-	const e = p.pump_epoch;
-	if (f.terminated != null && e < f.terminated) return true; // any event below a higher-epoch terminal
-	// CDX-12: a repeat terminal at an already-terminated (same-or-lower) epoch is one-shot.
-	if (isTerminal && f.terminated != null && e <= f.terminated) return true;
-	if (f.epoch != null && e < f.epoch) return true; // superseded writer
-	if (
-		f.epoch != null &&
-		e === f.epoch &&
-		p.event_seq != null &&
-		f.seq != null &&
-		p.event_seq <= f.seq
-	)
-		return true; // duplicate/older frame at the same epoch
-	return false;
+	return fenceReject(eventFence.value, p, isTerminal);
 }
 function pumpFenceAccept(p, isTerminal) {
-	if (p.pump_epoch == null) return;
-	const k = pumpFenceKey(p);
-	if (!k) return;
-	const prev = eventFence.value[k] || { epoch: null, seq: null, terminated: null };
-	let { epoch, seq, terminated } = prev;
-	const e = p.pump_epoch;
-	if (epoch == null || e > epoch) {
-		epoch = e;
-		seq = p.event_seq != null ? p.event_seq : null; // reset the seq watermark on a new (higher) epoch
-	} else if (e === epoch && p.event_seq != null) {
-		seq = seq == null ? p.event_seq : Math.max(seq, p.event_seq);
-	}
-	if (isTerminal) terminated = terminated == null ? e : Math.max(terminated, e);
-	eventFence.value[k] = { epoch, seq, terminated };
+	fenceAccept(eventFence.value, p, isTerminal);
+}
+// F3 (defensive resync parity): tear down the live streaming-activity block (jv-mark +
+// tool tally) + composer/streaming state for a run whose assistant reply is settled, even
+// if run:end was never processed (a missed/late terminal). The run:end handler already
+// does this on the happy path; this guard makes a settled message ALWAYS collapse the
+// orphan activity container so the live DOM matches what a reload renders.
+function clearStreamingActivity() {
+	waiting.value = false;
+	sending.value = false;
+	statusPhase.value = null;
+	activeTools.value = [];
+	currentRunId.value = null;
+	store.streamingConvId = null;
+	recovering.value = null;
+}
+function tearDownActivityIfSettled() {
+	const rid = currentRunId.value;
+	if (!rid) return;
+	const f = eventFence.value[rid];
+	const settledByFence = f && f.terminated != null; // a terminal was accepted for this run
+	const mid = currentMsgId.value;
+	const m = mid ? messages.value.find((x) => x.name === mid) : null;
+	const settledByRow = m && m.streaming === false; // the assistant row is no longer streaming
+	if (settledByFence || settledByRow) clearStreamingActivity();
 }
 // SUX-7: a settled reply whose enrichment (canvas/attachments/title) is still running.
 // run:end carries enrichment_pending; message:enriched clears it. Drives a subtle
@@ -6472,6 +6454,13 @@ async function loadConversation(id) {
 	// clear it — otherwise the dot pulses forever. A dot on a DIFFERENT
 	// conversation is left alone: its live socket deltas keep it honest.
 	if (!_resumed && store.streamingConvId === id) store.streamingConvId = null;
+	// F3 (defensive resync parity): if this (re)load shows the in-flight reply already
+	// settled — no fresh streaming row — but a live run left the streaming-activity block
+	// standing (a missed/late run:end, the CDX-12 symptom), collapse the orphan jv-mark +
+	// tool-tally container so the live DOM matches exactly what the reload renders. Scoped
+	// to the current run/message, so navigating away from a STILL-streaming chat never
+	// clears its live state.
+	if (!_resumed) tearDownActivityIfSettled();
 	// A freshly opened/refreshed chat should land on the newest message and stay
 	// pinned there while late content settles; the ResizeObserver takes over.
 	pinnedToBottom.value = true;

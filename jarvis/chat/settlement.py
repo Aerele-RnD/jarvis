@@ -136,6 +136,12 @@ def invoke_settlement(
 			},
 		)
 
+	# F4: stamp the REAL reply duration where the UI reads it (see _stamp_reply_duration).
+	# Runs inside the fenced txn: on a win it commits atomically with the projection; on a
+	# 0-rows loss it rolls back with the message write below.
+	if won and am:
+		_stamp_reply_duration(am, run_id)
+
 	if not won:
 		# OARF-3 / §10.11: a 0-rows settlement CAS is NOT unconditionally a lease
 		# loss. Re-read the row's epoch to disambiguate:
@@ -184,6 +190,29 @@ def invoke_settlement(
 # --------------------------------------------------------------------------- #
 # terminal-payload helpers (mirror pump.py's so the two agree on shape)
 # --------------------------------------------------------------------------- #
+
+
+def _stamp_reply_duration(assistant_message: str, run_id: str) -> None:
+	"""F4 — the persisted turn-duration fix. The pump projects the assistant row via raw SQL
+	(``ts._run_cas``), and the streaming batcher writes deltas with ``update_modified=False``,
+	so the assistant Message's ``modified`` never advances past the placeholder insert — the
+	SPA's persisted duration (``modified - creation`` in ChatView.elapsedOf) reads 0.0s even
+	after a refresh. Stamp the REAL elapsed span onto the exact row the UI reads, derived from
+	the durable Turn-row timestamps (``first_event_at`` — the reply's first token — else
+	``dispatching_at``): ``creation`` = the reply start, ``modified`` = the terminal instant
+	(now). This is contract-identical to the legacy path, which bumps ``modified`` via ORM
+	``set_value`` on its final write and leaves ``creation`` at the placeholder/dispatch
+	insert — so old legacy messages still render unchanged. Runs inside the fenced settlement
+	txn (no commit here); a stale-pump loss rolls it back with the rest."""
+	start = frappe.db.get_value(TURN, run_id, "first_event_at") or frappe.db.get_value(
+		TURN, run_id, "dispatching_at"
+	)
+	if not start:
+		return  # a degenerate turn with no dispatch/first-event stamp — leave the row as-is
+	ts._run_cas(
+		f"UPDATE `tab{MSG}` SET creation=%(start)s, modified=%(now)s WHERE name=%(m)s",
+		{"start": start, "now": frappe.utils.now(), "m": assistant_message},
+	)
 
 
 def _epoch_lost(run_id: str, epoch: int) -> bool:

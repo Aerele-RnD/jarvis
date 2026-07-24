@@ -438,13 +438,19 @@ def accept_or_queue(
 	admission txn commits."""
 	from jarvis.chat import pump
 
-	pump_mode = pump.pump_mode_active()
 	target = relay_target_id(conversation)
 	turn_class = turn_class if turn_class in ("interactive", "background") else "interactive"
 	payload_json = json.dumps(dispatch_payload) if dispatch_payload else None
 
 	_lock_shard(target)
 	_lock_conversation(conversation)
+	# CDX-10 (reverse direction): read the pump-vs-legacy mode UNDER the shard lock — the
+	# SAME serialization point pump_cutover_execute holds while it flips the kill switch — so
+	# a mode flip cannot interleave between the branch decision and the durable insert below.
+	# A pump sender paused across a flip-BACK (pump -> legacy revert) would otherwise strand a
+	# pump-style 'queued' row the now-draining pump won't promote; reading it here means this
+	# accept commits a Turn consistent with whichever side of the flip won the lock.
+	pump_mode = pump.pump_mode_active()
 
 	# OARI-11: everything below runs while holding the shard + conversation FOR
 	# UPDATE locks. The two designed early-returns (overload reject, duplicate
@@ -1193,25 +1199,63 @@ def pump_cutover_execute(relay_target: str | None = None) -> dict:
 	if "System Manager" not in frappe.get_roles():
 		raise frappe.PermissionError("pump_cutover_execute requires System Manager")
 	target = relay_target or DEFAULT_RELAY_TARGET
-	pre = pump_cutover_preflight(target)
-	if not pre["clear"]:
-		# Not safe to cut over — leave the kill switch exactly as it is.
-		return {"ok": True, "done": False, "action": "blocked", "verdict": pre["verdict"], "preflight": pre}
 
 	from frappe.installer import update_site_config
 
-	# (2) Remove the kill switch — absence is the managed default (pump ON).
-	update_site_config("jarvis_pump_enabled", "None")
+	from jarvis.chat import turn_state as _ts
 
-	# (3) IMMEDIATE re-check for a straggler that raced into the window.
-	post = pump_cutover_preflight(target)
-	if not post["clear"]:
-		# Revert: re-set the EXPLICIT kill switch so no legacy overlap can start, and tell
-		# the operator to drain + loop. (The pump never actually admitted in this window —
-		# it only became default-ON for the duration of this single pass.)
-		update_site_config("jarvis_pump_enabled", 0)
-		_telemetry("cutover_execute", target=target, done=0, verdict="retry")
-		return {"ok": True, "done": False, "action": "reverted", "verdict": "retry", "preflight": post}
+	# CDX-10 — the REAL serialization point. Hold the per-shard control row FOR UPDATE
+	# across the ENTIRE scan -> flip -> recheck pass (no commit until the end), so this pass
+	# is mutually exclusive with the legacy dispatch path's control-row-locked re-check (in
+	# _dispatch_turn, the txn that precedes its frappe.enqueue) and with accept_or_queue's
+	# under-lock mode read. That closes the round-3 race: a legacy sender that chose legacy
+	# but has NOT enqueued yet either (a) enqueued+committed BEFORE we take the lock — its job
+	# is then visible to the scan below and we do NOT flip; or (b) blocks on this lock until
+	# we finish — then re-checks, sees pump ON, and does NOT enqueue an invisible legacy job.
+	# update_site_config writes the site_config file + frappe.local.conf only (NO db commit),
+	# so the FOR UPDATE lock is held unbroken through the flip.
+	try:
+		_ts._lock_shard(target)  # commit-first; the FOR UPDATE is the first statement
+
+		# (1) Preflight scan UNDER the lock.
+		pre = pump_cutover_preflight(target)
+		if not pre["clear"]:
+			# Not safe to cut over — leave the kill switch exactly as it is; release the lock.
+			frappe.db.rollback()
+			return {
+				"ok": True,
+				"done": False,
+				"action": "blocked",
+				"verdict": pre["verdict"],
+				"preflight": pre,
+			}
+
+		# (2) Remove the kill switch — absence is the managed default (pump ON). Still locked.
+		update_site_config("jarvis_pump_enabled", "None")
+
+		# (3) IMMEDIATE re-check for a straggler that raced into the window — still locked.
+		post = pump_cutover_preflight(target)
+		if not post["clear"]:
+			# Revert: re-set the EXPLICIT kill switch so no legacy overlap can start, release
+			# the lock, and tell the operator to drain + loop. (The pump never admitted here —
+			# it was default-ON only for this single locked pass; the lock kept every legacy
+			# sender's enqueue serialized behind this re-check.)
+			update_site_config("jarvis_pump_enabled", 0)
+			frappe.db.rollback()
+			_telemetry("cutover_execute", target=target, done=0, verdict="retry")
+			return {"ok": True, "done": False, "action": "reverted", "verdict": "retry", "preflight": post}
+
+		frappe.db.commit()  # commit the gate: the flip is durable, the lock is released
+	except Exception:
+		# Any fault mid-pass: revert the flag defensively (fail closed) and release the lock.
+		try:
+			update_site_config("jarvis_pump_enabled", 0)
+		except Exception:
+			pass
+		frappe.db.rollback()
+		raise
+	finally:
+		_ts.reset_lock_tracking()
 
 	_telemetry("cutover_execute", target=target, done=1, verdict="cutover")
 	return {"ok": True, "done": True, "action": "cutover", "verdict": "cutover", "preflight": post}

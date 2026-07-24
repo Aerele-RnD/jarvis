@@ -1266,6 +1266,74 @@ class TestToolApplierEquivalence(_PipelineCase):
 			"stale pump published NO tool lifecycle event",
 		)
 
+	def test_tool_apply_failure_after_fence_rolls_back_before_quarantine(self):
+		# CDX-18: an exception AFTER the apply_tool_fenced CAS wins (the durable tool-row write
+		# or the atomic commit raises) must roll the partial txn back BEFORE it propagates to
+		# the mux, else quarantine's recovery CAS would COMMIT this half-done txn (Turn version
+		# + watermark advanced, tool row MISSING => replay skips the precious event). Inject a
+		# failure right after the fence CAS and assert codex's four conditions.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, content="q")
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		rid = "pmp_tool_cdx18"
+		self._mk_turn(
+			conv, rid, seed, "streaming", version=5, reserved=1, last_event_seq=3, assistant_message=amsg
+		)
+		frappe.db.commit()
+		ctx = self._make_ctx(self._deps(), with_mux=False)  # acquires the lease + re-stamps the turn to E
+		V = int(frappe.db.get_value(TURN, rid, "version"))
+		W = int(frappe.db.get_value(TURN, rid, "last_event_seq") or 0)
+		rs = pump._RunState(
+			run_id=rid,
+			conversation=conv,
+			owner=TEST_USER,
+			assistant_message=amsg,
+			session_key="s",
+			version=V,
+		)
+		self._pubs.clear()
+		ev = {
+			"event_seq": 9,
+			"phase": "start",
+			"tool_name": "browser",
+			"tool_call_id": "tk_boom",
+			"title": "t",
+		}
+		# The fence CAS wins first; the durable row insert then raises (disk full / lock wait).
+		with patch.object(pump, "_insert_tool_start_row", side_effect=RuntimeError("disk full")):
+			with self.assertRaises(RuntimeError):
+				pump._default_apply_tool(ctx, rs, ev)
+		# (1) Turn version + watermark are back at their pre-event values (the CAS rolled back).
+		self.assertEqual(
+			int(frappe.db.get_value(TURN, rid, "version")), V, "Turn version restored — no leaked advance"
+		)
+		self.assertEqual(
+			int(frappe.db.get_value(TURN, rid, "last_event_seq") or 0),
+			W,
+			"watermark restored — no leaked advance",
+		)
+		self.assertEqual(rs.version, V, "in-memory rs.version re-synced from the durable row after rollback")
+		# (2) No durable tool row was written.
+		self.assertFalse(
+			frappe.db.exists(MSG, {"conversation": conv, "tool_call_id": "tk_boom", "role": "tool"}),
+			"no tool receipt row inserted on the failed apply",
+		)
+		# (3) No lifecycle event published.
+		self.assertEqual(
+			[p for p in self._pubs if p.get("kind") in ("tool:start", "tool:end")],
+			[],
+			"no tool lifecycle event published on the failed apply",
+		)
+		# (4) Quarantine/recovery proceeds from a FRESH transaction: _park_recovering marks the
+		#     turn recovering against the CLEAN pre-event version (V -> V+1), NOT a leaked V+1.
+		pump._park_recovering(ctx, rid, reason="precious_fault")
+		self.assertEqual(self._state(rid), "recovering", "recovery proceeded from a fresh, consistent txn")
+		self.assertEqual(
+			int(frappe.db.get_value(TURN, rid, "version")),
+			V + 1,
+			"recovery CAS bumped the CLEAN version exactly once",
+		)
+
 
 # --------------------------------------------------------------------------- #
 # 12. CDX-6 — usage honesty (no permanent 'recorded' on stale/missing data)
@@ -1449,6 +1517,54 @@ class TestTerminalPublishBackstop(_PipelineCase):
 			"settlement + finalize terminals share a stable identity (one-shot dedup)",
 		)
 		self.assertEqual(settle_end.get("event_seq"), 11)
+
+	def test_completed_pump_turn_persists_real_duration(self):
+		# F4: the pump projects the assistant row via raw SQL (and the streaming batcher writes
+		# deltas with update_modified=False), so `modified` never advanced past the placeholder
+		# insert — the SPA's persisted duration (modified - creation in ChatView.elapsedOf) read
+		# 0.0s even after a refresh. Settlement now stamps the REAL elapsed span onto the exact
+		# row the UI reads, derived from the durable Turn-row timestamps (creation = first-event,
+		# modified = terminal instant). Assert the field is written with a plausible nonzero span.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="hi", streaming=1)
+		rid = "pmp_duration"
+		E = self._acquire_fresh("hopDur")
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"terminal_observed",
+			version=4,
+			pump_epoch=E,
+			last_event_seq=7,
+			assistant_message=amsg,
+			terminal_kind="relay:final",
+			terminal_payload=json.dumps({"text": "hi"}),
+			# The reply started ~12s ago (first token), dispatch ~15s ago — persisted state a
+			# refresh would read. Before the fix, modified==creation (placeholder insert) => 0.0s.
+			dispatching_at=frappe.utils.add_to_date(None, seconds=-15),
+			first_event_at=frappe.utils.add_to_date(None, seconds=-12),
+		)
+		frappe.db.commit()
+		settlement.invoke_settlement(
+			rid,
+			relay_target_id=self._target,
+			epoch=E,
+			version=4,
+			terminal_kind="relay:final",
+			terminal_payload={"text": "hi"},
+			assistant_message=amsg,
+			owner=TEST_USER,
+			conversation=conv,
+			deps=self._deps(),
+		)
+		row = frappe.db.get_value(MSG, amsg, ["creation", "modified"], as_dict=True)
+		elapsed = frappe.utils.time_diff_in_seconds(row.modified, row.creation)
+		self.assertGreaterEqual(
+			elapsed, 10, f"persisted turn duration must be a plausible nonzero value, got {elapsed}s"
+		)
+		self.assertLess(elapsed, 1800, "duration stays within the UI's sane (<30min) window")
 
 	def test_terminal_publish_for_errored_turn_republishes_run_error(self):
 		conv = self._mk_conv()

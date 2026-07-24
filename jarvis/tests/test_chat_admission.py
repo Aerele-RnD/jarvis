@@ -1025,3 +1025,167 @@ class TestCutoverPreflight(_AdmissionTestCase):
 		self.assertTrue(res["done"])
 		self.assertEqual(res["action"], "cutover")
 		self.assertEqual(cfg_writes, [("jarvis_pump_enabled", "None")], "key removed once, no revert")
+
+	def test_legacy_gate_reroutes_instead_of_enqueue_when_pump_flipped(self):
+		# CDX-10 (forward, deterministic): a PURE-LEGACY sender reaches the enqueue boundary
+		# and its under-lock gate re-check observes pump-ON (the cutover flipped it). It must
+		# NOT enqueue an invisible legacy job — it reroutes to the pump accept path.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		run_id = "cutover_gate_logic"
+		kwargs = {"conversation_id": conv, "message_id": seed, "run_id": run_id, "enqueued_at_ms": 1}
+		enqueued, rerouted = [], []
+		with (
+			patch.object(admission, "turn_machine_enabled", return_value=True),  # flipped to pump-ON
+			patch("frappe.enqueue", side_effect=lambda *a, **k: enqueued.append(k.get("job_id"))),
+			patch.object(
+				admission,
+				"accept_or_queue",
+				side_effect=lambda **k: rerouted.append(k["run_id"])
+				or {"ok": True, "dispatched": False, "run_id": k["run_id"]},
+			),
+		):
+			chat_api._dispatch_turn(kwargs, cutover_gate=True)
+		self.assertEqual(enqueued, [], "CDX-10: no legacy RQ job enqueued after the flip")
+		self.assertEqual(rerouted, [run_id], "the turn rerouted to the pump accept path")
+
+	def test_legacy_gate_still_enqueues_when_site_stays_legacy(self):
+		# CDX-10: the gate is transparent on a genuinely-legacy site — under the held lock it
+		# re-checks, sees legacy, and enqueues exactly as before (no behavior change off the
+		# cutover window).
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		run_id = "cutover_gate_legacy"
+		kwargs = {"conversation_id": conv, "message_id": seed, "run_id": run_id, "enqueued_at_ms": 1}
+		enqueued, rerouted = [], []
+		with (
+			patch.object(admission, "turn_machine_enabled", return_value=False),  # still legacy
+			patch.dict(frappe.local.conf, {"socketio_backend": ""}),  # node backend -> the RQ path
+			patch("frappe.enqueue", side_effect=lambda *a, **k: enqueued.append(k.get("job_id"))),
+			patch.object(admission, "accept_or_queue", side_effect=lambda **k: rerouted.append(k["run_id"])),
+		):
+			chat_api._dispatch_turn(kwargs, cutover_gate=True)
+		self.assertEqual(len(enqueued), 1, "still-legacy: the RQ job enqueues under the held lock")
+		self.assertEqual(rerouted, [], "no reroute when the site stays legacy")
+
+	def test_accept_reads_pump_mode_under_the_shard_lock(self):
+		# CDX-10 (reverse direction): accept_or_queue reads pump-vs-legacy mode AFTER acquiring
+		# the shard lock (the cutover gate), so a flip-back cutover_execute commits under that
+		# lock cannot interleave between the branch decision and the durable insert — a pump
+		# sender never strands a pump-style Turn the draining pump won't promote.
+		order = []
+		real_lock = admission._lock_shard
+
+		def rec_lock(t):
+			order.append("lock")
+			return real_lock(t)
+
+		def rec_mode():
+			order.append("mode")
+			return False  # legacy branch — avoids pump ensure/wake side effects
+
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		with (
+			patch.object(admission, "_lock_shard", side_effect=rec_lock),
+			patch.object(pump, "pump_mode_active", side_effect=rec_mode),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
+		):
+			admission.accept_or_queue(
+				conversation=conv, run_id="rev_mode", seed_message=seed, dispatch=lambda: None
+			)
+		self.assertEqual(order[:1], ["lock"], "the shard lock is taken FIRST")
+		self.assertIn("mode", order, "pump mode is read")
+		self.assertLess(order.index("lock"), order.index("mode"), "pump mode read UNDER the shard lock")
+
+	def test_paused_legacy_sender_lands_no_job_after_cutover_done(self):
+		# CDX-10 (concurrent — codex's required test): a REAL legacy sender is paused at the
+		# enqueue boundary (between turn_machine_enabled()==False and frappe.enqueue) while a
+		# REAL pump_cutover_execute runs to done=True on a SEPARATE DB connection; when the
+		# sender is released it acquires the (now-free) shard control-row lock, re-checks under
+		# it, sees pump-ON and PROVES no legacy job lands (it reroutes instead). The shard
+		# control row FOR UPDATE that both paths take is the serialization point.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		run_id = "cutover_race_S"
+		site = frappe.local.site
+		state = {"pump_on": False}
+		c_done = threading.Event()
+		enqueued, rerouted, errors = [], [], []
+
+		def fake_scan(*a, **k):  # both cutover passes report clear (RQ scan stubbed)
+			return {
+				"clear": True,
+				"verdict": "clear",
+				"scan_ok": True,
+				"legacy_jobs": 0,
+				"legacy_streaming": 0,
+			}
+
+		def fake_flip(key, value, *a, **kw):  # cutover's flip toggles the shared, cross-thread holder
+			if key == "jarvis_pump_enabled":
+				state["pump_on"] = value == "None"
+
+		def cutover_worker():
+			frappe.init(site=site)
+			frappe.connect()
+			frappe.set_user(TEST_USER)
+			try:
+				with (
+					patch.object(admission, "pump_cutover_preflight", side_effect=fake_scan),
+					patch("frappe.installer.update_site_config", side_effect=fake_flip),
+				):
+					res = admission.pump_cutover_execute()
+					if not res.get("done"):
+						errors.append(("C", res))
+			except Exception as e:
+				errors.append(("C", e))
+			finally:
+				try:
+					frappe.db.commit()
+				finally:
+					c_done.set()
+					frappe.destroy()
+
+		def sender_worker():
+			frappe.init(site=site)
+			frappe.connect()
+			frappe.set_user(TEST_USER)
+			try:
+				# Paused at the enqueue boundary until the cutover has committed done=True.
+				c_done.wait(timeout=20)
+				kwargs = {
+					"conversation_id": conv,
+					"message_id": seed,
+					"run_id": run_id,
+					"enqueued_at_ms": 1,
+				}
+				with (
+					patch.object(admission, "turn_machine_enabled", side_effect=lambda: state["pump_on"]),
+					patch("frappe.enqueue", side_effect=lambda *a, **k: enqueued.append(k.get("job_id"))),
+					patch.object(
+						admission,
+						"accept_or_queue",
+						side_effect=lambda **k: rerouted.append(k["run_id"])
+						or {"ok": True, "dispatched": False, "run_id": k["run_id"]},
+					),
+				):
+					chat_api._dispatch_turn(kwargs, cutover_gate=True)
+			except Exception as e:
+				errors.append(("S", e))
+			finally:
+				try:
+					frappe.db.commit()
+				finally:
+					frappe.destroy()
+
+		tC = threading.Thread(target=cutover_worker)
+		tS = threading.Thread(target=sender_worker)
+		tC.start()
+		tS.start()
+		tC.join(timeout=30)
+		tS.join(timeout=30)
+		self.assertEqual(errors, [], f"worker error: {errors}")
+		self.assertTrue(state["pump_on"], "cutover reached done=True and flipped to pump-ON")
+		self.assertEqual(enqueued, [], "CDX-10: NO legacy job landed after the cutover committed")
+		self.assertEqual(rerouted, [run_id], "the paused legacy sender rerouted to the pump accept path")

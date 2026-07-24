@@ -1156,7 +1156,7 @@ def send_message(
 				frappe.log_error(title="send_message overload seed cleanup", message=frappe.get_traceback())
 			return {"ok": False, "reason": _adm.get("reason")}
 	else:
-		_dispatch_turn(enqueue_kwargs, interactive=_interactive)
+		_dispatch_turn(enqueue_kwargs, interactive=_interactive, cutover_gate=True)
 
 	# Latency telemetry (plan Phase 0): one line per send so the web-request
 	# segments are measurable. total_ms should now sit in the tens of ms even
@@ -1661,7 +1661,7 @@ def retry_message(message: str) -> dict:
 			out["queued"] = True
 			out["queued_position"] = _adm.get("queued_position")
 		return out
-	_dispatch_turn(payload)
+	_dispatch_turn(payload, cutover_gate=True)
 	return {"ok": True, "run_id": run_id}
 
 
@@ -1824,10 +1824,43 @@ def _redispatch_orphan(
 			dispatch_payload=_dispatch_payload or None,
 		)
 		return
-	_dispatch_turn(payload, interactive=False)
+	_dispatch_turn(payload, interactive=False, cutover_gate=True)
 
 
-def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True) -> None:
+def _reroute_legacy_to_pump(enqueue_kwargs: dict, interactive: bool) -> None:
+	"""CDX-10: a PURE-LEGACY sender reached the enqueue boundary just as the cutover flipped
+	the site to pump-ON. Rather than drop an INVISIBLE legacy worker job the pump can't
+	coordinate (per-conversation ordering / container-cap violation), route the turn through
+	the ONE admission chokepoint so it becomes a durable Turn row the pump owns. Chosen over
+	failing the request with a retryable error because it is strictly safer — the turn is
+	never stranded, and the user's already-committed message gets an answer."""
+	from jarvis.chat import admission
+
+	conversation = enqueue_kwargs.get("conversation_id")
+	run_id = enqueue_kwargs.get("run_id")
+	seed_message = enqueue_kwargs.get("message_id")
+	if not (conversation and run_id and seed_message):
+		# Without the identity to build a Turn row we cannot reroute — fail closed (retryable)
+		# rather than silently drop a legacy job into a pump-owned world.
+		raise frappe.ValidationError(frappe._("The chat is switching transports — please resend."))
+	payload = {}
+	if enqueue_kwargs.get("attachments"):
+		payload["attachments"] = enqueue_kwargs["attachments"]
+	if enqueue_kwargs.get("context"):
+		payload["context"] = enqueue_kwargs["context"]
+	admission.accept_or_queue(
+		conversation=conversation,
+		run_id=run_id,
+		seed_message=seed_message,
+		turn_class="interactive" if interactive else "background",
+		# In pump mode accept_or_queue leaves the turn queued for the pump (this callback is
+		# unused); the phase-0 fallback dispatches the legacy worker WITHOUT re-gating.
+		dispatch=lambda: _dispatch_turn(enqueue_kwargs, interactive=interactive),
+		dispatch_payload=payload or None,
+	)
+
+
+def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True, cutover_gate: bool = False) -> None:
 	"""Route a prepared turn to the worker. On the default Node socketio backend
 	we use the ``jarvis_chat`` RQ queue when the bench provisions one, else
 	``long`` (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
@@ -1836,66 +1869,101 @@ def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True) -> None:
 	scheduled work). On the Python socketio backend we publish to Redis instead so
 	an in-process subscriber (``jarvis.realtime.handlers``) runs it via gevent,
 	removing the RQ concurrency cap. Shared by send_message, retry_message and the
-	macro engine so every turn dispatches identically."""
-	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
-		from jarvis.chat import dispatch
+	macro engine so every turn dispatches identically.
 
-		# Mismatch guard: pub/sub is fire-and-forget, so publishing with no
-		# live subscriber (config says python but the Node server is the one
-		# running - Frappe Cloud pins node in its supervisor template and
-		# does NOT blacklist this config key - or the realtime process is
-		# down) would strand the turn: hang, then ceiling-error. Verify a
-		# subscriber first; on zero, or any doubt (redis hiccup), fall back
-		# to the RQ path - both dispatch flows are first-class, so RQ is
-		# always a correct executor. The fallback logs loudly: it is a
-		# misconfiguration signal, not a normal mode.
-		listening = False
-		try:
-			listening = dispatch.subscriber_count() > 0
-		except Exception:
-			pass
-		if listening:
-			# Publish AFTER the request transaction commits. Pub/sub delivery
-			# is instant (unlike RQ dequeue latency), so publishing mid-
-			# transaction lets the subscriber greenlet start the turn before
-			# the conversation and user-message rows are visible -
-			# LinkValidationError on the placeholder insert. Mirrors enqueue-
-			# after-commit semantics; caught by the Stage A live smoke.
-			frappe.db.after_commit.add(lambda: dispatch.publish_chat_send(enqueue_kwargs))
+	``cutover_gate`` (CDX-10): set by the PURE-LEGACY callers (the ``else`` branch of
+	``turn_machine_enabled()``). Before dispatching, re-validate the legacy/pump gate under
+	the per-shard control row FOR UPDATE — the SAME lock ``pump_cutover_execute`` holds across
+	its scan -> flip -> recheck. If the world flipped to pump-ON since the branch decision, we
+	do NOT enqueue an invisible legacy job (the pump can't see it); the turn is rerouted to
+	the pump accept path. If still legacy, the lock is HELD through the enqueue below, so a
+	concurrent cutover that acquires the lock next scans the just-enqueued job and will NOT
+	flip. The lock is released by the commit in the ``finally``."""
+	_gate_ts = None
+	if cutover_gate:
+		from jarvis.chat import admission
+		from jarvis.chat import turn_state as _gate_ts_mod
+
+		_gate_ts = _gate_ts_mod
+		_gate_target = admission.relay_target_id(enqueue_kwargs.get("conversation_id"))
+		_gate_ts._lock_shard(_gate_target)  # commit-first; the FOR UPDATE is the first statement
+		if admission.turn_machine_enabled():
+			# Flipped to pump-ON inside the window: release the gate lock and reroute so no
+			# invisible legacy job lands after a cutover reached done=True.
+			frappe.db.commit()
+			_gate_ts.reset_lock_tracking()
+			_reroute_legacy_to_pump(enqueue_kwargs, interactive)
 			return
-		frappe.log_error(
-			title="chat: Path B subscriber missing - dispatched via RQ",
-			message=(
-				"socketio_backend=python but no live subscriber on the chat "
-				"channel (config/process mismatch, or the Python realtime "
-				"process is down). The turn was routed to the RQ worker "
-				"instead, so chat keeps working - but fix the mismatch or "
-				"unset socketio_backend."
-			),
+	try:
+		if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
+			from jarvis.chat import dispatch
+
+			# Mismatch guard: pub/sub is fire-and-forget, so publishing with no
+			# live subscriber (config says python but the Node server is the one
+			# running - Frappe Cloud pins node in its supervisor template and
+			# does NOT blacklist this config key - or the realtime process is
+			# down) would strand the turn: hang, then ceiling-error. Verify a
+			# subscriber first; on zero, or any doubt (redis hiccup), fall back
+			# to the RQ path - both dispatch flows are first-class, so RQ is
+			# always a correct executor. The fallback logs loudly: it is a
+			# misconfiguration signal, not a normal mode.
+			listening = False
+			try:
+				listening = dispatch.subscriber_count() > 0
+			except Exception:
+				pass
+			if listening:
+				# Publish AFTER the request transaction commits. Pub/sub delivery
+				# is instant (unlike RQ dequeue latency), so publishing mid-
+				# transaction lets the subscriber greenlet start the turn before
+				# the conversation and user-message rows are visible -
+				# LinkValidationError on the placeholder insert. Mirrors enqueue-
+				# after-commit semantics; caught by the Stage A live smoke. Under
+				# the cutover gate the finally commits (releasing the lock), which
+				# fires this after-commit publish.
+				frappe.db.after_commit.add(lambda: dispatch.publish_chat_send(enqueue_kwargs))
+				return
+			frappe.log_error(
+				title="chat: Path B subscriber missing - dispatched via RQ",
+				message=(
+					"socketio_backend=python but no live subscriber on the chat "
+					"channel (config/process mismatch, or the Python realtime "
+					"process is down). The turn was routed to the RQ worker "
+					"instead, so chat keeps working - but fix the mismatch or "
+					"unset socketio_backend."
+				),
+			)
+		queue = _turn_queue()
+		# Deterministic job id so the orphan sweep (stale_scan) can tell a
+		# queued-and-draining job from one lost in a dead queue. The attempt
+		# suffix comes from the user row's was_recovered flag (0 first
+		# dispatch, 1 after a sweeper re-dispatch) so an id is never reused
+		# for a live job.
+		job_id = None
+		message_id = enqueue_kwargs.get("message_id")
+		if message_id:
+			attempt = frappe.db.get_value(MSG, message_id, "was_recovered") or 0
+			job_id = f"jarvis-turn::{message_id}::a{int(attempt)}"
+		frappe.enqueue(
+			method="jarvis.chat.worker.run_agent_turn",
+			queue=queue,
+			timeout=_AGENT_TURN_WORKER_TIMEOUT,
+			# Interactive turns (typed message, retry, macro step) jump the
+			# queue; background turns (File Box batch drops) keep FIFO drop
+			# order on the dedicated chat queue. On the shared long queue
+			# everything stays at_front, as before, to beat scheduled work.
+			at_front=(queue == "long") or interactive,
+			job_id=job_id,
+			**enqueue_kwargs,
 		)
-	queue = _turn_queue()
-	# Deterministic job id so the orphan sweep (stale_scan) can tell a
-	# queued-and-draining job from one lost in a dead queue. The attempt
-	# suffix comes from the user row's was_recovered flag (0 first
-	# dispatch, 1 after a sweeper re-dispatch) so an id is never reused
-	# for a live job.
-	job_id = None
-	message_id = enqueue_kwargs.get("message_id")
-	if message_id:
-		attempt = frappe.db.get_value(MSG, message_id, "was_recovered") or 0
-		job_id = f"jarvis-turn::{message_id}::a{int(attempt)}"
-	frappe.enqueue(
-		method="jarvis.chat.worker.run_agent_turn",
-		queue=queue,
-		timeout=_AGENT_TURN_WORKER_TIMEOUT,
-		# Interactive turns (typed message, retry, macro step) jump the
-		# queue; background turns (File Box batch drops) keep FIFO drop
-		# order on the dedicated chat queue. On the shared long queue
-		# everything stays at_front, as before, to beat scheduled work.
-		at_front=(queue == "long") or interactive,
-		job_id=job_id,
-		**enqueue_kwargs,
-	)
+	finally:
+		if _gate_ts is not None:
+			# CDX-10: release the gate lock. The RQ enqueue above pushed the job to redis
+			# synchronously (enqueue_after_commit defaults False), and the pubsub after-commit
+			# publish fires on this commit — so a concurrent cutover that next acquires the
+			# lock sees the just-enqueued legacy job and will NOT flip.
+			frappe.db.commit()
+			_gate_ts.reset_lock_tracking()
 
 
 def _enqueue_turn(
@@ -1980,7 +2048,7 @@ def _enqueue_turn(
 			out["queued"] = True
 			out["queued_position"] = _adm.get("queued_position")
 		return out
-	_dispatch_turn(_kwargs, interactive=interactive)
+	_dispatch_turn(_kwargs, interactive=interactive, cutover_gate=True)
 	return out
 
 

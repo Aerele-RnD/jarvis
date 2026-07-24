@@ -1641,10 +1641,16 @@ class TestConservativeAdmission(_PumpTestCase):
 		# CDX-17: a stalled sessions.list capacity RPC must NOT block a slice / delta
 		# application. Drive frames while the control RPC hangs and prove the slice does
 		# not wait ~ACK_TIMEOUT_S and the streaming delta still lands.
+		# NB (CDX-11 interaction): a RESERVED (reserve-on-send winner) turn is used here.
+		# CDX-11 now holds NEW COLD promotions at zero while a capacity refresh is unresolved
+		# (a permanently-hung gateway can never confirm the foreign count), so a cold turn
+		# would be correctly held for the whole hang. A reserved turn already holds its credit
+		# and promotes via _promote_queued step (a) — ungated — which is exactly the in-flight
+		# lane CDX-17 protects: its deltas must keep applying while the control RPC hangs.
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv, content="hello")
 		rid = "pmp_snap_stall"
-		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=0)
+		self._mk_turn(conv, rid, seed, "queued", version=0, reserved=1)
 		double = self._double()
 		double.arm_sessions_list_hang()  # the control RPC never responds
 		deps = self._deps(double=double, prepare=self._prepare_stub(conv, double, "success"))
@@ -1667,3 +1673,74 @@ class TestConservativeAdmission(_PumpTestCase):
 		# The delta content landed on the assistant placeholder despite the stalled RPC.
 		amsg = self._val(rid, "assistant_message")
 		self.assertTrue((frappe.db.get_value(MSG, amsg, "content") or "").strip(), "deltas applied")
+
+	def test_drain_slice_folds_resolved_refresh_before_promotion(self):
+		# CDX-11 (a) — at the drain_slice level (NOT a manually reordered helper): a DUE
+		# capacity refresh that has already RESOLVED with a RAISED foreign count is folded
+		# BEFORE promotion (drain_slice runs issue -> POLL -> promote), so a cold turn is never
+		# admitted against the stale (pre-refresh) count. Hop start = 0 foreign (which WOULD
+		# admit); the resolved refresh reports the cap full => the cold turn must be HELD.
+		from jarvis.chat import admission
+
+		high = admission._max_inflight() + pump.SAFETY_RESERVE + 5
+		deps = self._deps(
+			issue_snapshot=lambda c: _ResolvedSnap(
+				{"snapshot_ok": True, "gateway_active": high, "active_session_keys": set()}
+			)
+		)
+		ctx = self._make_ctx(deps, with_mux=False)
+		pump._reconcile_gateway_active(
+			ctx, {"snapshot_ok": True, "gateway_active": 0, "active_session_keys": set()}
+		)
+		self.assertEqual(ctx.gateway_active, 0, "hop start: cap free (the stale count WOULD admit)")
+		(cold,) = self._queue_cold(1)
+		ctx.last_snapshot_mono -= pump.SNAPSHOT_REFRESH_S + 1  # force the refresh cadence
+		pump.drain_slice(ctx)
+		self.assertIsNone(ctx.pending_snapshot, "resolved refresh folded (poll ran BEFORE promote)")
+		self.assertEqual(ctx.gateway_active, high, "the RAISED foreign count was folded before promotion")
+		self.assertEqual(
+			self._state(cold), "queued", "CDX-11: no cold promotion against the stale zero count"
+		)
+		self.assertEqual(
+			int(self._val(cold, "reserved") or 0), 0, "cold turn not reserved against the stale count"
+		)
+
+	def test_drain_slice_holds_cold_promotions_while_snapshot_stalls_but_deltas_flow(self):
+		# CDX-11 (b) — at the drain_slice level: a permanently STALLED capacity refresh holds
+		# NEW cold promotions at ZERO (the foreign count is unconfirmed) while in-flight lanes
+		# keep applying deltas. A reserved (reserve-on-send winner) turn streams to terminal via
+		# the UNGATED step (a); a cold turn on another conversation stays 'queued' throughout.
+		convA = self._mk_conv()
+		seedA = self._mk_msg(convA, content="hi")
+		ridA = "pmp_cdx11_stream"
+		self._mk_turn(convA, ridA, seedA, "queued", version=0, reserved=1)  # reserve-on-send winner
+		convB = self._mk_conv()
+		seedB = self._mk_msg(convB, content="later")
+		ridB = "pmp_cdx11_cold"
+		self._mk_turn(convB, ridB, seedB, "queued", version=0, reserved=0)  # cold
+		double = self._double()
+		double.arm_sessions_list_hang()  # the capacity RPC never responds
+		deps = self._deps(double=double, prepare=self._prepare_stub(convA, double, "success"))
+		ctx = self._make_ctx(deps)  # real mux
+		ctx.last_snapshot_mono -= pump.SNAPSHOT_REFRESH_S + 1  # force the (hanging) refresh cadence
+		with patch.object(pump, "ACK_TIMEOUT_S", 30.0):
+			outcome = self._pump_until(
+				ctx, lambda: self._state(ridA) in ("finalizing", "done"), max_slices=60
+			)
+		self.assertIn(
+			self._state(ridA),
+			("finalizing", "done"),
+			f"reserved lane streamed to terminal (outcome={outcome})",
+		)
+		self.assertIsNotNone(ctx.pending_snapshot, "the capacity refresh is STILL stalled (permanent hang)")
+		self.assertEqual(
+			self._state(ridB), "queued", "CDX-11: the cold turn was HELD while the refresh stalled"
+		)
+		self.assertEqual(
+			int(self._val(ridB, "reserved") or 0), 0, "cold turn never reserved while unconfirmed"
+		)
+		# Deltas continued: the in-flight (reserved) lane's placeholder got the streamed content.
+		amsgA = self._val(ridA, "assistant_message")
+		self.assertTrue(
+			(frappe.db.get_value(MSG, amsgA, "content") or "").strip(), "deltas applied to the in-flight lane"
+		)
