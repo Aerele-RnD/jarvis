@@ -7,10 +7,17 @@ from jarvis import _subscription_models as cat
 from jarvis.oauth.api import _coerce_subscription_model
 
 GEMINI = "Google Gemini"
+# Every id here MUST be compiled into the pinned cliproxy image. "gemini-3.1-flash"
+# was listed until 2026-07-23 and never was: the image carries only the -image,
+# -image-preview, -lite and -lite-preview variants, so a subscriber choosing it
+# silently misrouted to the pool primary via Bifrost's catch-all instead of
+# erroring. Replaced with the -lite variant, which is real. The api-key tier still
+# offers "gemini-3.1-flash" (Google's own API serves it); only this tier is
+# image-bound.
 EXPECTED_GEMINI = [
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
-	"gemini-3.1-flash",
+	"gemini-3.1-flash-lite",
 ]
 
 

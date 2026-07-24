@@ -124,12 +124,26 @@ class TestBundledCatalogMirrorsAdminSeed(FrappeTestCase):
 		self.assertEqual(by_id["google"]["catalog_id"], "gemini")
 
 	def test_bundle_preserves_the_full_subscription_lists(self):
-		# test_subscription_models.py:31 asserts every active gemini model coerces.
+		# test_subscription_models.py asserts every active gemini model coerces.
 		from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
 
 		g = next(p for p in BUNDLED_MODEL_CATALOG if p["provider_id"] == "google")
 		subs = [m["model_id"] for m in g["models"] if m["tier"] == "subscription"]
-		self.assertEqual(subs, ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"])
+		self.assertEqual(subs, ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash-lite"])
+
+	def test_the_two_gemini_tiers_differ_on_purpose(self):
+		# Not a typo and not drift. "gemini-3.1-flash" is absent from the pinned
+		# cliproxy image, so it cannot be served on the subscription tier, but
+		# Google's own API does serve it so the api-key tier keeps it. If a future
+		# regeneration ever collapses these to the same list, one tier is wrong.
+		from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
+
+		g = next(p for p in BUNDLED_MODEL_CATALOG if p["provider_id"] == "google")
+		api = [m["model_id"] for m in g["models"] if m["tier"] == "api_key"]
+		subs = [m["model_id"] for m in g["models"] if m["tier"] == "subscription"]
+		self.assertIn("gemini-3.1-flash", api)
+		self.assertNotIn("gemini-3.1-flash", subs)
+		self.assertIn("gemini-3.1-flash-lite", subs)
 
 
 class TestGetModelCatalogNeverRaises(FrappeTestCase):

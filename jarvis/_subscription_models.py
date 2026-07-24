@@ -30,10 +30,16 @@ import frappe
 
 _SEED_SUBSCRIPTION_MODELS: dict[str, list[str]] = {
 	"OpenAI": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+	# NOT "gemini-3.1-flash": that id is absent from the pinned cliproxy image
+	# (only the -image, -image-preview, -lite and -lite-preview variants are
+	# compiled into its binary), so the subscription tier cannot serve it and a
+	# customer choosing it silently misrouted to the pool primary. The api-key
+	# tier still offers "gemini-3.1-flash" because those ids go to Google's real
+	# API, which does serve it. jarvis_admin_v2 enforces this at save time.
 	"Google Gemini": [
 		"gemini-2.5-pro",
 		"gemini-2.5-flash",
-		"gemini-3.1-flash",
+		"gemini-3.1-flash-lite",
 	],
 	"xAI Grok": ["grok-4.3", "grok-build-0.1"],
 	"Kimi (Moonshot)": ["kimi-k2.7-code", "kimi-k2.6"],

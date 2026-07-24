@@ -155,8 +155,8 @@ BUNDLED_MODEL_CATALOG: list[dict] = [
 				"sort_order": 2,
 			},
 			{
-				"model_id": "gemini-3.1-flash",
-				"label": "gemini-3.1-flash",
+				"model_id": "gemini-3.1-flash-lite",
+				"label": "gemini-3.1-flash-lite",
 				"tier": "subscription",
 				"is_default": False,
 				"sort_order": 2,
