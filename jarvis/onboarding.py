@@ -6,7 +6,7 @@ import json
 
 import frappe
 
-from jarvis import admin_client
+from jarvis import admin_client, release_notice
 from jarvis.exceptions import (
 	AdminAuthError,
 	AdminRateLimitedError,
@@ -117,6 +117,9 @@ def write_connection(data: dict) -> None:
 		s.db_set("agent_url", data["agent_url"])
 	if data.get("agent_token"):
 		set_settings_password(s, "agent_token", data["agent_token"])
+	# Mirror the operator release notice locally so boot reads it with no admin
+	# round-trip. Unconditional: an absent/empty notice clears a prior one.
+	release_notice.persist(data.get("release_notice") or {})
 
 
 @frappe.whitelist()

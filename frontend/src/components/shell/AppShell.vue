@@ -12,6 +12,10 @@
 			     forced D11 redirect caused. The /onboarding wizard itself is
 			     exempt so the poster's "Complete setup" button can reach it. -->
 			<OnboardingGate v-else-if="showGate" />
+			<!-- Release-notice gate: shown only once the app would otherwise render
+			     (yields to onboarding), while this bench is behind the latest
+			     jarvis version. Continue is per-session; a reload re-shows it. -->
+			<UpdateNoticeGate v-else-if="showNotice" />
 			<template v-else>
 				<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
 				     not-yet-onboarded customer has no app to navigate. -->
@@ -65,6 +69,8 @@ import MoreMenu from "./MoreMenu.vue";
 import SettingsDialog from "./SettingsDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import OnboardingGate from "./OnboardingGate.vue";
+import UpdateNoticeGate from "./UpdateNoticeGate.vue";
+import { showNotice } from "@/noticeGate";
 
 const route = useRoute();
 const router = useRouter();
