@@ -21,8 +21,8 @@ import { notice } from "../noticeGate";
 			<p v-if="notice.message" class="jv-nu-msg">{{ notice.message }}</p>
 
 			<p class="jv-nu-block">
-				Chat with {{ agentName }} is paused for this workspace until it's updated to the
-				latest version. Please ask your administrator to update.
+				Chat with {{ agentName }} is paused for this workspace until it's updated. Please
+				ask your administrator to update.
 			</p>
 
 			<a
@@ -34,10 +34,6 @@ import { notice } from "../noticeGate";
 			>
 				Release notes ↗
 			</a>
-
-			<p v-if="notice.currentVersion" class="jv-nu-foot">
-				This workspace is on {{ agentName }} {{ notice.currentVersion }}.
-			</p>
 		</div>
 	</div>
 </template>

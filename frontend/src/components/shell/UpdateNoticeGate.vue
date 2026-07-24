@@ -21,8 +21,8 @@
 			<p v-if="notice.message" class="jv-gate-sub">{{ notice.message }}</p>
 
 			<p class="jv-gate-block">
-				Chat with {{ agentName }} is paused for this workspace until it's updated to the
-				latest version. Please ask your administrator to update.
+				Chat with {{ agentName }} is paused for this workspace until it's updated. Please
+				ask your administrator to update.
 			</p>
 
 			<a
@@ -35,10 +35,6 @@
 				Release notes
 				<span class="jv-gate-arrow" aria-hidden="true">↗</span>
 			</a>
-
-			<p v-if="notice.currentVersion" class="jv-gate-foot">
-				This workspace is on {{ agentName }} {{ notice.currentVersion }}.
-			</p>
 		</div>
 	</div>
 </template>

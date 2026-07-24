@@ -21,9 +21,8 @@ class TestWwwReleaseNotice(FrappeTestCase):
 	def setUp(self):
 		s = frappe.get_single("Jarvis Settings")
 		self._snap = {f: s.get(f) for f in _FIELDS}
-		# 99.0.0 is above any real jarvis __version__, so update_available is True.
 		s.db_set("release_notice_active", 1)
-		s.db_set("latest_jarvis_version", "99.0.0")
+		s.db_set("latest_jarvis_version", "0.0.2")
 		s.db_set("release_notice_title", "Heads up")
 		s.db_set("release_notice_message", "msg")
 		s.db_set("release_notice_url", "https://x")
@@ -47,8 +46,7 @@ class TestWwwReleaseNotice(FrappeTestCase):
 			www_desktop.get_context(ctx)
 		rn = ctx.boot["release_notice"]
 		self.assertTrue(rn["active"])
-		self.assertTrue(rn["update_available"])
-		self.assertEqual(rn["latest_version"], "99.0.0")
+		self.assertEqual(rn["latest_version"], "0.0.2")
 		self.assertEqual(rn["title"], "Heads up")
 
 	def test_mobile_boot_exposes_release_notice(self):
@@ -57,5 +55,4 @@ class TestWwwReleaseNotice(FrappeTestCase):
 			www_mobile.get_context(ctx)
 		rn = ctx.boot["release_notice"]
 		self.assertTrue(rn["active"])
-		self.assertTrue(rn["update_available"])
 		self.assertEqual(rn["title"], "Heads up")

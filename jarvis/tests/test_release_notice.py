@@ -1,4 +1,5 @@
-"""Tests for jarvis.release_notice: version compare + boot payload."""
+"""Tests for jarvis.release_notice: persist + boot payload (fleet-wide switch,
+no version comparison)."""
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -26,23 +27,6 @@ def _restore(snap: dict) -> None:
 	frappe.db.commit()
 
 
-class TestUpdateAvailable(FrappeTestCase):
-	def test_truth_table(self):
-		ua = release_notice.update_available
-		# behind -> update available
-		self.assertTrue(ua("0.0.1", "0.0.2"))
-		self.assertTrue(ua("1.2", "1.2.1"))
-		# up-to-date or ahead -> not available
-		self.assertFalse(ua("1.0.0", "1.0.0"))
-		self.assertFalse(ua("0.1.0", "0.0.9"))
-		self.assertFalse(ua("0.0.3", "0.0.2"))
-		# fail-open on blank / unparseable (never a spurious gate)
-		self.assertFalse(ua("", "0.0.2"))
-		self.assertFalse(ua("0.0.1", ""))
-		self.assertFalse(ua("abc", "0.0.2"))
-		self.assertFalse(ua("0.0.1", "x.y.z"))
-
-
 class TestBootPayload(FrappeTestCase):
 	def setUp(self):
 		self._snap = _snapshot()
@@ -56,41 +40,41 @@ class TestBootPayload(FrappeTestCase):
 			s.db_set(k, v)
 		frappe.db.commit()
 
-	def test_update_available_when_behind(self):
-		# 99.0.0 is deliberately above any real jarvis __version__.
+	def test_active_notice_shape(self):
 		self._set(
 			release_notice_active=1,
-			latest_jarvis_version="99.0.0",
-			release_notice_title="Upgrade time",
-			release_notice_message="notes",
+			latest_jarvis_version="0.0.2",
+			release_notice_title="Heads up",
+			release_notice_message="msg",
 			release_notice_url="https://x",
 		)
 		p = release_notice.boot_payload()
 		self.assertTrue(p["active"])
-		self.assertTrue(p["update_available"])
-		self.assertEqual(p["latest_version"], "99.0.0")
-		self.assertEqual(p["title"], "Upgrade time")
-		self.assertEqual(p["current_version"], release_notice.INSTALLED_VERSION)
+		self.assertEqual(p["title"], "Heads up")
+		self.assertEqual(p["message"], "msg")
+		self.assertEqual(p["latest_version"], "0.0.2")
+		# Version comparison is gone — boot never computes these.
+		self.assertNotIn("update_available", p)
+		self.assertNotIn("current_version", p)
 
-	def test_not_available_when_current(self):
-		self._set(
-			release_notice_active=1,
-			latest_jarvis_version=release_notice.INSTALLED_VERSION,
-			release_notice_title="t",
-		)
-		self.assertFalse(release_notice.boot_payload()["update_available"])
+	def test_inactive_notice(self):
+		self._set(release_notice_active=0, release_notice_title="t")
+		self.assertFalse(release_notice.boot_payload()["active"])
 
-	def test_not_available_when_latest_blank(self):
+	def test_version_is_optional(self):
 		self._set(release_notice_active=1, latest_jarvis_version="", release_notice_title="t")
-		self.assertFalse(release_notice.boot_payload()["update_available"])
+		p = release_notice.boot_payload()
+		self.assertTrue(p["active"])
+		self.assertEqual(p["latest_version"], "")
 
 	def test_persist_then_clear_round_trip(self):
 		release_notice.persist(
-			{"active": True, "latest_version": "99.0.0", "title": "T", "message": "M", "url": "U"}
+			{"active": True, "latest_version": "0.0.2", "title": "T", "message": "M", "url": "U"}
 		)
 		p = release_notice.boot_payload()
 		self.assertTrue(p["active"])
 		self.assertEqual(p["title"], "T")
+		self.assertEqual(p["latest_version"], "0.0.2")
 		# Empty dict clears every field.
 		release_notice.persist({})
 		p = release_notice.boot_payload()
