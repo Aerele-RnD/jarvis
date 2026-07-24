@@ -237,8 +237,10 @@ const pickProvider = ref(_defaultProvider());
 const codeOnly = computed(() => isCodeOnlyPaste(status.value.provider || pickProvider.value));
 const pickModels = computed(
 	() =>
-		(SUB_PROVIDERS.value.find((p) => p.provider === pickProvider.value) || SUB_PROVIDERS.value[0])
-			.models
+		(
+			SUB_PROVIDERS.value.find((p) => p.provider === pickProvider.value) ||
+			SUB_PROVIDERS.value[0]
+		).models
 );
 const pickModel = ref(
 	pickModels.value.includes(props.status.model) ? props.status.model : pickModels.value[0]
