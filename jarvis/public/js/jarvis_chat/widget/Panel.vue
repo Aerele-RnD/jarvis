@@ -115,18 +115,12 @@
 			</div>
 
 			<div class="jvp-body" ref="bodyEl">
-				<div v-if="loading" class="jvp-center">Restoring your last conversation…</div>
-
-				<div v-else-if="loadError && !shownMessages.length" class="jvp-center">
-					<div class="jvp-err">{{ loadError }}</div>
-					<button class="jvp-btn-subtle" type="button" @click="load">Retry</button>
-				</div>
-
-				<!-- Welcome: brand mark, greeting, and starting points. -->
-				<div
-					v-else-if="!shownMessages.length && !stream.live && !thinking"
-					class="jvp-welcome"
-				>
+				<!-- Never onboarded (readiness === "gate"): the panel cannot possibly
+				     chat, so the whole body - welcome, history, composer below - is
+				     replaced by a compact setup nudge instead of a chat box that can
+				     only fail. Mirrors OnboardingGate.vue's full-screen poster, sized
+				     for 400px. -->
+				<div v-if="readiness === 'gate'" class="jvp-nudge">
 					<div class="jvp-hero">
 						<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
 							<path
@@ -134,53 +128,107 @@
 							/>
 						</svg>
 					</div>
-					<div class="jvp-greet">{{ greeting }}</div>
-					<p class="jvp-greet-sub">
-						<template v-if="contextText">
-							Jarvis can see <b>{{ contextText }}</b> while you are on this page.
+					<div class="jvp-nudge-h">Finish setting up {{ brandName }}</div>
+					<p class="jvp-nudge-s">
+						<template v-if="canOnboard">
+							This workspace isn't connected to an AI agent yet. Complete a short
+							setup to start chatting with {{ brandName }} about your ERPNext data.
 						</template>
 						<template v-else>
-							Ask about your ERP data, run a workflow, or draft something.
+							{{ brandName }} isn't set up for this workspace yet. Please ask your
+							administrator (a System Manager) to complete onboarding.
 						</template>
 					</p>
-					<div class="jvp-cards">
-						<button
-							v-for="(s, i) in suggestions"
-							:key="s.title"
-							class="jvp-card"
-							type="button"
-							@click="useSuggestion(s.prompt)"
-						>
-							<span
-								class="jvp-card-ic"
-								:class="`jvp-card-ic--${i % 4}`"
-								aria-hidden="true"
-							>
-								<svg
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="1.7"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-								>
-									<path :d="CARD_ICONS[i % CARD_ICONS.length]" />
-								</svg>
-							</span>
-							<span class="jvp-card-txt">
-								<span class="jvp-card-t">{{ s.title }}</span>
-								<span class="jvp-card-p">{{ s.prompt }}</span>
-							</span>
-						</button>
-					</div>
+					<button
+						v-if="canOnboard"
+						type="button"
+						class="jvp-nudge-btn"
+						@click="goOnboard"
+					>
+						Complete setup
+						<span aria-hidden="true">→</span>
+					</button>
 				</div>
 
-				<div v-else class="jvp-msgs">
-					<template v-for="m in shownMessages" :key="m.name">
-						<div v-if="m.role === 'user'" class="jvp-row jvp-row--user">
-							<div class="jvp-m-user">{{ m.content }}</div>
+				<template v-else>
+					<div v-if="loading" class="jvp-center">Restoring your last conversation…</div>
+
+					<div v-else-if="loadError && !shownMessages.length" class="jvp-center">
+						<div class="jvp-err">{{ loadError }}</div>
+						<button class="jvp-btn-subtle" type="button" @click="load">Retry</button>
+					</div>
+
+					<!-- Welcome: brand mark, greeting, and starting points. -->
+					<div
+						v-else-if="!shownMessages.length && !stream.live && !thinking"
+						class="jvp-welcome"
+					>
+						<div class="jvp-hero">
+							<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+								<path
+									d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+								/>
+							</svg>
 						</div>
-						<div v-else class="jvp-row">
+						<div class="jvp-greet">{{ greeting }}</div>
+						<p class="jvp-greet-sub">
+							<template v-if="contextText">
+								Jarvis can see <b>{{ contextText }}</b> while you are on this page.
+							</template>
+							<template v-else>
+								Ask about your ERP data, run a workflow, or draft something.
+							</template>
+						</p>
+						<div class="jvp-cards">
+							<button
+								v-for="(s, i) in suggestions"
+								:key="s.title"
+								class="jvp-card"
+								type="button"
+								@click="useSuggestion(s.prompt)"
+							>
+								<span
+									class="jvp-card-ic"
+									:class="`jvp-card-ic--${i % 4}`"
+									aria-hidden="true"
+								>
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.7"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									>
+										<path :d="CARD_ICONS[i % CARD_ICONS.length]" />
+									</svg>
+								</span>
+								<span class="jvp-card-txt">
+									<span class="jvp-card-t">{{ s.title }}</span>
+									<span class="jvp-card-p">{{ s.prompt }}</span>
+								</span>
+							</button>
+						</div>
+					</div>
+
+					<div v-else class="jvp-msgs">
+						<template v-for="m in shownMessages" :key="m.name">
+							<div v-if="m.role === 'user'" class="jvp-row jvp-row--user">
+								<div class="jvp-m-user">{{ m.content }}</div>
+							</div>
+							<div v-else class="jvp-row">
+								<div class="jvp-m-avatar" aria-hidden="true">
+									<svg viewBox="0 0 24 24" fill="#fff">
+										<path
+											d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+										/>
+									</svg>
+								</div>
+								<div class="jvp-m-bot jv-md" v-html="renderReply(m.content)"></div>
+							</div>
+						</template>
+
+						<div v-if="stream.live && stream.live.text" class="jvp-row">
 							<div class="jvp-m-avatar" aria-hidden="true">
 								<svg viewBox="0 0 24 24" fill="#fff">
 									<path
@@ -188,50 +236,64 @@
 									/>
 								</svg>
 							</div>
-							<div class="jvp-m-bot jv-md" v-html="renderReply(m.content)"></div>
+							<div
+								class="jvp-m-bot jv-md"
+								v-html="renderReply(stream.live.text)"
+							></div>
 						</div>
-					</template>
 
-					<div v-if="stream.live && stream.live.text" class="jvp-row">
-						<div class="jvp-m-avatar" aria-hidden="true">
-							<svg viewBox="0 0 24 24" fill="#fff">
-								<path
-									d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
-								/>
-							</svg>
-						</div>
-						<div class="jvp-m-bot jv-md" v-html="renderReply(stream.live.text)"></div>
-					</div>
-
-					<!-- Waiting for the first token: a labelled state, not a bare
+						<!-- Waiting for the first token: a labelled state, not a bare
 					     spinner, so the user knows the turn was accepted. -->
-					<div v-else-if="thinking" class="jvp-row">
-						<div class="jvp-m-avatar" aria-hidden="true">
-							<svg viewBox="0 0 24 24" fill="#fff">
-								<path
-									d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
-								/>
-							</svg>
+						<div v-else-if="thinking" class="jvp-row">
+							<div class="jvp-m-avatar" aria-hidden="true">
+								<svg viewBox="0 0 24 24" fill="#fff">
+									<path
+										d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
+									/>
+								</svg>
+							</div>
+							<div
+								class="jvp-think"
+								role="status"
+								aria-live="polite"
+								aria-label="Jarvis is typing"
+							>
+								<span class="jvp-think-dots" aria-hidden="true"
+									><i></i><i></i><i></i
+								></span>
+							</div>
 						</div>
-						<div
-							class="jvp-think"
-							role="status"
-							aria-live="polite"
-							aria-label="Jarvis is typing"
-						>
-							<span class="jvp-think-dots" aria-hidden="true"
-								><i></i><i></i><i></i
-							></span>
-						</div>
-					</div>
 
-					<div v-if="loadError && shownMessages.length" class="jvp-inline-err">
-						<span class="jvp-err">{{ loadError }}</span>
-						<button class="jvp-btn-subtle" type="button" @click="retryLast">
-							Retry
-						</button>
+						<div v-if="loadError && shownMessages.length" class="jvp-inline-err">
+							<span class="jvp-err">{{ loadError }}</span>
+							<button class="jvp-btn-subtle" type="button" @click="retryLast">
+								Retry
+							</button>
+						</div>
 					</div>
-				</div>
+				</template>
+			</div>
+
+			<!-- Degraded: onboarded once, but is_ready_for_chat currently says no
+			     (e.g. expired LLM creds, a stalled container). The chat stays fully
+			     usable - unlike the gate above, this is not a hard block - it just
+			     warns that a send may fail right now. -->
+			<div v-if="readiness === 'degraded'" class="jvp-notice">
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.8"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M12 9v4M12 17h.01" />
+					<path
+						d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+					/>
+				</svg>
+				<span>{{ readinessNotice }}</span>
 			</div>
 
 			<div v-if="stream.pending.length" class="jvp-pending">
@@ -255,7 +317,11 @@
 				</div>
 			</div>
 
-			<div class="jvp-foot">
+			<!-- Hidden entirely in the gate state, not merely disabled: there is
+			     nothing to send to yet, and a live-but-disabled composer would
+			     imply chat almost works. The "degraded" state keeps this, on
+			     purpose - see the jvp-notice banner above. -->
+			<div v-if="readiness !== 'gate'" class="jvp-foot">
 				<!-- attached files, above the input -->
 				<div v-if="attachments.length" class="jvp-atts">
 					<span v-for="a in attachments" :key="a.file_url" class="jvp-att">
@@ -406,7 +472,9 @@ import { contextLabel } from "./desk_context.mjs";
 import { isDarkNow, watchTheme } from "./desk_theme.mjs";
 import { renderReply } from "./panel_markdown.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
+import { classifyReadiness, degradedMessage } from "./panel_readiness.mjs";
 import { emptyStream, applyEvent, visibleMessages } from "./chat_stream.mjs";
+import { ONBOARDING_URL } from "./config.mjs";
 import {
 	listConversations,
 	getConversation,
@@ -416,6 +484,7 @@ import {
 	uploadFile,
 	transcribeAudio,
 	getChatUiSettings,
+	isReadyForChat,
 } from "./panel_api.mjs";
 
 const props = defineProps({
@@ -452,6 +521,23 @@ const transcribing = ref(false);
 let recorder = null;
 let recChunks = [];
 let recStartedAt = 0;
+
+// Chat-readiness gate: "ready" | "gate" | "degraded" (panel_readiness.mjs).
+// Resolved ONCE in onMounted below and cached for the panel's lifetime - this
+// component is kept mounted and toggled with v-show (see the template comment
+// up top), so "once per mount" already means "once per Desk page load", not
+// once per open. There is deliberately no poll here: a workspace's onboarding
+// state does not change while a chat panel sits open.
+const readiness = ref("ready");
+const readinessNotice = ref("");
+// Only an admin who can actually reach the wizard gets the CTA button in the
+// gate state, mirroring OnboardingGate.vue's isSystemManager split. Read off
+// frappe.boot.user.roles - core Frappe bootinfo (User.load_user), already
+// present on every Desk page, not a Jarvis boot field - so this needs no
+// backend change. Matches jarvis/permissions.py's JARVIS_ADMIN_ROLES.
+const deskUserRoles = window.frappe?.boot?.user?.roles || [];
+const canOnboard =
+	deskUserRoles.includes("System Manager") || deskUserRoles.includes("Jarvis Admin");
 
 const contextText = computed(() => contextLabel(props.context));
 
@@ -591,6 +677,13 @@ function removeAttachment(url) {
 	attachments.value = attachments.value.filter((a) => a.file_url !== url);
 }
 
+// Same SPA onboarding route OnboardingGate.vue's own "Complete setup" button
+// pushes to (frontend/src/router/index.js "/onboarding"), reached here by a
+// full navigation since the wizard lives in the SPA, not this widget.
+function goOnboard() {
+	window.location.assign(ONBOARDING_URL);
+}
+
 // Hold-free toggle: click to start, click to stop. The transcript lands in the
 // composer rather than sending, so a misheard word can be fixed first.
 async function toggleVoice() {
@@ -641,6 +734,10 @@ async function toggleVoice() {
 }
 
 async function send() {
+	// Belt and braces: the composer is hidden whenever readiness is "gate" (see
+	// the template), but a stray call (e.g. Enter fired before that re-render)
+	// must not reach the backend for a workspace that was never onboarded.
+	if (readiness.value === "gate") return;
 	const text = draft.value.trim();
 	const atts = attachments.value.slice();
 	if ((!text && !atts.length) || sending.value || stream.value.live) return;
@@ -842,6 +939,19 @@ onMounted(() => {
 		.catch(() => {
 			sttEnabled.value = false;
 		});
+	// Resolved once per mount, not on every open/keystroke - see the `readiness`
+	// declaration above for why that is still "once per Desk page load".
+	isReadyForChat()
+		.then((r) => {
+			readiness.value = classifyReadiness(r);
+			readinessNotice.value = readiness.value === "degraded" ? degradedMessage(r) : "";
+		})
+		.catch(() => {
+			// Fail OPEN, same as classifyReadiness(null): a flaky/unreachable check
+			// must never strand a real user behind the gate.
+			readiness.value = classifyReadiness(null);
+			readinessNotice.value = "";
+		});
 });
 
 onBeforeUnmount(() => {
@@ -878,6 +988,9 @@ defineExpose({ load, startNewChat, convId });
 	--jv-chip-2: #fbeeddff;
 	--jv-chip-3: #eae7fb;
 	--jv-danger: #c0392b;
+	--jv-warn: #b7791f;
+	--jv-warn-bg: #fdf3e2;
+	--jv-warn-bd: #f3e0bb;
 }
 .jvp-panel--dark {
 	--jv-surface: #1e1d23;
@@ -895,6 +1008,9 @@ defineExpose({ load, startNewChat, convId });
 	--jv-chip-2: #33291b;
 	--jv-chip-3: #2a2540;
 	--jv-danger: #ff8a80;
+	--jv-warn: #f0c265;
+	--jv-warn-bg: #332a18;
+	--jv-warn-bd: #4a3c22;
 }
 
 /* A mini chat window, not a full-height dock: left/top/width/height are set
@@ -1194,6 +1310,55 @@ defineExpose({ load, startNewChat, convId });
 	line-height: 1.4;
 }
 
+/* ---- onboarding nudge (readiness === "gate") ----
+   Same shell as .jvp-welcome (reuses .jvp-hero) since it replaces it - a
+   compact stand-in for OnboardingGate.vue's full-screen poster. */
+.jvp-nudge {
+	min-width: 0;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	text-align: center;
+	padding: 20px 14px;
+}
+.jvp-nudge-h {
+	font-size: 17px;
+	font-weight: 700;
+	color: var(--jv-ink);
+	margin-top: 16px;
+	letter-spacing: -0.01em;
+}
+.jvp-nudge-s {
+	margin: 8px 0 0;
+	font-size: 13px;
+	line-height: 1.55;
+	color: var(--jv-ink-2);
+}
+.jvp-nudge-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 18px;
+	padding: 9px 16px;
+	border: none;
+	border-radius: 10px;
+	background: var(--jv-grad);
+	color: #fff;
+	font: inherit;
+	font-size: 13.5px;
+	font-weight: 600;
+	cursor: pointer;
+}
+.jvp-nudge-btn:hover {
+	opacity: 0.92;
+}
+.jvp-nudge-btn:focus-visible {
+	outline: 2px solid var(--jv-accent);
+	outline-offset: 2px;
+}
+
 /* ---- messages ---- */
 .jvp-msgs {
 	display: flex;
@@ -1396,6 +1561,30 @@ defineExpose({ load, startNewChat, convId });
 		transform: translateY(-5px);
 		opacity: 1;
 	}
+}
+
+/* ---- degraded notice (readiness === "degraded") ----
+   Amber, not the red .jv-danger tokens: this is a warning that a send MIGHT
+   fail, not a report that something already did. */
+.jvp-notice {
+	flex: none;
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin: 10px 15px 0;
+	padding: 9px 11px;
+	border: 1px solid var(--jv-warn-bd);
+	border-radius: 11px;
+	background: var(--jv-warn-bg);
+	color: var(--jv-warn);
+	font-size: 12.5px;
+	line-height: 1.5;
+}
+.jvp-notice svg {
+	width: 15px;
+	height: 15px;
+	flex: none;
+	margin-top: 1px;
 }
 
 /* ---- pending write confirmation ---- */
