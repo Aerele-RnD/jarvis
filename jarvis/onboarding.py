@@ -117,9 +117,11 @@ def write_connection(data: dict) -> None:
 		s.db_set("agent_url", data["agent_url"])
 	if data.get("agent_token"):
 		set_settings_password(s, "agent_token", data["agent_token"])
-	# Mirror the operator release notice locally so boot reads it with no admin
-	# round-trip. Unconditional: an absent/empty notice clears a prior one.
-	release_notice.persist(data.get("release_notice") or {})
+	# NB: the release notice is deliberately NOT mirrored here. Several callers
+	# pass a partial payload (a password, a customer email), and an absent notice
+	# key means "cleared" - which would drop a live notice. It is persisted only
+	# where a full get_connection payload is in hand: sync_connection and the
+	# chat gate.
 
 
 @frappe.whitelist()
