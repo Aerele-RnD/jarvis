@@ -721,6 +721,9 @@
 							@open-attachment="openArtifact(m, $event)"
 						/>
 						<!-- assistant -->
+						<!-- copied/@copy here drive Message's BUILT-IN trailer, which #below-body
+						     suppresses — chat's real Copy button is in the slotted metabar below.
+						     Kept so both call sites stay interface-identical. -->
 						<Message
 							v-else
 							variant="row"

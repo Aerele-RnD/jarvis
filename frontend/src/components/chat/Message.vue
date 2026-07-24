@@ -268,10 +268,9 @@ const hasBelowBody = computed(() => !!slots["below-body"]);
 </script>
 
 <style scoped>
-/* per-message Copy/Edit bar — revealed on hover. Shared with variant="row"
-   (Task 3), which reuses this exact rule set once the assistant row moves
-   in; ChatView.vue keeps its own copy until that row is extracted, since
-   the not-yet-moved assistant message still needs it there too. */
+/* per-message Copy/Edit bar — revealed on hover. Shared by BOTH variants:
+   the assistant row moved in too, and ChatView's own copies of these rules
+   were deleted with it, so this is now the single definition. */
 .jv-msgbar {
 	display: flex;
 	align-items: center;
@@ -679,6 +678,13 @@ const hasBelowBody = computed(() => !!slots["below-body"]);
    pipeline, so they have none of the jv-md-* classes. Tailwind's preflight
    strips element defaults (list bullets, link underline, table borders), so
    restore them at the element level here. */
+/* Mirrors the .jv-md base rule deliberately: email HTML carries long unbroken
+   strings (tracking URLs, order ids) that would otherwise push the row wide. */
+.jv-md-body.jv-html {
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+}
 .jv-md-body.jv-html :deep(p) {
 	margin: 0 0 10px;
 }
@@ -695,7 +701,11 @@ const hasBelowBody = computed(() => !!slots["below-body"]);
 	color: var(--link);
 	text-decoration: underline;
 }
+/* display:block is load-bearing, not cosmetic: overflow does not scroll a
+   display:table box, so without it a wide email table blows out the row
+   instead of scrolling inside it. Same reason the .jv-md twin carries it. */
 .jv-md-body.jv-html :deep(table) {
+	display: block;
 	max-width: 100%;
 	overflow-x: auto;
 	border-collapse: collapse;
