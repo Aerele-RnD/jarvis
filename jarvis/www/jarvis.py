@@ -71,6 +71,22 @@ def get_context(context):
 		"time_zone": frappe.utils.get_system_timezone(),
 	}
 
+	# Whitelabel branding (Phase 2): tenant-admin-set identity, shipped to every
+	# user in boot so the SPA renders the custom name/logo/favicon with no round
+	# trip. Blank => the frontend falls back to the Jarvis defaults.
+	_brand = (
+		frappe.get_cached_value(
+			"Jarvis Settings",
+			"Jarvis Settings",
+			["agent_name", "brand_logo", "brand_favicon"],
+			as_dict=True,
+		)
+		or {}
+	)
+	context.boot["agent_name"] = _brand.get("agent_name") or ""
+	context.boot["brand_logo_url"] = _brand.get("brand_logo") or ""
+	context.boot["brand_favicon_url"] = _brand.get("brand_favicon") or ""
+
 	# Support panel gating (Plan 3 B5). Lazy-grant the default support role to this chat user so
 	# support isn't dark (P2 — grant_default_support clears the role cache so support_scope sees
 	# it in this same request), then expose both the per-user access flag and the fleet kill switch.
