@@ -102,6 +102,10 @@ class _AdmissionTestCase(FrappeTestCase):
 		self._pump_off_patches = [
 			patch.object(pump, "pump_mode_active", return_value=False),
 			patch.object(pump, "pump_configured", return_value=False),
+			# CDX-21 (Residual A): promote_next/sweep/cancel-wake now gate on the row-authoritative
+			# ``pump_lifecycle_configured`` (not the config-based ``pump_configured``). Pin it OFF for
+			# the whole Phase-0 suite so those owner decisions run as legacy/Phase-0 here.
+			patch.object(pump, "pump_lifecycle_configured", return_value=False),
 			patch.object(pump, "pump_draining", return_value=False),
 			# CDX-21 sweep note: accept_or_queue now derives pump_mode + machine_active from ONE
 			# row read via transport_predicates_from_row (instead of pump_mode_active/pump_configured
@@ -1572,3 +1576,145 @@ class TestTransportModeCommandCDX21(FrappeTestCase):
 			frappe.db.commit()
 			with patch.object(pump, "_config_transport_mode", return_value=opp_conf):
 				self._assert_no_split(self.target)
+
+
+class TestPhase0OwnerDecisionsReadRow(FrappeTestCase):
+	"""CDX-21 (Residual A): the ACTUAL Phase-0 owner functions — promote_next, sweep, and the
+	queued-cancel wake — decide OWNERSHIP from the AUTHORITATIVE shard ROW
+	(``pump_lifecycle_configured``), NEVER the ``site_config`` mirror. Exercised through the real
+	functions in BOTH mismatch directions on the site-wide default shard. (The prior 'exhaustive'
+	test only compared predicates; codex flagged that it never called these functions.)"""
+
+	TARGET = admission.DEFAULT_RELAY_TARGET
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup()
+		self._flag_patch = patch.dict(frappe.local.conf, {admission.FLAG: 1})
+		self._flag_patch.start()
+		from jarvis.chat import turn_state as ts
+
+		ts._ensure_control_row(self.TARGET)
+		self._prev_mode = frappe.db.get_value(PUMP, self.TARGET, "transport_mode")
+		pump._LIFECYCLE_MODE_CACHE.pop(self.TARGET, None)
+
+	def tearDown(self):
+		frappe.db.set_value(PUMP, self.TARGET, "transport_mode", self._prev_mode, update_modified=False)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(self.TARGET, None)
+		self._flag_patch.stop()
+		_cleanup()
+		frappe.set_user(self._orig_user)
+
+	def _set_row_mode(self, mode):
+		frappe.db.set_value(PUMP, self.TARGET, "transport_mode", mode, update_modified=False)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(self.TARGET, None)
+
+	def _mk_conv(self):
+		doc = frappe.get_doc({"doctype": CONV, "title": "New chat", "status": "Active"})
+		doc.flags.ignore_permissions = True
+		doc.insert()
+		frappe.db.commit()
+		return doc.name
+
+	def _mk_msg(self, conv, seq):
+		doc = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": conv,
+				"seq": seq,
+				"role": "user",
+				"content": "hi",
+				"streaming": 0,
+			}
+		)
+		doc.flags.ignore_permissions = True
+		doc.insert()
+		frappe.db.commit()
+		return doc.name
+
+	def _queued_turn(self, conv, run_id, seed):
+		frappe.get_doc(
+			{
+				"doctype": TURN,
+				"run_id": run_id,
+				"conversation": conv,
+				"relay_target_id": self.TARGET,
+				"turn_class": "interactive",
+				"state": "queued",
+				"version": 0,
+				"seed_message": seed,
+				"enqueued_at": frappe.utils.now(),
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+
+	def test_sweep_steps_back_on_row_pump_config_legacy(self):
+		# row=pump (authoritative) but config=legacy (stale/failed mirror). The sweep MUST step back —
+		# the ROW says the pump owns the rows. The OLD code read config=legacy and would have
+		# legacy-dispatched a pump-owned queued row (the exact two-engine collision codex walked).
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		self._queued_turn(conv, "q_sb", seed)
+		self._set_row_mode("pump")
+		with (
+			patch.object(pump, "_config_transport_mode", return_value="legacy"),
+			patch.object(admission, "_dispatch_promoted") as disp,
+		):
+			summary = admission.sweep()
+		self.assertEqual(summary["promoted"], 0, "row=pump ⇒ sweep steps back regardless of config")
+		disp.assert_not_called()
+		self.assertEqual(frappe.db.get_value(TURN, "q_sb", "state"), "queued", "pump-owned row untouched")
+
+	def test_promote_next_operates_on_row_legacy_config_pump(self):
+		# row=legacy (kill switch) but config=pump. Phase-0 promote MUST run — the ROW says
+		# Phase-0/legacy owns. The OLD code read config=pump and would have stepped back, stranding
+		# the queued row until age-out.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		self._queued_turn(conv, "q_op", seed)
+		self._set_row_mode("legacy")
+		with (
+			patch.object(pump, "_config_transport_mode", return_value="pump"),
+			patch.object(admission, "_dispatch_promoted") as disp,
+			patch.object(admission, "_max_inflight", return_value=4),
+		):
+			n = admission.promote_next()
+		self.assertEqual(n, 1, "row=legacy ⇒ Phase-0 promotes its own queued row")
+		disp.assert_called_once()
+		self.assertEqual(frappe.db.get_value(TURN, "q_op", "state"), "dispatching")
+
+	def test_sweep_operates_on_row_legacy_config_pump(self):
+		# Symmetric to promote: row=legacy ⇒ the sweep RUNS (and promotes) even if config=pump.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		self._queued_turn(conv, "q_sw", seed)
+		self._set_row_mode("legacy")
+		with (
+			patch.object(pump, "_config_transport_mode", return_value="pump"),
+			patch.object(admission, "_dispatch_promoted") as disp,
+			patch.object(admission, "_max_inflight", return_value=4),
+		):
+			summary = admission.sweep()
+		self.assertEqual(summary["promoted"], 1, "row=legacy ⇒ sweep promotes Phase-0's own row")
+		disp.assert_called_once()
+
+	def test_cancel_wake_routes_by_row_not_config(self):
+		# The queued-cancel wake reads the row: row=legacy ⇒ the legacy promote_next path, NOT the
+		# pump ensure_pump/lpush wake — even though config=pump.
+		conv = self._mk_conv()
+		seed = self._mk_msg(conv, 1)
+		self._queued_turn(conv, "q_cw", seed)
+		self._set_row_mode("legacy")
+		with (
+			patch.object(pump, "_config_transport_mode", return_value="pump"),
+			patch.object(pump, "ensure_pump") as ep,
+			patch.object(admission, "promote_next") as pn,
+		):
+			res = admission.cancel_queued_turn("q_cw")
+		self.assertTrue(res["ok"])
+		ep.assert_not_called()
+		pn.assert_called_once_with(self.TARGET)

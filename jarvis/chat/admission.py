@@ -769,15 +769,22 @@ def promote_next(target: str | None = None) -> int:
 	WP-1d: once the Relay Pump is configured (active OR draining) it OWNS every
 	Jarvis Chat Turn row and drives its own promote/reconcile via the pump
 	watchdog; Phase-0 must NOT legacy-dispatch a pump-owned queued turn, so this
-	steps back entirely."""
+	steps back entirely.
+
+	CDX-21 (Residual A): the step-back reads the AUTHORITATIVE shard ROW
+	(``pump_lifecycle_configured``, the same 5s row cache the pump lifecycle gates use),
+	NOT the ``site_config`` mirror. So a stale/failed mirror can never make Phase-0
+	legacy-dispatch a queued row the row-authoritative pump already owns (row=pump/config=legacy),
+	nor suppress Phase-0's own promotion when the row is the ``legacy`` kill switch
+	(row=legacy/config=pump). The row decides ownership everywhere."""
 	from jarvis.chat import pump
 
-	if pump.pump_configured():
+	if target is None:
+		target = DEFAULT_RELAY_TARGET
+	if pump.pump_lifecycle_configured(target):
 		return 0
 	if not admission_enabled():
 		return 0
-	if target is None:
-		target = DEFAULT_RELAY_TARGET
 	promoted_rows: list[dict] = []
 	try:
 		_lock_shard(target)
@@ -1027,9 +1034,12 @@ def cancel_queued_turn(run_id: str) -> dict:
 	target = row["relay_target_id"] or DEFAULT_RELAY_TARGET
 	# The freed credit lets the next queued turn run. In pump mode wake the pump to
 	# re-promote (promote_next is a no-op there); else best-effort legacy promote.
+	# CDX-21 (Residual A): the pump-vs-legacy wake decision reads the AUTHORITATIVE shard ROW
+	# (``pump_lifecycle_configured``), NOT the config mirror — so a stale mirror can never route the
+	# credit-freed wake to the wrong owner.
 	from jarvis.chat import pump
 
-	if pump.pump_configured():
+	if pump.pump_lifecycle_configured(target):
 		try:
 			pump.ensure_pump(target)
 			pump.lpush_wake(target, run_id)
@@ -1449,11 +1459,18 @@ def sweep() -> dict:
 	Jarvis Chat Turn row and reconciles them via the pump watchdog; Phase-0's
 	Turn<->Message reconcile / reservation-reclaim would fight the pump over the
 	same rows, so the sweep steps back entirely (new draining-window turns are pure
-	legacy with no Turn row, so nothing here is owed)."""
+	legacy with no Turn row, so nothing here is owed).
+
+	CDX-21 (Residual A): the step-back reads the AUTHORITATIVE shard ROW
+	(``pump_lifecycle_configured``), NOT the ``site_config`` mirror — so a stale/failed mirror can
+	never make the sweep reconcile a row the row-authoritative pump owns (row=pump/config=legacy ⇒
+	step back), nor abandon Phase-0's own rows when the row is the ``legacy`` kill switch
+	(row=legacy/config=pump ⇒ the sweep runs). Phase-0 is one site-wide shard, so the decision reads
+	the default control row."""
 	summary = {"reclaimed": 0, "reconciled": 0, "aged_out": 0, "promoted": 0}
 	from jarvis.chat import pump
 
-	if pump.pump_configured():
+	if pump.pump_lifecycle_configured(DEFAULT_RELAY_TARGET):
 		return summary
 	try:
 		open_count = frappe.db.sql(

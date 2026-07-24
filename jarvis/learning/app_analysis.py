@@ -105,6 +105,10 @@ STALE_TURN_MINUTES = 45
 # CDX-19: how many tick cycles (10 min each) a capacity-deferred analysis turn may be
 # re-attempted before the run fails honestly — ~200 min of sustained site overload.
 _MAX_CAPACITY_WAITS = 20
+# CDX-22: how long a cancel waits for the SAME per-run lock the chaining/recovery critical
+# sections hold. Those sections are fast (parse + a few writes + an enqueue), so this is ample.
+# Module-level so tests can shorten it.
+_CANCEL_LOCK_BLOCK_S = 10.0
 ZIP_RETENTION_DAYS = 7
 MAX_WIKI_PAGES = 8
 MAX_SKILLS = 5
@@ -260,8 +264,21 @@ def _fail_run(run_name: str, msg: str) -> None:
 def mark_cancelled(run_name: str) -> None:
 	"""Cancel a run (the API validates the transition). The turn-end hook and
 	``process_due`` both re-check status, so an in-flight turn finishes but
-	nothing further chains."""
-	_set_run(run_name, {"status": "Cancelled", "finished_at": now_datetime()})
+	nothing further chains.
+
+	CDX-22: acquire the SAME ``jarvis_app_learning_run:<run>`` lock the chaining (``on_turn_end``)
+	and capacity-resume (``_recover_stale_runs``) critical sections hold across their
+	recheck->enqueue window. So a cancel can no longer land BETWEEN a recovery/turn-end recheck of
+	``Analyzing`` and its enqueue of the next batch/final turn (which would start work after the
+	explicit cancel). The block body still writes ``Cancelled`` even if the lock is momentarily
+	unavailable — a user cancel must never be dropped; the turn-end recheck is the backstop for that
+	rare case."""
+	from jarvis._redis_lock import redis_lock
+
+	with redis_lock(
+		f"jarvis_app_learning_run:{run_name}", timeout_s=60, blocking_timeout_s=_CANCEL_LOCK_BLOCK_S
+	):
+		_set_run(run_name, {"status": "Cancelled", "finished_at": now_datetime()})
 
 
 def _load_notes(run) -> dict:

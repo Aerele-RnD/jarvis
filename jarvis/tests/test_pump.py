@@ -127,6 +127,14 @@ class _PumpTestCase(FrappeTestCase):
 		_cleanup()
 		self._target = f"{TARGET_PREFIX}{frappe.generate_hash(length=10)}"
 		ts._ensure_control_row(self._target)
+		# CDX-21 (Residual B): the per-shard row is now the AUTHORITATIVE transport mode that the
+		# kill-switch check (_kill_switch_engaged) and the lifecycle gates read. Stamp this test
+		# shard explicitly to ``pump`` so the suite is independent of the ambient site config (an
+		# empty row would otherwise fall back to conf, which on a flag-off site would spuriously
+		# read as the kill switch and halt every hop). Kill-switch tests override it to ``legacy``.
+		frappe.db.set_value(PUMP, self._target, "transport_mode", pump._MODE_PUMP, update_modified=False)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(self._target, None)
 		ts.reset_lock_tracking()
 		self._muxes: list[RelayMux] = []
 		self._doubles: list[_DoubleGateway] = []
@@ -1333,6 +1341,162 @@ class TestCleanHandoffSuccession(_PumpTestCase):
 		self.assertEqual(rec.calls[0][1]["transport_retry"], 1)
 		won, _ = ts.lease_acquire(self._target, "succ")
 		self.assertTrue(won, "successor can acquire after the no_transport release")
+
+
+# --------------------------------------------------------------------------- #
+# 15b. CDX-21 (Residual B) — the pump kill switch halts succession mid-hop
+# --------------------------------------------------------------------------- #
+
+
+class TestKillSwitchSuccession(_PumpTestCase):
+	"""CDX-21 (Residual B): a mid-hop ``pump -> legacy`` row flip (the kill switch) must release the
+	lease WITHOUT enqueuing a successor and park live turns ``recovering``, at hop START, at the
+	soft-budget ``_handoff``, and at a transport-error successor decision. ``draining`` still hands
+	off (finish in-flight). Bound: kill latency <= cache TTL + one slice."""
+
+	def _streaming_turn(self, ctx, rid, conv):
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"streaming",
+			version=4,
+			pump_epoch=ctx.epoch,
+			reserved=1,
+			assistant_message=amsg,
+			gateway_run_id=rid,
+			dispatching_at=frappe.utils.now(),
+			last_event_seq=2,
+			dispatch_payload=json.dumps({"session_key": f"sess-{rid}", "message": "hi"}),
+		)
+		return amsg
+
+	def _kill(self):
+		"""Flip the shard row to the legacy kill switch (pops the lifecycle cache)."""
+		pump.set_transport_mode(self._target, pump._MODE_LEGACY)
+		frappe.db.commit()
+
+	def test_handoff_under_legacy_releases_without_successor_and_parks(self):
+		conv = self._mk_conv()
+		rid = "pmp_kill_ho"
+		ctx = self._make_ctx(self._deps(), hop_counter=3, with_mux=False)  # epoch E, pump-mode row
+		self.assertTrue(ts.lease_renew(self._target, ctx.epoch))  # a valid, freshly-renewed lease
+		pump._clear_lease_mirror(self._target)
+		self._streaming_turn(ctx, rid, conv)
+		self._kill()  # operator flips row -> legacy mid-hop
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		pump._handoff(ctx)
+		self.assertEqual(rec.count, 0, "kill switch: the handoff enqueues NO successor")
+		self.assertEqual(self._state(rid), "recovering", "live turn parked for legacy recovery")
+		# The lease is released (acquirable) so a later revive (if the row flips back) can start.
+		won, _ = ts.lease_acquire(self._target, "later")
+		self.assertTrue(won, "kill-switch release makes the lease acquirable")
+
+	def test_hop_start_under_legacy_halts_before_draining(self):
+		conv = self._mk_conv()
+		rid = "pmp_kill_start"
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="p", streaming=1)
+		# A live streaming turn adopted on acquire; row is legacy BEFORE the hop runs (a successor
+		# queued before the operator flipped the switch).
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"streaming",
+			version=3,
+			reserved=1,
+			assistant_message=amsg,
+			gateway_run_id=rid,
+			dispatching_at=frappe.utils.now(),
+			dispatch_payload=json.dumps({"session_key": f"s-{rid}", "message": "hi"}),
+		)
+		self._kill()
+		rec = _Recorder()
+		deps = self._deps()
+		deps.enqueue_pump_job = rec
+
+		def boom(target, epoch):  # a legacy hop must never even build the transport
+			raise AssertionError("make_mux must not be called under the kill switch")
+
+		deps.make_mux = boom
+		res = pump.run_pump_hop(self._target, deps=deps, soft_budget_s=999)
+		self.assertEqual(res["exit"], "kill_switch")
+		self.assertEqual(rec.count, 0, "hop-start kill: no successor enqueued")
+		self.assertEqual(self._state(rid), "recovering")
+
+	def test_transport_exit_under_legacy_enqueues_no_successor(self):
+		conv = self._mk_conv()
+		rid = "pmp_kill_tx"
+		ctx = self._make_ctx(self._deps(), hop_counter=2, with_mux=False)
+		self.assertTrue(ts.lease_renew(self._target, ctx.epoch))
+		self._streaming_turn(ctx, rid, conv)  # live work
+		self._kill()
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		pump._schedule_successor_on_exit(ctx, transport_retry=0)
+		self.assertEqual(rec.count, 0, "kill switch overrides transport-retry succession")
+		self.assertEqual(self._state(rid), "recovering")
+
+	def test_draining_still_hands_off(self):
+		"""``draining`` is NOT the kill switch — the pump keeps draining in-flight (normal handoff)."""
+		conv = self._mk_conv()
+		rid = "pmp_drain_ho"
+		ctx = self._make_ctx(self._deps(), hop_counter=5, with_mux=False)
+		self.assertTrue(ts.lease_renew(self._target, ctx.epoch))
+		pump._clear_lease_mirror(self._target)
+		self._streaming_turn(ctx, rid, conv)
+		pump.set_transport_mode(self._target, pump._MODE_DRAINING)
+		frappe.db.commit()
+		rec = _Recorder()
+		ctx.deps.enqueue_pump_job = rec
+		pump._handoff(ctx)
+		self.assertEqual(rec.count, 1, "draining still hands off to finish in-flight work")
+		self.assertEqual(self._state(rid), "streaming", "draining does not park live turns")
+
+
+# --------------------------------------------------------------------------- #
+# 15c. CDX-21 (Residual A) — the watchdog reconciles the default mirror every cycle
+# --------------------------------------------------------------------------- #
+
+
+class TestWatchdogMirrorReconcile(_PumpTestCase):
+	def test_reconciles_default_mirror_with_no_open_turns(self):
+		"""Ruling #3: the OLD watchdog derived its target set from open turns/effects and reconciled
+		the mirror INSIDE that loop, so an IDLE site never healed a divergent mirror. The fix
+		reconciles the default control row's mirror EVERY cycle, outside the loop."""
+		# No nonterminal turns exist for this fresh suite target; assert reconcile still runs once.
+		with patch.object(pump, "reconcile_config_mirror") as rc:
+			pump.watchdog(deps=self._deps())
+		rc.assert_called_once_with(pump.DEFAULT_TARGET)
+
+	def test_idle_site_mirror_divergence_healed_in_one_cycle(self):
+		# Induce a divergence on the DEFAULT shard: row says draining, config says pump. No open
+		# turns anywhere -> the fix still repairs the file from the row in one watchdog pass.
+		ts._ensure_control_row(pump.DEFAULT_TARGET)
+		prev = frappe.db.get_value(PUMP, pump.DEFAULT_TARGET, "transport_mode")
+		frappe.db.set_value(
+			PUMP, pump.DEFAULT_TARGET, "transport_mode", pump._MODE_DRAINING, update_modified=False
+		)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(pump.DEFAULT_TARGET, None)
+
+		def _restore():
+			frappe.db.set_value(PUMP, pump.DEFAULT_TARGET, "transport_mode", prev, update_modified=False)
+			frappe.db.set_value(PUMP, pump.DEFAULT_TARGET, "mirror_mismatch", 0, update_modified=False)
+			frappe.db.commit()
+			pump._LIFECYCLE_MODE_CACHE.pop(pump.DEFAULT_TARGET, None)
+
+		self.addCleanup(_restore)
+		with (
+			patch.object(pump, "_config_transport_mode", return_value=pump._MODE_PUMP),
+			patch("frappe.installer.update_site_config") as usc,
+		):
+			pump.watchdog(deps=self._deps())
+		usc.assert_called_once_with("jarvis_pump_enabled", pump._mirror_value_for_mode(pump._MODE_DRAINING))
 
 
 # --------------------------------------------------------------------------- #

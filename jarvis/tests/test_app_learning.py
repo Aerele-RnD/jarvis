@@ -834,3 +834,49 @@ class TestAppLearningCapacityDefer(_AppLearningTestCase):
 		run.reload()
 		self.assertEqual(run.status, "Failed")
 		self.assertIn("busy", (run.error or "").lower())
+
+	def test_cancel_before_resume_prevents_new_turn(self):
+		"""CDX-22: a cancel that has landed prevents the capacity-resume pass from enqueuing a new
+		batch turn. ``mark_cancelled`` now writes ``Cancelled`` under the SAME per-run lock the
+		resume/turn-end critical sections hold, so it can no longer slip between a recheck of
+		``Analyzing`` and the enqueue."""
+		run = self._analyzing_run()
+		frappe.db.set_value(RUN, run.name, "notes", json.dumps({"capacity_wait": {"key": "1", "count": 1}}))
+		frappe.db.commit()
+		app_analysis._bust_active_conversations()
+		app_analysis.mark_cancelled(run.name)
+		self.assertEqual(frappe.db.get_value(RUN, run.name, "status"), "Cancelled")
+		with (
+			mock.patch("jarvis.chat.api._enqueue_turn") as enq,
+			mock.patch.object(app_analysis, "_enqueue_tick"),
+		):
+			app_analysis._recover_stale_runs()
+		enq.assert_not_called()
+		self.assertEqual(frappe.db.get_value(RUN, run.name, "status"), "Cancelled")
+
+	def test_resume_yields_while_the_run_lock_is_held(self):
+		"""CDX-22: while a cancel/turn-end HOLDS the per-run lock (its recheck->enqueue critical
+		section), the capacity-resume pass (non-blocking on the same lock) YIELDS — so a cancel in
+		progress can never be raced into a new-turn enqueue. Once the lock frees, the resume runs."""
+		run = self._analyzing_run()
+		frappe.db.set_value(RUN, run.name, "notes", json.dumps({"capacity_wait": {"key": "1", "count": 1}}))
+		frappe.db.commit()
+		app_analysis._bust_active_conversations()
+		from jarvis._redis_lock import redis_lock
+
+		lock_name = f"jarvis_app_learning_run:{run.name}"
+		with redis_lock(lock_name, timeout_s=60, blocking_timeout_s=0.0) as held:
+			self.assertTrue(held)
+			with (
+				mock.patch("jarvis.chat.api._enqueue_turn") as enq,
+				mock.patch.object(app_analysis, "_enqueue_tick"),
+			):
+				app_analysis._recover_stale_runs()
+			enq.assert_not_called()
+		# Lock released → the capacity-resume proceeds and enqueues the pending batch.
+		with (
+			mock.patch("jarvis.chat.api._enqueue_turn") as enq2,
+			mock.patch.object(app_analysis, "_enqueue_tick"),
+		):
+			app_analysis._recover_stale_runs()
+		enq2.assert_called_once()

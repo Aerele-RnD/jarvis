@@ -429,3 +429,92 @@ class TestMacroCapacityDefer(_MacroMergeBase):
 			macros.resume_waiting_capacity_runs()
 		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "failed")
 		self.assertIn("busy", (frappe.db.get_value(self.RUN, run_name, "error") or "").lower())
+
+
+class TestMacroStopResumeSerialization(_MacroMergeBase):
+	"""CDX-22 — the capacity-resume critical section is serialized with stop (state-fenced flip +
+	pre-enqueue re-check), so neither ordering lets a resume erase a stop or start work after it.
+	CDX-23 — a resumed enqueue that RAISES is compensated so the run never strands ``running``."""
+
+	RUN = "Jarvis Macro Run"
+
+	def _mk_two_step(self):
+		m = _mk_macro([{"label": "a", "prompt": "first"}, {"label": "b", "prompt": "second"}])
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
+		return m
+
+	def _parked_run(self):
+		from jarvis.chat import macros
+
+		overload = {"ok": False, "overloaded": True, "reason": "busy"}
+		with patch("jarvis.chat.api._enqueue_turn", return_value=overload):
+			res = macros.run_macro(self._mk_two_step().name)
+		run_name = res["data"]["macro_run"]
+		self.addCleanup(lambda: frappe.delete_doc(self.RUN, run_name, force=True, ignore_permissions=True))
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "waiting_capacity")
+		return run_name
+
+	# ---- CDX-22 ordering A: stop lands BEFORE the resume flip ------------------- #
+	def test_stop_before_resume_write_aborts_no_enqueue(self):
+		from jarvis.chat import macros
+
+		run_name = self._parked_run()
+		macros.stop_macro_run(run_name)  # writes stopped under the SAME per-run lock
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "stopped")
+		with patch("jarvis.chat.api._enqueue_turn", return_value={"run_id": "r", "message_id": "m"}) as enq:
+			macros.resume_waiting_capacity_runs()
+		# The state-fenced flip (WHERE status='waiting_capacity') matches 0 rows on a stopped run.
+		enq.assert_not_called()
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "stopped")
+
+	# ---- CDX-22 ordering B: stop lands AFTER the flip, before the enqueue ------- #
+	def test_stop_after_resume_write_before_enqueue_aborts(self):
+		from jarvis.chat import macros
+
+		run_name = self._parked_run()
+
+		def fake_status(rn):
+			# Simulate a stop landing after the flip-to-running commit and before the pre-enqueue
+			# eligibility re-check (e.g. the redis lock's TTL lapsed).
+			frappe.db.set_value(self.RUN, rn, {"status": "stopped"}, update_modified=True)
+			frappe.db.commit()
+			return "stopped"
+
+		with (
+			patch.object(macros, "_run_status_now", side_effect=fake_status),
+			patch("jarvis.chat.api._enqueue_turn") as enq,
+		):
+			macros.resume_waiting_capacity_runs()
+		enq.assert_not_called()
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "stopped")
+
+	# ---- CDX-23: a resumed enqueue that RAISES is compensated ------------------- #
+	def test_resume_enqueue_exception_restores_waiting_capacity_then_retries(self):
+		from jarvis.chat import macros
+
+		run_name = self._parked_run()
+		with patch("jarvis.chat.api._enqueue_turn", side_effect=RuntimeError("boom")):
+			macros.resume_waiting_capacity_runs()
+		# Compensated back to waiting_capacity (NOT stranded 'running'); the attempt was counted.
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "waiting_capacity")
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "capacity_attempts"), 1)
+		# Next cycle: capacity frees and the SAME step dispatches.
+		with patch("jarvis.chat.api._enqueue_turn", return_value={"run_id": "r", "message_id": "m"}) as enq:
+			macros.resume_waiting_capacity_runs()
+		enq.assert_called_once()
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "running")
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "capacity_attempts"), 2)
+
+	def test_resume_enqueue_exception_at_cap_fails_honestly(self):
+		from jarvis.chat import macros
+
+		run_name = self._parked_run()
+		# One shy of the cap so THIS resume's attempt (=_MAX) is the last allowed one.
+		frappe.db.set_value(self.RUN, run_name, "capacity_attempts", macros._MAX_CAPACITY_ATTEMPTS - 1)
+		frappe.db.commit()
+		with patch("jarvis.chat.api._enqueue_turn", side_effect=RuntimeError("boom")):
+			macros.resume_waiting_capacity_runs()
+		self.assertEqual(frappe.db.get_value(self.RUN, run_name, "status"), "failed")
+		self.assertIn("busy", (frappe.db.get_value(self.RUN, run_name, "error") or "").lower())

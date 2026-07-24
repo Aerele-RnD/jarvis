@@ -1713,7 +1713,12 @@ def stop_run(conversation: str, run_id: str | None = None) -> dict:
 	try:
 		from jarvis.chat import pump
 
-		if pump.pump_configured():
+		# CDX-21 (Residual A): route the in-flight cancel by the AUTHORITATIVE shard ROW
+		# (``pump_lifecycle_configured``), NOT the config mirror — so a stale mirror never skips the
+		# pump's cancel wake for a row-authoritative pump turn (the direct chat.abort below is still
+		# the backstop, but the row-owned settle is driven through the bus). ``admission`` is the
+		# module-level import (used above); do not shadow it with a local one.
+		if pump.pump_lifecycle_configured(admission.relay_target_id(conversation)):
 			pump.request_cancel_conversation(conversation)
 	except Exception:
 		frappe.log_error(title="stop_run pump cancel", message=frappe.get_traceback())

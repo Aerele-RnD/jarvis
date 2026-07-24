@@ -412,6 +412,35 @@ def pump_lifecycle_configured(target: str) -> bool:
 	return _lifecycle_row_mode(target) != _MODE_LEGACY and not selfhost.is_self_hosted()
 
 
+def _kill_switch_engaged(target: str) -> bool:
+	"""CDX-21 (Residual B) — the pump kill switch: the shard's AUTHORITATIVE row mode is
+	``legacy``. Read THROUGH the 5s lifecycle cache (the same cache the lifecycle gates use, which
+	codex accepted), so a mid-hop ``pump -> legacy`` change is observed within the cache TTL —
+	giving the explicit stop bound the prompt requires: kill latency <= cache TTL + the current
+	slice. ``draining`` is NOT the kill switch (the pump keeps draining its in-flight turns to
+	terminal, only refusing NEW work — current semantics), so ONLY an explicit ``legacy`` row halts
+	succession."""
+	return _lifecycle_row_mode(target) == _MODE_LEGACY
+
+
+def _halt_for_kill_switch(ctx: "PumpContext") -> None:
+	"""CDX-21 (Residual B) — the row flipped to ``legacy`` (kill switch) mid-hop. Release the lease
+	WITHOUT enqueuing a successor and PARK the shard's in-flight turns ``recovering`` so
+	Phase-0/legacy takes over ownership per the coexistence rules: the legacy Message-row recovery
+	cron (``turn_recovery.recover_pending_turns``) finalizes the parked turns from the gateway
+	transcript, and a ``recovering`` Turn row holds no admission credit. Park BEFORE releasing so the
+	recovering marks are written while this hop still holds the epoch. Epoch-guarded: a stale hop
+	whose epoch a takeover already bumped releases nothing (``lease_handoff`` matches 0 rows) — the
+	new owner, which will ITSELF re-check the row at its own hop start, drives the decision."""
+	target = ctx.relay_target_id
+	next_hop = ctx.hop_counter + 1
+	holder = f"jarvis-pump::{ctx.site}::{target}::hop{next_hop}"
+	_park_affected_recovering(ctx)
+	if ts.lease_handoff(target, ctx.epoch, next_hop, holder):
+		_clear_lease_mirror(target)
+	_telemetry("kill_switch_release", target=target, hop=ctx.hop_counter, epoch=ctx.epoch)
+
+
 def _mirror_value_for_mode(mode: str):
 	"""The site_config ``jarvis_pump_enabled`` MIRROR value for a row transport_mode:
 	pump -> remove the key (absence = managed default ON), draining -> 'draining', legacy -> 0."""
@@ -1416,6 +1445,16 @@ def run_pump_hop(
 	ctx.soft_deadline = now + soft_budget_s
 	ctx.hard_deadline = now + hard_deadline_s
 	ctx.last_heartbeat = now
+
+	# CDX-21 (Residual B): honour the kill switch at hop START (post-acquire, pre-drain). A hop
+	# queued before an operator flipped the row to legacy must NOT begin draining — release the
+	# lease WITHOUT succession and park any live turns, so Phase-0/legacy takes over (this IS the
+	# "queued successor rechecks the row before processing" boundary). Bounds kill latency to
+	# cache TTL + one slice. ``draining`` is not the kill switch (the pump keeps draining in-flight).
+	if _kill_switch_engaged(relay_target_id):
+		_halt_for_kill_switch(ctx)
+		ts.reset_lock_tracking()
+		return {"acquired": True, "exit": "kill_switch", "epoch": epoch}
 
 	try:
 		ctx.mux = deps.make_mux(relay_target_id, epoch)
@@ -2817,6 +2856,13 @@ def _handoff(ctx: PumpContext) -> None:
 	enqueue NOTHING (the shared lease-loss exit). The lease + epoch (not the job id)
 	enforce single-instance; the successor re-acquires and bumps the epoch, fencing
 	this hop."""
+	# CDX-21 (Residual B): the kill switch trumps a clean handoff. If the row flipped to legacy
+	# mid-hop, do NOT transfer the lease to a fresh successor — release WITHOUT succession and park
+	# live turns instead (``draining`` still hands off, finishing in-flight). This is the soft-budget
+	# boundary of the <= cache-TTL + slice kill bound.
+	if _kill_switch_engaged(ctx.relay_target_id):
+		_halt_for_kill_switch(ctx)
+		return
 	# OARF-6: flush any sub-threshold batched deltas so a tail batch is not left in
 	# memory across the hop boundary (the next hop would re-derive it from the
 	# cumulative mirror, but flushing now keeps the streamed text current).
@@ -2875,6 +2921,12 @@ def _schedule_successor_on_exit(ctx: PumpContext, *, transport_retry: int) -> No
 	a sustained gateway outage (see the ``TRANSPORT_RETRY_MAX`` note). Best-effort:
 	never raises out of an exit path."""
 	target = ctx.relay_target_id
+	# CDX-21 (Residual B): the kill switch overrides transport-error succession. A transport exit
+	# under a legacy row must NOT enqueue a successor — release WITHOUT succession and park live
+	# turns (Phase-0/legacy owns them per coexistence).
+	if _kill_switch_engaged(target):
+		_halt_for_kill_switch(ctx)
+		return
 	next_hop = ctx.hop_counter + 1
 	successor = f"jarvis-pump::{ctx.site}::{target}::hop{next_hop}"
 	try:
@@ -2923,6 +2975,15 @@ def watchdog(deps: PumpDeps | None = None) -> dict:
 	then ``-> disabled``."""
 	deps = deps or _default_deps()
 	summary = {"aged_out": 0, "reclaimed": 0, "parked": 0, "finalize_requeued": 0, "errored": 0, "revived": 0}
+	# CDX-21 (Residual A): the config key is site-wide, so reconcile the operator mirror FROM the
+	# authoritative default control row EVERY cycle, OUTSIDE the open-work target loop — an IDLE
+	# site whose mirror diverged (a failed command mirror write) otherwise stays divergent
+	# indefinitely, because the target set below is derived only from open turns / effects and an
+	# idle site has none. Idempotent no-op when the mirror already matches the row.
+	try:
+		reconcile_config_mirror(DEFAULT_TARGET)
+	except Exception:
+		frappe.log_error(title="pump.watchdog reconcile", message=frappe.get_traceback())
 	try:
 		targets = {
 			r[0]
@@ -2940,14 +3001,10 @@ def watchdog(deps: PumpDeps | None = None) -> dict:
 		return summary
 	for target in targets:
 		try:
-			# CDX-21: the config key is site-wide, so reconcile the operator mirror FROM the
-			# authoritative row only for the default/site shard (idempotent repair + telemetry
-			# while they differ). Then gate PER-SHARD on the AUTHORITATIVE row (5s TTL) — NOT the
-			# config mirror — so a mirror that momentarily disagrees can never suppress a shard's
-			# pump owner while the fenced accept still admits its turns. A shard whose row is the
-			# ``legacy`` kill switch is skipped (do not revive — use the drain ladder).
-			if target == DEFAULT_TARGET:
-				reconcile_config_mirror(target)
+			# CDX-21: gate PER-SHARD on the AUTHORITATIVE row (5s TTL) — NOT the config mirror — so a
+			# mirror that momentarily disagrees can never suppress a shard's pump owner while the
+			# fenced accept still admits its turns. A shard whose row is the ``legacy`` kill switch is
+			# skipped (do not revive — use the drain ladder).
 			if not pump_lifecycle_configured(target):
 				continue
 			_watchdog_shard(target, deps, summary)
