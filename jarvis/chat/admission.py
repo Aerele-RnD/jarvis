@@ -77,6 +77,28 @@ _INFLIGHT_FRESH_SECONDS = 180
 
 _ACTIVE_STATES = ("queued", "dispatching")
 
+# Every non-terminal in-flight state that consumes a shard credit. Phase-0 turns
+# only ever occupy 'dispatching' among these, so the dual-signal counts below are
+# BYTE-IDENTICAL when the pump is off (the pump-only states are empty). During
+# pump/legacy coexistence (rollout + draining, OAR-11) they make a new Phase-0/
+# legacy send see a pump-owned in-flight turn as busy/inflight.
+_INFLIGHT_STATES = ("preparing", "ready", "dispatching", "streaming", "terminal_observed")
+# Same set + 'queued' = "any turn on this conversation not yet terminal" — the
+# single-flight scope (a pump 'queued' turn also blocks a second send on its conv).
+_CONV_ACTIVE_STATES = ("queued",) + _INFLIGHT_STATES
+# CDX-24: 'recovering' joins the PER-CONVERSATION single-flight set ONLY (never the
+# credit sets above — a parked turn still holds NO shard credit). A kill-/drop-parked
+# turn releases capacity but its conversation stays BLOCKED: the old gateway run may
+# still be live and owned by turn_recovery, so a second send on that conversation must
+# not dispatch a concurrent run until the parked turn reaches a genuine terminal
+# (done/errored/cancelled). 'recovering' is a pump/watchdog-only state, so when the
+# pump is OFF no such row exists and the single-flight check stays byte-identical.
+_CONV_BLOCKING_STATES = _CONV_ACTIVE_STATES + ("recovering",)
+
+
+def _in_sql(values) -> str:
+	return ", ".join(f"'{v}'" for v in values)
+
 
 # --------------------------------------------------------------------------- #
 # Flag / shard helpers
@@ -87,6 +109,28 @@ def admission_enabled() -> bool:
 	"""Cheap conf read (no DB). The single gate that keeps flag-OFF behavior
 	byte-identical: callers short-circuit to the legacy dispatch path."""
 	return bool(frappe.conf.get(FLAG))
+
+
+def turn_machine_enabled(from_db: bool = False, target: str | None = None) -> bool:
+	"""True when a NEW turn must go through the durable turn machine
+	(``accept_or_queue``): the Relay Pump is ACTIVE (it owns dispatch), OR Phase-0
+	admission is on AND the pump is not configured. During pump DRAINING this is
+	FALSE so new turns fall through to the pure-legacy ``_dispatch_turn`` path (no
+	Turn row), coexisting with the draining pump's Turn-row turns via the dual
+	signal (OAR-11). Inside ``accept_or_queue``, ``pump.pump_mode_active()`` then
+	picks the pump branch vs the Phase-0 branch.
+
+	``from_db=True`` (CDX-10): the pump predicates read the DB-authoritative shard
+	``transport_mode`` ROW (caller holds the shard control-row FOR UPDATE) instead of the
+	stale request-local conf. This is the FENCED re-check used at the two dispatch-deciding
+	points (``_dispatch_turn``'s enqueue boundary, ``accept_or_queue`` under the lock). The
+	Phase-0 flag (``jarvis_phase0_admission_enabled``) is not part of the cutover race, so it
+	stays a conf read either way."""
+	from jarvis.chat import pump
+
+	if pump.pump_mode_active(from_db=from_db, target=target):
+		return True
+	return admission_enabled() and not pump.pump_configured(from_db=from_db, target=target)
 
 
 def relay_target_id(conversation: str | None = None) -> str:
@@ -116,7 +160,13 @@ def _ensure_control_row(target: str) -> None:
 	if frappe.db.exists(PUMP, target):
 		return
 	try:
-		doc = frappe.get_doc({"doctype": PUMP, "relay_target_id": target})
+		from jarvis.chat import pump
+
+		# CDX-10: stamp the DB-authoritative transport_mode from config at creation so a fresh
+		# shard's fenced decision value is correct from the first dispatch (never left empty).
+		doc = frappe.get_doc(
+			{"doctype": PUMP, "relay_target_id": target, "transport_mode": pump._config_transport_mode()}
+		)
 		doc.flags.ignore_permissions = True
 		doc.insert()
 		frappe.db.commit()
@@ -178,8 +228,10 @@ def _run_cas(sql: str, params: dict) -> int:
 
 
 def _turn_dispatching_count(target: str) -> int:
+	# Byte-identical to `state='dispatching'` when the pump is off; counts pump
+	# in-flight turns during coexistence (OAR-11).
 	return frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tab{TURN}` WHERE relay_target_id=%(t)s AND state='dispatching'",
+		f"SELECT COUNT(*) FROM `tab{TURN}` WHERE relay_target_id=%(t)s AND state IN ({_in_sql(_INFLIGHT_STATES)})",
 		{"t": target},
 	)[0][0]
 
@@ -187,7 +239,7 @@ def _turn_dispatching_count(target: str) -> int:
 def _turn_dispatching_count_by_class(target: str, turn_class: str) -> int:
 	return frappe.db.sql(
 		f"""SELECT COUNT(*) FROM `tab{TURN}`
-		WHERE relay_target_id=%(t)s AND state='dispatching' AND turn_class=%(k)s""",
+		WHERE relay_target_id=%(t)s AND state IN ({_in_sql(_INFLIGHT_STATES)}) AND turn_class=%(k)s""",
 		{"t": target, "k": turn_class},
 	)[0][0]
 
@@ -219,7 +271,8 @@ def _legacy_streaming_count(target: str) -> int:
 			  AND m.modified > %(fresh)s
 			  AND NOT EXISTS (
 					SELECT 1 FROM `tab{TURN}` t
-					WHERE t.conversation = m.conversation AND t.state='dispatching'
+					WHERE t.conversation = m.conversation
+					  AND t.state IN ({_in_sql(_INFLIGHT_STATES)})
 			  )
 		) x
 		""",
@@ -247,11 +300,15 @@ def shard_overloaded(conversation: str | None = None) -> bool:
 
 
 def _conv_has_other_active_turn(conversation: str, run_id: str) -> bool:
-	"""Any other non-terminal (queued/dispatching) Turn row on this conversation."""
+	"""Any other non-terminal Turn row on this conversation (single-flight scope).
+	Byte-identical to ('queued','dispatching') when the pump is off; sees a
+	pump-owned in-flight turn during coexistence (OAR-11). CDX-24: also treats a
+	sibling 'recovering' Turn as blocking — a parked turn's old gateway run may
+	still be live, so the conversation stays single-flight until it settles."""
 	return bool(
 		frappe.db.sql(
 			f"""SELECT 1 FROM `tab{TURN}`
-			WHERE conversation=%(c)s AND name!=%(r)s AND state IN ('queued','dispatching')
+			WHERE conversation=%(c)s AND name!=%(r)s AND state IN ({_in_sql(_CONV_BLOCKING_STATES)})
 			LIMIT 1""",
 			{"c": conversation, "r": run_id},
 		)
@@ -272,10 +329,50 @@ def _conv_legacy_busy(conversation: str) -> bool:
 	sentinel made ``name != ''`` exclude nothing, so the inner query counted the
 	just-inserted queued row and always returned True, making this guard return
 	False (dead) at BOTH call sites. Dropping the subtraction restores the
-	OAR-11 coexistence interlock."""
+	OAR-11 coexistence interlock.
+
+	CDX-24: OR a fresh ``recovering=1`` legacy assistant Message with no owning
+	Turn row (the legacy dual-signal mirror of the Turn-row recovering block) — a
+	legacy turn parked recovering still has its old gateway run owned by
+	turn_recovery, so its conversation must stay single-flight-blocked here even
+	though ``_conversation_busy`` deliberately UNLOCKS the composer for it."""
 	from jarvis.chat.api import _conversation_busy
 
-	return _conversation_busy(conversation)
+	return _conversation_busy(conversation) or _conv_legacy_recovering_busy(conversation)
+
+
+def _conv_legacy_recovering_busy(conversation: str) -> bool:
+	"""CDX-24 legacy dual-signal: True when this conversation's newest assistant
+	Message is ``streaming=1 AND recovering=1`` with NO owning blocking Turn row.
+	Mirrors the Turn-row ``recovering`` single-flight block for the pure-legacy /
+	coexistence case that ``api._conversation_busy`` intentionally treats as free
+	(the composer is unlocked while recovering, but a NEW admission dispatch must
+	not start a second run on the same session). turn_recovery resolves the parked
+	run — ``_finalize``/``_error`` clear ``streaming`` — so the block lifts exactly
+	when recovery proves the old run terminal (ceiling-bounded, never wall-clock).
+	The ``NOT EXISTS`` de-dups against an owning Turn already caught by
+	``_conv_has_other_active_turn`` (this signal is for the Turn-less legacy park)."""
+	rows = frappe.db.sql(
+		f"""SELECT streaming, recovering FROM `tab{MSG}`
+		WHERE conversation=%(c)s AND role='assistant'
+		ORDER BY seq DESC LIMIT 1""",
+		{"c": conversation},
+		as_dict=True,
+	)
+	if not rows or not (rows[0].get("streaming") and rows[0].get("recovering")):
+		return False
+	# De-dup against a Turn that OWNS a run (in-flight or recovering) — that case is
+	# already caught by _conv_has_other_active_turn. A merely 'queued' Turn owns no run
+	# (it is the candidate waiting BEHIND the recovering message), so it must NOT hide
+	# the Turn-less legacy park from this signal (mirrors _legacy_streaming_count's
+	# NOT EXISTS, which de-dups only against _INFLIGHT_STATES).
+	return not bool(
+		frappe.db.sql(
+			f"""SELECT 1 FROM `tab{TURN}`
+			WHERE conversation=%(c)s AND state IN ({_in_sql(_INFLIGHT_STATES + ("recovering",))}) LIMIT 1""",
+			{"c": conversation},
+		)
+	)
 
 
 # --------------------------------------------------------------------------- #
@@ -402,19 +499,53 @@ def accept_or_queue(
 	``dispatch`` is a zero-arg callable that runs the legacy ``_dispatch_turn``
 	for this turn; it is invoked ONLY on the admit path and ONLY after the
 	admission txn commits."""
+	from jarvis.chat import pump
+
 	target = relay_target_id(conversation)
 	turn_class = turn_class if turn_class in ("interactive", "background") else "interactive"
 	payload_json = json.dumps(dispatch_payload) if dispatch_payload else None
 
 	_lock_shard(target)
 	_lock_conversation(conversation)
+	# CDX-10 (DB-authoritative): read the transport decision from the shard control ROW under
+	# the lock we now hold — NOT the request-local conf, which frappe.init froze at request start
+	# and update_site_config never refreshes, so it can be stale across a cutover. The SAME row
+	# pump_cutover_execute flips under this lock, so no mode change can interleave between the
+	# branch decision and the durable insert below.
+	#
+	# Sweep note (contention): read the row's transport_mode ONCE and derive BOTH decisions from
+	# it, rather than turn_machine_enabled(from_db) + pump_mode_active(from_db) each re-reading
+	# the row (three indexed reads) while the site-wide admission lock is held.
+	_pred = pump.transport_predicates_from_row(target)
+	pump_mode = _pred["pump_active"]
+	machine_active = pump_mode or (admission_enabled() and not _pred["configured"])
 
 	# OARI-11: everything below runs while holding the shard + conversation FOR
-	# UPDATE locks. The two designed early-returns (overload reject, duplicate
-	# replay) roll back explicitly before returning; an UNEXPECTED failure must
-	# also release the locks immediately (not linger until request/job teardown),
-	# so the whole locked section is guarded - rollback + re-raise (never mask).
+	# UPDATE locks. The designed early-returns (legacy fallback, overload reject,
+	# duplicate replay) roll back/commit explicitly before returning; an UNEXPECTED
+	# failure must also release the locks immediately (not linger until request/job
+	# teardown), so the whole locked section is guarded - rollback + re-raise (never mask).
 	try:
+		if not machine_active:
+			# CDX-10 (reverse direction): the world reverted to pure-legacy (kill switch back on
+			# AND Phase-0 off) while this sender waited on the shard lock — its stale conf still said
+			# machine-ON, which is why it entered accept_or_queue. Creating a machine Turn now would
+			# STRAND it: with both the pump and Phase-0 off, nothing promotes a queued row (it would
+			# age out ~15min later). Instead enqueue the legacy job under the lock we hold (so a
+			# concurrent cutover scan sees it — same guarantee as _dispatch_turn's gate) and commit;
+			# no Turn row is created. The seed user Message already exists (every caller inserts it
+			# before dispatch), so nothing is orphaned.
+			dispatch()
+			frappe.db.commit()  # releases both locks; the legacy job is durably enqueued
+			_telemetry("accept_legacy_fallback", run_id=run_id, target=target)
+			return {
+				"ok": True,
+				"dispatched": True,
+				"run_id": run_id,
+				"queued_position": None,
+				"legacy_fallback": True,
+			}
+
 		# Overload guard (SUX-5): authoritative check under the shard lock. No row.
 		# A confirm continuation (exempt_overload) skips it - it always queues.
 		if not exempt_overload and _shard_queued_depth(target) >= MAX_QUEUE_DEPTH:
@@ -478,34 +609,84 @@ def accept_or_queue(
 				"queued_position": None,
 			}
 
-		# Admit decision: dispatch iff nothing else is live on this conversation
-		# (single-flight) AND the shard has a free credit.
-		conv_busy = _conv_has_other_active_turn(conversation, run_id) or _conv_legacy_busy(conversation)
-		inflight = _shard_inflight(target)
-		queue_depth_at_accept = _shard_queued_depth(target)
-		admit = (not conv_busy) and (inflight < _max_inflight())
-
-		if admit:
-			affected = _run_cas(
-				f"""UPDATE `tab{TURN}`
-				SET state='dispatching', reserved=1, dispatching_at=%(now)s,
-				    reservation_expires_at=%(exp)s, version=version+1
-				WHERE name=%(r)s AND state='queued' AND version=0""",
-				{
-					"r": run_id,
-					"now": _now(),
-					"exp": frappe.utils.add_to_date(None, seconds=RESERVE_TTL_S),
-				},
+		if pump_mode:
+			# Relay-Pump mode: the pump OWNS dispatch. Leave the turn 'queued'
+			# (reserved=0, pump_epoch=0); the pump reserves the credit at the
+			# queued->preparing PROMOTION point under the shard lock (D3 Race 2) and
+			# drives prepare->dispatch->settle. NO Phase-0 admit CAS, NO legacy
+			# dispatch(). A UI hint (will_dispatch) mirrors the pump's OWN promote
+			# order WITHOUT the CAS — the pump is authoritative.
+			#
+			# F2 (will_dispatch race): the pump leaves EVERY accepted turn 'queued'
+			# and only promotes it to an inflight state on a later slice, so an
+			# occupier turn A can still be plain 'queued' (uncounted by
+			# _shard_inflight, which counts only _INFLIGHT_STATES) at the instant a
+			# second turn B is accepted. The OLD hint compared only
+			# `_shard_inflight < cap`, so it wrongly told B's sender "dispatched" —
+			# B's tab then sat on the "Working on it…" placeholder for the whole
+			# queue wait (never rendering the queued chip), while a RELOAD read the
+			# durable 'queued' row and showed the chip correctly (the reported split).
+			# The fix uses B's RANK among the shard's queued turns (interactive-first
+			# FIFO — the pump's own promote order): B dispatches immediately iff a
+			# free credit reaches its position, i.e. inflight + position <= cap. This
+			# never claims immediate dispatch when a still-'queued' occupier sits
+			# ahead of B. `_position_of` sees B's own (uncommitted) queued insert in
+			# this same transaction, and the shard lock (held until the commit below)
+			# blocks any concurrent accept/promote, so the rank is stable.
+			conv_busy = _conv_has_other_active_turn(conversation, run_id) or _conv_legacy_busy(conversation)
+			position = _position_of(run_id, target)
+			inflight = _shard_inflight(target)
+			will_dispatch = (
+				(not conv_busy) and position is not None and (inflight + position <= _max_inflight())
 			)
-			if affected != 1:
-				# Lost a race to a concurrent promoter (should not happen under the
-				# shard lock); fall back to queued and let promotion pick it up.
-				admit = False
+			frappe.db.commit()  # releases both locks; row durable
+		else:
+			# Admit decision: dispatch iff nothing else is live on this conversation
+			# (single-flight) AND the shard has a free credit.
+			conv_busy = _conv_has_other_active_turn(conversation, run_id) or _conv_legacy_busy(conversation)
+			inflight = _shard_inflight(target)
+			queue_depth_at_accept = _shard_queued_depth(target)
+			admit = (not conv_busy) and (inflight < _max_inflight())
 
-		frappe.db.commit()  # releases both locks; row is durable
+			if admit:
+				affected = _run_cas(
+					f"""UPDATE `tab{TURN}`
+					SET state='dispatching', reserved=1, dispatching_at=%(now)s,
+					    reservation_expires_at=%(exp)s, version=version+1
+					WHERE name=%(r)s AND state='queued' AND version=0""",
+					{
+						"r": run_id,
+						"now": _now(),
+						"exp": frappe.utils.add_to_date(None, seconds=RESERVE_TTL_S),
+					},
+				)
+				if affected != 1:
+					# Lost a race to a concurrent promoter (should not happen under the
+					# shard lock); fall back to queued and let promotion pick it up.
+					admit = False
+
+			frappe.db.commit()  # releases both locks; row is durable
 	except Exception:
 		frappe.db.rollback()  # release the FOR UPDATE locks on an unexpected failure
 		raise
+
+	if pump_mode:
+		# Wake the pump AFTER the durable commit (§8-E PRIMARY start path). ensure_pump
+		# is MariaDB-authoritative; lpush_wake is a best-effort tick (the pump scans
+		# queued rows on wake + every watchdog tick regardless).
+		_telemetry("accept_pump", run_id=run_id, target=target, turn_class=turn_class)
+		pump.ensure_pump(target)
+		pump.lpush_wake(target, run_id)
+		# Reuse the rank computed under the lock (the row is unchanged — the pump's
+		# promote is serialized on the same shard lock we just released).
+		pos = None if will_dispatch else position
+		return {
+			"ok": True,
+			"dispatched": bool(will_dispatch),
+			"run_id": run_id,
+			"queued_position": pos,
+			"pump": True,
+		}
 
 	_telemetry(
 		"accept",
@@ -518,17 +699,24 @@ def accept_or_queue(
 
 	if admit:
 		# Enqueue the legacy turn job AFTER the durable commit (mirrors the
-		# _dispatch_turn after_commit invariant). CDX-9: if the broker is down,
-		# compensate (dispatching -> queued + release) so the turn stays durably
-		# queued for the sweep/promoter instead of pinning a credit on a job that
-		# never existed.
+		# _dispatch_turn after_commit invariant).
 		try:
 			dispatch()
 		except Exception:
+			# CDX-9: enqueue failed after the admission commit — compensate so the
+			# credit is not stranded until the reservation TTL, and return the turn as
+			# durably queued (a sweep/promote will re-dispatch it) instead of a false
+			# "dispatched".
 			frappe.log_error(title="admission.accept dispatch", message=frappe.get_traceback())
 			_compensate_failed_dispatch(run_id, target)
 			pos = _position_of(run_id, target)
-			return {"ok": True, "dispatched": False, "run_id": run_id, "queued_position": pos}
+			return {
+				"ok": True,
+				"dispatched": False,
+				"run_id": run_id,
+				"queued_position": pos,
+				"dispatch_failed": True,
+			}
 		return {"ok": True, "dispatched": True, "run_id": run_id, "queued_position": None}
 
 	pos = _position_of(run_id, target)
@@ -560,12 +748,16 @@ def _cas_dispatch(run_id: str) -> bool:
 
 
 def _compensate_failed_dispatch(run_id: str, target: str) -> None:
-	"""CDX-9: the RQ enqueue failed AFTER the admission commit. Return the slot
+	"""CDX-9: an enqueue (RQ/Redis) failure AFTER the admission/promotion commit leaves
+	the row ``dispatching`` + ``reserved`` with no job behind it, stranding a shard
+	credit until the ~900s reservation TTL + the periodic sweep. Compensate
 	immediately: CAS the exact ``dispatching`` attempt back to ``queued``, CLEAR the
-	reservation, and republish positions - otherwise the credit is pinned until the
-	reservation TTL and capacity silently shrinks under repeated broker failures."""
+	reservation/expiry, and republish positions so a waiting sender sees the freed
+	slot. Version-fenced on ``state='dispatching'`` so a turn that meanwhile started
+	streaming (won't happen on the same run in Phase-0, but defensive) is untouched.
+	Best-effort — never raises into the caller."""
 	try:
-		_run_cas(
+		affected = _run_cas(
 			f"""UPDATE `tab{TURN}`
 			SET state='queued', reserved=0, dispatching_at=NULL,
 			    reservation_expires_at=NULL, version=version+1
@@ -573,13 +765,17 @@ def _compensate_failed_dispatch(run_id: str, target: str) -> None:
 			{"r": run_id},
 		)
 		frappe.db.commit()
+		if affected == 1:
+			try:
+				_publish_queue_positions(target)
+			except Exception:
+				pass
 	except Exception:
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
 		frappe.log_error(title="admission.compensate_failed_dispatch", message=frappe.get_traceback())
-		return
-	try:
-		_publish_queue_positions(target)
-	except Exception:
-		pass
 
 
 def _dispatch_promoted(row: dict) -> None:
@@ -618,11 +814,27 @@ def promote_next(target: str | None = None) -> int:
 	the flag off, existing Turn rows still drain to terminal via the sweep's
 	reconcile/age-out duties (which only settle/cancel existing rows), but no
 	queued row is ever promoted onto a worker - disabling admission is a true
-	kill switch for new dispatch, not just for new rows."""
-	if not admission_enabled():
-		return 0
+	kill switch for new dispatch, not just for new rows.
+
+	WP-1d: once the Relay Pump is configured (active OR draining) it OWNS every
+	Jarvis Chat Turn row and drives its own promote/reconcile via the pump
+	watchdog; Phase-0 must NOT legacy-dispatch a pump-owned queued turn, so this
+	steps back entirely.
+
+	CDX-21 (Residual A): the step-back reads the AUTHORITATIVE shard ROW
+	(``pump_lifecycle_configured``, the same 5s row cache the pump lifecycle gates use),
+	NOT the ``site_config`` mirror. So a stale/failed mirror can never make Phase-0
+	legacy-dispatch a queued row the row-authoritative pump already owns (row=pump/config=legacy),
+	nor suppress Phase-0's own promotion when the row is the ``legacy`` kill switch
+	(row=legacy/config=pump). The row decides ownership everywhere."""
+	from jarvis.chat import pump
+
 	if target is None:
 		target = DEFAULT_RELAY_TARGET
+	if pump.pump_lifecycle_configured(target):
+		return 0
+	if not admission_enabled():
+		return 0
 	promoted_rows: list[dict] = []
 	try:
 		_lock_shard(target)
@@ -650,9 +862,9 @@ def promote_next(target: str | None = None) -> int:
 			_dispatch_promoted(row)
 			_telemetry("promote", run_id=row["run_id"], target=target, queue_wait_ms=wait_ms)
 		except Exception:
-			# CDX-9: enqueue failed after the promotion commit - compensate (CAS
-			# dispatching -> queued + release the credit) instead of only logging,
-			# so the next promoter can retry the turn.
+			# CDX-9: enqueue failed after the promotion commit — compensate (CAS
+			# dispatching->queued + release the credit) instead of only logging, so the
+			# promoted-but-not-dispatched credit is not stranded until the sweep.
 			frappe.log_error(title="admission.promote dispatch", message=frappe.get_traceback())
 			_compensate_failed_dispatch(row["run_id"], target)
 
@@ -800,23 +1012,58 @@ def _assert_owner(conversation: str) -> str:
 
 @frappe.whitelist()
 def cancel_queued_turn(run_id: str) -> dict:
-	"""Owner-checked cancel of a queued turn: CAS queued->cancelled, publish
-	turn:cancelled, republish positions. Frees no slot (a queued turn holds
-	none) but renumbers the queue."""
+	"""Owner-checked cancel of a pre-dispatch turn, ROUTED BY STATE (CDX-8):
+
+	  * ``queued``            -> ``turn_state.cancel_queued`` (version-fenced): CAS to
+	                            ``cancelled`` CLEARING ``reserved`` + ``reservation_
+	                            expires_at`` atomically. A reserved-but-unclaimed queued
+	                            turn (the pump reserved a credit before prepare) would
+	                            otherwise leak that credit until the ~900s reservation
+	                            expiry — the reported leak.
+	  * ``preparing``/``ready`` -> ``turn_state.cancel_preparing_or_ready`` (version-
+	                            fenced): CAS to ``cancelled`` (also clearing the
+	                            reservation) + clean the assistant placeholder so no
+	                            stuck spinner. The pump owns dispatch but nothing is in
+	                            flight yet, so no gateway abort is needed; the losing
+	                            prepare's ``mark_ready`` then affects 0 rows.
+
+	Returns ``{"ok": True, "run_id", "path": "queued"|"preparing_ready"}`` so the
+	caller/UI knows which path won; ``{"ok": False, ...}`` when the turn already
+	advanced (e.g. dispatched) — the UI then KEEPS its chip until the server confirms
+	(no optimistic clear on failure)."""
 	require_jarvis_access()
 	row = frappe.db.get_value(
-		TURN, run_id, ["conversation", "state", "relay_target_id", "seed_message"], as_dict=True
+		TURN,
+		run_id,
+		["conversation", "state", "version", "relay_target_id", "seed_message", "assistant_message"],
+		as_dict=True,
 	)
 	if not row:
 		return {"ok": False, "reason": frappe._("This turn no longer exists.")}
 	owner = _assert_owner(row["conversation"])
-	affected = _run_cas(
-		f"""UPDATE `tab{TURN}` SET state='cancelled', cancel_requested=1, done_at=%(now)s,
-		version=version+1 WHERE name=%(r)s AND state='queued'""",
-		{"r": run_id, "now": _now()},
-	)
+	from jarvis.chat import turn_state as ts
+
+	state = row["state"]
+	version = int(row["version"] or 0)
+	path = None
+	if state == "queued":
+		if ts.cancel_queued(run_id, version):
+			path = "queued"
+	elif state in ("preparing", "ready"):
+		if ts.cancel_preparing_or_ready(run_id, version):
+			path = "preparing_ready"
+			# Clean the assistant placeholder prepare attached so a reload never shows
+			# a stuck spinner for a cancelled turn (credit already released by the CAS).
+			if row.get("assistant_message"):
+				try:
+					_run_cas(
+						f"UPDATE `tab{MSG}` SET streaming=0 WHERE name=%(m)s",
+						{"m": row["assistant_message"]},
+					)
+				except Exception:
+					pass
 	frappe.db.commit()
-	if affected != 1:
+	if path is None:
 		return {"ok": False, "reason": frappe._("This turn already started or was cancelled.")}
 	try:
 		publish_to_user(
@@ -835,10 +1082,23 @@ def cancel_queued_turn(run_id: str) -> dict:
 	# cancelled (not silently dropped).
 	_write_cancel_marker(row["conversation"], USER_CANCEL_REASON)
 	target = row["relay_target_id"] or DEFAULT_RELAY_TARGET
-	# A cancel can free capacity indirectly (an over-cap conversation clears) -
-	# best-effort promote + republish positions.
-	promote_next(target)
-	return {"ok": True, "run_id": run_id}
+	# The freed credit lets the next queued turn run. In pump mode wake the pump to
+	# re-promote (promote_next is a no-op there); else best-effort legacy promote.
+	# CDX-21 (Residual A): the pump-vs-legacy wake decision reads the AUTHORITATIVE shard ROW
+	# (``pump_lifecycle_configured``), NOT the config mirror — so a stale mirror can never route the
+	# credit-freed wake to the wrong owner.
+	from jarvis.chat import pump
+
+	if pump.pump_lifecycle_configured(target):
+		try:
+			pump.ensure_pump(target)
+			pump.lpush_wake(target, run_id)
+			_publish_queue_positions(target)
+		except Exception:
+			pass
+	else:
+		promote_next(target)
+	return {"ok": True, "run_id": run_id, "path": path}
 
 
 @frappe.whitelist()
@@ -868,28 +1128,314 @@ def active_turn_for_conversation(conversation: str) -> dict:
 	IS the caller's own. A ``dispatching`` turn is deliberately NOT returned here:
 	loadConversation's existing streaming resume already shows its "Thinking…"
 	state from the assistant placeholder; the chip is only for a not-yet-running
-	queued turn. Returns ``{"ok": True, "active": None}`` when nothing is queued.
-	The earliest-enqueued queued turn (position closest to 1) is reported."""
+	turn. Returns ``{"ok": True, "active": None}`` when nothing is pending.
+	The earliest-enqueued pending turn (position closest to 1) is reported.
+
+	SUXF-3: the pump adds a ``preparing``/``ready`` window between ``queued`` and
+	the stream (prompt assembly + session bootstrap). Those states are returned too
+	(with ``state`` so the chip reads "Starting…" via TURN_STATE_COPY) so a reload /
+	focus resync during that window keeps the chip + composer lock instead of going
+	silent and re-enabling an empty composer. Position is reported only for a still
+	``queued`` turn (meaningless once a credit is held)."""
 	require_jarvis_access()
 	_assert_owner(conversation)
 	row = frappe.db.get_value(
 		TURN,
-		{"conversation": conversation, "state": "queued"},
-		["run_id", "seed_message", "relay_target_id"],
+		{"conversation": conversation, "state": ["in", ("queued", "preparing", "ready")]},
+		["run_id", "seed_message", "relay_target_id", "state"],
 		as_dict=True,
 		order_by="enqueued_at asc",
 	)
 	if not row:
 		return {"ok": True, "active": None}
-	pos = _position_of(row["run_id"], row["relay_target_id"] or DEFAULT_RELAY_TARGET)
+	pos = (
+		_position_of(row["run_id"], row["relay_target_id"] or DEFAULT_RELAY_TARGET)
+		if row["state"] == "queued"
+		else None
+	)
 	return {
 		"ok": True,
 		"active": {
 			"run_id": row["run_id"],
-			"state": "queued",
+			"state": row["state"],
 			"message_id": row["seed_message"],
 			"position": pos,
 		},
+	}
+
+
+# --------------------------------------------------------------------------- #
+# Cutover preflight (CDX-10) — first-deploy legacy-overlap detector
+# --------------------------------------------------------------------------- #
+
+
+def _legacy_turn_jobs() -> tuple[int, list[str], bool]:
+	"""CDX-10: scan every RQ queue (queued + started registries) for THIS site's
+	legacy ``jarvis-turn::*`` jobs. Frappe namespaces a job id as
+	``"<site>||<job_id-with-colons-as-pipes>"`` (``create_job_id``), so a legacy
+	``jarvis-turn::<msg>::a<n>`` id becomes ``<site>||jarvis-turn|<msg>|a<n>`` — we
+	match that prefix.
+
+	Returns ``(count, job_ids[:20], scan_ok)``. CDX-10 fail-CLOSED: ANY scan exception
+	(the outer ``get_queues`` OR any per-queue/registry probe) sets ``scan_ok=False`` so
+	the preflight cannot report ``clear=True`` on an incomplete scan (a swallowed probe
+	error must never green-light a cutover that could overlap an invisible legacy job)."""
+	prefix = f"{frappe.local.site}||jarvis-turn|"
+	found: set[str] = set()
+	scan_ok = True
+	try:
+		from frappe.utils.background_jobs import get_queues
+		from rq.registry import StartedJobRegistry
+
+		for q in get_queues():
+			ids: list = []
+			try:
+				ids += list(q.get_job_ids() or [])
+			except Exception:
+				scan_ok = False
+			try:
+				ids += list(StartedJobRegistry(queue=q).get_job_ids() or [])
+			except Exception:
+				scan_ok = False
+			for jid in ids:
+				if isinstance(jid, bytes):
+					jid = jid.decode()
+				if isinstance(jid, str) and jid.startswith(prefix):
+					found.add(jid)
+	except Exception:
+		scan_ok = False
+		frappe.log_error(title="admission.pump_cutover_preflight scan", message=frappe.get_traceback())
+	ordered = sorted(found)
+	return len(ordered), ordered[:20], scan_ok
+
+
+@frappe.whitelist()
+def pump_cutover_preflight(relay_target: str | None = None) -> dict:
+	"""CDX-10 — the MANDATORY first-deploy cutover preflight. Before removing the
+	explicit ``jarvis_pump_enabled=0`` kill switch to enter the default-ON pump, run
+	``bench --site <site> execute jarvis.chat.admission.pump_cutover_preflight`` to
+	detect INVISIBLE legacy activity that a fresh pump start could overlap (violating
+	per-conversation ordering / the container cap):
+
+	  * queued OR started legacy ``jarvis-turn::*`` RQ jobs — a pre-upgrade job that has
+	    no Turn row AND no assistant placeholder yet (it creates the placeholder only
+	    after the worker starts), so neither the pump reconcile nor the dual signal can
+	    see it;
+	  * fresh legacy streaming assistant messages with no owning Turn row (a legacy
+	    turn already mid-stream).
+
+	Returns a verdict + counts. ``clear=True`` (verdict ``"clear"``) ⇒ no invisible
+	legacy activity — safe to unset the kill switch and enter default-ON. ``clear=
+	False`` ⇒ either ``"drain_first"`` (legacy activity present — drain the listed jobs /
+	let the streams finish, PUMP-RUNBOOK §2) or ``"scan_failed"`` (CDX-10 fail-CLOSED: a
+	queue/registry probe raised, so the scan is INCOMPLETE and cannot be trusted to say
+	clear — resolve the RQ/redis fault and re-run). System-Manager gated (so ``bench
+	execute`` as Administrator works)."""
+	frappe.only_for("System Manager")
+	target = relay_target or DEFAULT_RELAY_TARGET
+	legacy_jobs, job_ids, scan_ok = _legacy_turn_jobs()
+	# CDX-10 fail-CLOSED: the streaming scan can also fault; treat its failure as unknown.
+	try:
+		legacy_streaming = _legacy_streaming_count(target)
+	except Exception:
+		scan_ok = False
+		legacy_streaming = -1
+		frappe.log_error(
+			title="admission.pump_cutover_preflight streaming scan", message=frappe.get_traceback()
+		)
+	clear = scan_ok and legacy_jobs == 0 and legacy_streaming == 0
+	if not scan_ok:
+		verdict = "scan_failed"
+	elif clear:
+		verdict = "clear"
+	else:
+		verdict = "drain_first"
+	result = {
+		"ok": True,
+		"clear": clear,
+		"verdict": verdict,
+		"scan_ok": scan_ok,
+		"legacy_jobs": legacy_jobs,
+		"legacy_streaming": legacy_streaming,
+		"job_ids": job_ids,
+		"relay_target": target,
+	}
+	if not scan_ok:
+		result["error"] = "cutover preflight scan incomplete (RQ/redis probe failed) — failing closed"
+	_telemetry(
+		"cutover_preflight",
+		target=target,
+		legacy_jobs=legacy_jobs,
+		legacy_streaming=legacy_streaming,
+		scan_ok=int(scan_ok),
+	)
+	return result
+
+
+@frappe.whitelist()
+def pump_cutover_execute(relay_target: str | None = None) -> dict:
+	"""CDX-10/CDX-21 — ONE cutover PASS that encodes the safe protocol (the loop is the
+	operator's; this method is one pass). It closes the TOCTOU window the read-only
+	preflight left open (a legacy job arriving AFTER ``clear=True`` and BEFORE the flip):
+
+	  1. **Preflight.** If NOT clear (``drain_first`` / ``scan_failed``) => return
+	     ``done=False`` with the verdict; the operator drains / fixes the fault and
+	     re-runs. The mode is left untouched.
+	  2. **Flip the ROW** (``transport_mode`` -> ``pump``, ``mode_epoch``+1) under the lock,
+	     uncommitted. No config write here (CDX-21) — the operator mirror is written only
+	     after the row commits.
+	  3. **IMMEDIATE re-check.** If a legacy ``jarvis-turn::*`` job appeared in the tiny
+	     flip-vs-recheck window (or the recheck scan faulted), ROLL BACK (undoes the
+	     uncommitted row flip) and return ``done=False, verdict="retry"`` so the operator
+	     drains the straggler and loops. Only when the re-check is STILL clear is the row flip
+	     committed (``done=True``), and THEN the ``jarvis_pump_enabled`` config mirror is
+	     written best-effort (a mirror failure never unwinds the committed row; the watchdog
+	     repairs it — CDX-21).
+
+	Restart is not required (the row is the decider; ``ensure_pump`` is the primary
+	start path). System-Manager gated. Run:
+	``bench --site <site> execute jarvis.chat.admission.pump_cutover_execute`` — repeat
+	until it returns ``done=True``."""
+	frappe.only_for("System Manager")
+	target = relay_target or DEFAULT_RELAY_TARGET
+
+	from jarvis.chat import pump
+	from jarvis.chat import turn_state as _ts
+
+	# CDX-10 — the REAL serialization point. Hold the per-shard control row FOR UPDATE across
+	# the ENTIRE scan -> flip -> recheck pass (no commit until the end), so this pass is mutually
+	# exclusive with every dispatch-deciding read that takes the SAME lock: the legacy path's
+	# enqueue-boundary re-check (_dispatch_turn) and accept_or_queue's under-lock decision. The
+	# FLIP is DB-AUTHORITATIVE: it UPDATEs the shard control row's ``transport_mode`` to ``pump``
+	# (mode_epoch+1), which IS the fenced value every dispatch decision reads under this lock.
+	# CDX-21: the ``jarvis_pump_enabled`` config mirror is NOT written under the lock — it is
+	# written best-effort ONLY AFTER the row flip commits, so the two stores are never claimed to
+	# update atomically and a mirror failure can't diverge from a not-yet-committed row. This
+	# closes the round-3 race in BOTH directions: a legacy sender either (a) enqueued+committed
+	# BEFORE we take the lock — visible to the scan, so we do NOT flip; or (b) blocks on this lock
+	# until we finish — then reads the ROW (=pump) and does NOT enqueue an invisible legacy job.
+	# The row UPDATE does NOT db-commit until the end, so the FOR UPDATE is held unbroken.
+	try:
+		_ts._lock_shard(target)  # commit-first; the FOR UPDATE is the first statement
+
+		# (1) Preflight scan UNDER the lock.
+		pre = pump_cutover_preflight(target)
+		if not pre["clear"]:
+			# Not safe to cut over — leave the mode + kill switch exactly as they are; release the lock.
+			frappe.db.rollback()
+			return {
+				"ok": True,
+				"done": False,
+				"action": "blocked",
+				"verdict": pre["verdict"],
+				"preflight": pre,
+			}
+
+		# (2) FLIP the DB-authoritative transport_mode to pump (mode_epoch+1) — the fenced decision
+		# value. Still locked, no commit, and NO config write yet (CDX-21): the operator mirror is
+		# written only AFTER the row is durably committed, so a mirror failure can never diverge
+		# from a not-yet-committed row.
+		mode_epoch = pump.set_transport_mode(target, pump._MODE_PUMP)
+
+		# (3) IMMEDIATE re-check for a straggler that raced into the window — still locked.
+		post = pump_cutover_preflight(target)
+		if not post["clear"]:
+			# ROLL BACK (undoes the uncommitted transport_mode flip — the row reverts to its
+			# last-committed mode) and release the lock. Nothing was mirrored, so there is nothing
+			# to restore. The pump never admitted here; the lock kept every dispatch-deciding read
+			# serialized behind this re-check, and none observed the (uncommitted) pump mode.
+			frappe.db.rollback()
+			_telemetry("cutover_execute", target=target, done=0, verdict="retry")
+			return {"ok": True, "done": False, "action": "reverted", "verdict": "retry", "preflight": post}
+
+		frappe.db.commit()  # (4) commit the gate: the ROW flip is durable, the lock is released
+	except Exception:
+		# Any fault mid-pass: roll back (undoing the uncommitted transport_mode flip), releasing
+		# the lock. Nothing was mirrored, so there is nothing to restore.
+		frappe.db.rollback()
+		raise
+	finally:
+		_ts.reset_lock_tracking()
+
+	# (5) Best-effort config MIRROR — a failure here NEVER unwinds the committed row (CDX-21); the
+	# watchdog repairs the file from the row on its next cycle.
+	mirror_mismatch = pump.mirror_config_from_row(target, pump._MODE_PUMP)
+	_telemetry(
+		"cutover_execute",
+		target=target,
+		done=1,
+		verdict="cutover",
+		mode_epoch=mode_epoch,
+		mirror_mismatch=int(mirror_mismatch),
+	)
+	return {
+		"ok": True,
+		"done": True,
+		"action": "cutover",
+		"verdict": "cutover",
+		"mode_epoch": mode_epoch,
+		"mirror_mismatch": mirror_mismatch,
+		"preflight": post,
+	}
+
+
+@frappe.whitelist()
+def pump_set_transport_mode(mode: str, relay_target: str | None = None) -> dict:
+	"""CDX-10/CDX-21 — the operator command for a DELIBERATE transport-mode change OTHER than the
+	forward cutover: the kill switch (``legacy``), the rollback ladder's drain step
+	(``draining``), or re-enabling (``pump``). ONE operational source of truth (CDX-21): it
+	updates the DB-AUTHORITATIVE ``transport_mode`` ROW under the shard control-row FOR UPDATE
+	(``mode_epoch``+1) — the fenced value EVERY decision reads, fenced accept AND the lifecycle
+	gates (ensure_pump/watchdog) alike — COMMITS it (the row is now the durable truth), and ONLY
+	THEN best-effort mirrors ``jarvis_pump_enabled`` in site_config for the operator's eye.
+
+	CDX-21 ordering (no cross-resource atomicity is claimed): row+epoch UPDATE, COMMIT, THEN the
+	mirror. A mirror-write failure NEVER unwinds the committed row — it logs, raises a mismatch
+	flag + ``transport_mode_mismatch`` telemetry, and the watchdog repairs the file on its next
+	cycle from the row. Because ensure_pump/watchdog now gate on the ROW too, no combination of
+	row/mirror can admit pump work while suppressing its pump owner.
+
+	Editing ``site_config`` by hand is NOT sufficient: the row decides, so a raw config edit alone
+	is reconciled AWAY by the watchdog. Always change the mode through this command (or
+	``pump_cutover_execute`` for the forward cutover). System-Manager gated. Run:
+	``bench --site <site> execute jarvis.chat.admission.pump_set_transport_mode --kwargs '{"mode":"legacy"}'``."""
+	frappe.only_for("System Manager")
+
+	from jarvis.chat import pump
+	from jarvis.chat import turn_state as _ts
+
+	mode = (mode or "").strip().lower()
+	if mode not in (pump._MODE_PUMP, pump._MODE_DRAINING, pump._MODE_LEGACY):
+		raise frappe.ValidationError(
+			frappe._("mode must be one of pump/draining/legacy, got {0}").format(repr(mode))
+		)
+	target = relay_target or DEFAULT_RELAY_TARGET
+	# (1) UPDATE the row + mode_epoch under the lock, then (2) COMMIT — the ROW is now the durable
+	# operational truth for every reader (fenced + lifecycle). The lock releases on this commit.
+	try:
+		_ts._lock_shard(target)  # commit-first; the FOR UPDATE is the first statement
+		mode_epoch = pump.set_transport_mode(target, mode)
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		raise
+	finally:
+		_ts.reset_lock_tracking()
+	# (3) Best-effort config MIRROR — a failure here NEVER unwinds the committed row (CDX-21).
+	mirror_mismatch = pump.mirror_config_from_row(target, mode)
+	_telemetry(
+		"set_transport_mode",
+		target=target,
+		mode=mode,
+		mode_epoch=mode_epoch,
+		mirror_mismatch=int(mirror_mismatch),
+	)
+	return {
+		"ok": True,
+		"mode": mode,
+		"mode_epoch": mode_epoch,
+		"relay_target": target,
+		"mirror_mismatch": mirror_mismatch,
 	}
 
 
@@ -957,8 +1503,25 @@ def sweep() -> dict:
 	is off. Disabling admission therefore stops all new dispatch immediately;
 	the leftover rows settle themselves out. accept_or_queue is never reached
 	with the flag off (all four callers gate on ``admission_enabled`` first), so
-	no NEW rows are created - the flag-OFF hot path stays byte-identical."""
+	no NEW rows are created - the flag-OFF hot path stays byte-identical.
+
+	WP-1d: once the Relay Pump is configured (active OR draining) it OWNS every
+	Jarvis Chat Turn row and reconciles them via the pump watchdog; Phase-0's
+	Turn<->Message reconcile / reservation-reclaim would fight the pump over the
+	same rows, so the sweep steps back entirely (new draining-window turns are pure
+	legacy with no Turn row, so nothing here is owed).
+
+	CDX-21 (Residual A): the step-back reads the AUTHORITATIVE shard ROW
+	(``pump_lifecycle_configured``), NOT the ``site_config`` mirror — so a stale/failed mirror can
+	never make the sweep reconcile a row the row-authoritative pump owns (row=pump/config=legacy ⇒
+	step back), nor abandon Phase-0's own rows when the row is the ``legacy`` kill switch
+	(row=legacy/config=pump ⇒ the sweep runs). Phase-0 is one site-wide shard, so the decision reads
+	the default control row."""
 	summary = {"reclaimed": 0, "reconciled": 0, "aged_out": 0, "promoted": 0}
+	from jarvis.chat import pump
+
+	if pump.pump_lifecycle_configured(DEFAULT_RELAY_TARGET):
+		return summary
 	try:
 		open_count = frappe.db.sql(
 			f"SELECT COUNT(*) FROM `tab{TURN}` WHERE state IN ('queued','dispatching')"

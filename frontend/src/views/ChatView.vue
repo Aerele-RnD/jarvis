@@ -1832,6 +1832,17 @@
 											>{{ elapsedLabel(m) }}</span
 										>
 									</div>
+									<!-- SUX-7: subtle "finishing…" affordance while the Relay-Pump
+									     finalize job is still adding late enrichment (attachments /
+									     canvas / title); cleared by the message:enriched event. -->
+									<div
+										v-if="!m.streaming && enrichmentPending.has(m.name)"
+										class="jv-meta"
+										style="opacity: 0.6"
+										title="Finishing up — attachments and extras are still being added"
+									>
+										<span>Finishing…</span>
+									</div>
 									<div v-if="!m.error && m.content" class="jv-msgbar">
 										<span
 											v-if="msgTime(m)"
@@ -1880,8 +1891,15 @@
 						</div>
 					</template>
 
-					<!-- live tool activity + thinking (Claude Code style) -->
-					<div v-if="activeTools.length || waiting" style="display: flex; gap: 12px">
+					<!-- live tool activity + thinking (Claude Code style). Suppressed
+					     while a queued chip is showing (F2): whenever the accept says
+					     the turn is queued, the "Queued — ~N ahead" chip WINS over this
+					     "Working on it…" / warming placeholder — never both, and never a
+					     stray warming spinner masking the chip. -->
+					<div
+						v-if="(activeTools.length || waiting) && !queuedTurn"
+						style="display: flex; gap: 12px"
+					>
 						<JarvisMark :size="28" :radius="7" style="margin-top: 2px" />
 						<div style="flex: 1; min-width: 0; padding-top: 3px">
 							<!-- the single tool running right now -->
@@ -2070,7 +2088,9 @@
 								>
 									<path d="M12 3a9 9 0 1 0 9 9" />
 								</svg>
-								<span>{{ queuedChipLabel(queuedTurn.position) }}</span>
+								<span>{{
+									queuedChipLabel(queuedTurn.position, queuedTurn.state)
+								}}</span>
 								<button
 									type="button"
 									class="jv-queued-cancel"
@@ -3607,6 +3627,7 @@ import { takeChatPrefill } from "@/composables/chatPrefill";
 import { useConfirm } from "@/composables/useConfirm";
 // timezone-safe: naive server datetimes must go through dayjsLocal (site tz)
 import { formatDate, exactDate, dayLabel } from "@/utils/datetime";
+import { fenceReject, fenceAccept } from "@/utils/eventFence";
 import { renderMarkdown } from "@/markdown";
 import JvChart from "@/charts/JvChart.vue";
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue";
@@ -4069,6 +4090,50 @@ const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
+// Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3 + CDX-12). The pure fence
+// logic lives in @/utils/eventFence.js (extracted so it is unit-tested by a real node test
+// — jarvis/tests/test_event_fence_client.py runs frontend/src/utils/eventFence.test.js).
+// The fence is RUN-SCOPED — ONE entry per run_id — and is applied to EVERY pump event type
+// (deltas, run:start/recovering/error/end, and ALL tool events incl. jarvis__*). CDX-12:
+// the FIRST terminal at the current epoch is accepted on seq equality (it shares the delta
+// watermark's seq), and a REPEAT terminal is then rejected one-shot; without this the
+// normal terminal was bounced and the run:end UI cleanup never ran (stuck spinner / Stop
+// state / duplicate activity block — F3). Legacy events (no pump_epoch) bypass entirely.
+const eventFence = ref({}); // { [run_id]: { epoch, seq, terminated } }
+function pumpFenceReject(p, isTerminal) {
+	return fenceReject(eventFence.value, p, isTerminal);
+}
+function pumpFenceAccept(p, isTerminal) {
+	fenceAccept(eventFence.value, p, isTerminal);
+}
+// F3 (defensive resync parity): tear down the live streaming-activity block (jv-mark +
+// tool tally) + composer/streaming state for a run whose assistant reply is settled, even
+// if run:end was never processed (a missed/late terminal). The run:end handler already
+// does this on the happy path; this guard makes a settled message ALWAYS collapse the
+// orphan activity container so the live DOM matches what a reload renders.
+function clearStreamingActivity() {
+	waiting.value = false;
+	sending.value = false;
+	statusPhase.value = null;
+	activeTools.value = [];
+	currentRunId.value = null;
+	store.streamingConvId = null;
+	recovering.value = null;
+}
+function tearDownActivityIfSettled() {
+	const rid = currentRunId.value;
+	if (!rid) return;
+	const f = eventFence.value[rid];
+	const settledByFence = f && f.terminated != null; // a terminal was accepted for this run
+	const mid = currentMsgId.value;
+	const m = mid ? messages.value.find((x) => x.name === mid) : null;
+	const settledByRow = m && m.streaming === false; // the assistant row is no longer streaming
+	if (settledByFence || settledByRow) clearStreamingActivity();
+}
+// SUX-7: a settled reply whose enrichment (canvas/attachments/title) is still running.
+// run:end carries enrichment_pending; message:enriched clears it. Drives a subtle
+// "finishing…" affordance so a late pop-in is signalled, not silent.
+const enrichmentPending = ref(new Set()); // message_ids awaiting message:enriched
 const recovering = ref(null); // { message_id, reason } while a turn is parked for background recovery — the composer stays UNLOCKED so the user isn't trapped
 const retrying = ref(false); // guards the error-card Retry against a double-enqueue while one is in flight
 const srMessage = ref(""); // visually-hidden aria-live text (turn completion / failure) for screen readers
@@ -4196,12 +4261,21 @@ const ERROR_HEADLINES = {
 // reply renders normally) — kept so the mapping is complete for WP-1 (SUXI-7).
 const TURN_STATE_COPY = {
 	queued: (pos) => (pos && pos > 0 ? `Queued — ~${pos} ahead` : "Queued"),
+	// SUXF-3: the pump introduces a queued->preparing->ready window (prompt assembly
+	// + session bootstrap) between "queued" and the stream. Give it copy so the chip
+	// reads "Starting…" instead of freezing on a stale "~N ahead" / going silent.
+	preparing: () => "Starting…",
+	ready: () => "Starting…",
 	dispatching: () => "Starting…",
 	cancelled: () => "Cancelled",
 	errored: () => "Something went wrong",
 	done: () => "",
 };
-function queuedChipLabel(pos) {
+function queuedChipLabel(pos, state) {
+	// SUXF-3: once a turn leaves `queued` (preparing/ready/dispatching) the position
+	// is meaningless — show "Starting…" so the chip never contradicts what's actually
+	// happening while the message is being prepared.
+	if (state && TURN_STATE_COPY[state] && state !== "queued") return TURN_STATE_COPY[state]();
 	return TURN_STATE_COPY.queued(pos);
 }
 function classifyErrorCode(raw) {
@@ -4431,14 +4505,25 @@ const thinkTick = ref(0);
 let _thinkTimer = null;
 const thinkingWord = computed(() => THINK_WORDS[thinkTick.value % THINK_WORDS.length]);
 // Persisted per-reply tool count + duration so they survive a refresh (runMeta
-// is live-session only): count from the saved tool messages, duration from the
-// assistant row's modified-minus-creation span (clamped to a sane window).
+// is live-session only): count from the saved tool messages, duration on ONE
+// baseline shared with the live timer (CDX-20). The live value (runMeta.ms) is the
+// client-side run:start -> run:end span; the persisted value (reply_duration_ms,
+// stamped at settlement) is the server-side dispatching_at(run:start) -> settlement
+// span — the SAME boundary, so a reloaded reply matches its live reading within
+// network tolerance. reply_duration_ms is NULL on legacy (non-pump) rows, which fall
+// back to the modified-creation span (creation is NO LONGER rewritten as a metric).
 function toolCountOf(m) {
 	return (activityByAssistant.value[m.name] || []).length;
 }
 function elapsedOf(m) {
 	const live = runMeta.value[m.name] && runMeta.value[m.name].ms;
 	if (live) return (live / 1000).toFixed(1);
+	if (m.reply_duration_ms != null && m.reply_duration_ms !== "") {
+		const d = Number(m.reply_duration_ms) / 1000;
+		if (d >= 0 && d < 1800) return d.toFixed(1);
+	}
+	// Legacy fallback: rows with no persisted duration (pre-pump / legacy transport)
+	// use the assistant row's modified-minus-creation span.
 	if (m.creation && m.modified) {
 		const d =
 			(new Date(m.modified.replace(" ", "T")) - new Date(m.creation.replace(" ", "T"))) /
@@ -5878,13 +5963,19 @@ async function resyncQueuedTurn(id) {
 		return; // best-effort — never block the load
 	}
 	if (currentId.value !== id) return; // navigated away while the request was in flight
-	if (active && active.state === "queued") {
+	// SUXF-3: keep the chip (and the composer lock) through the whole pre-stream
+	// window — queued AND the new preparing/ready stages — so a reload during
+	// prompt-assembly/session-bootstrap shows "Starting…" rather than going silent
+	// and re-enabling an empty composer that could invite a duplicate send. Once the
+	// turn is dispatching/streaming, loadConversation's streaming resume owns it.
+	if (active && ["queued", "preparing", "ready"].includes(active.state)) {
 		queuedTurn.value = {
 			run_id: active.run_id,
 			message_id: active.message_id,
 			position: active.position || null,
+			state: active.state,
 		};
-		// Keep the composer locked while a turn is queued so the re-enabled empty
+		// Keep the composer locked while a turn is pre-stream so the re-enabled empty
 		// composer can't invite a duplicate send.
 		sending.value = true;
 		waiting.value = false;
@@ -6444,6 +6535,13 @@ async function loadConversation(id) {
 	// clear it — otherwise the dot pulses forever. A dot on a DIFFERENT
 	// conversation is left alone: its live socket deltas keep it honest.
 	if (!_resumed && store.streamingConvId === id) store.streamingConvId = null;
+	// F3 (defensive resync parity): if this (re)load shows the in-flight reply already
+	// settled — no fresh streaming row — but a live run left the streaming-activity block
+	// standing (a missed/late run:end, the CDX-12 symptom), collapse the orphan jv-mark +
+	// tool-tally container so the live DOM matches exactly what the reload renders. Scoped
+	// to the current run/message, so navigating away from a STILL-streaming chat never
+	// clears its live state.
+	if (!_resumed) tearDownActivityIfSettled();
 	// A freshly opened/refreshed chat should land on the newest message and stay
 	// pinned there while late content settles; the ResizeObserver takes over.
 	pinnedToBottom.value = true;
@@ -7026,6 +7124,9 @@ function onEvent(p) {
 			// the user behind a locked spinner: unlock the composer and show a
 			// distinct "still working" banner. The answer lands later via the
 			// recovery path (assistant:delta + run:end, run_id "recovered").
+			// CDX-3: a stale-epoch (or post-terminal) recovering banner is ignored.
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, false);
 			recovering.value = { message_id: p.message_id, reason: p.reason || "interrupted" };
 			waiting.value = false;
 			sending.value = false;
@@ -7040,6 +7141,10 @@ function onEvent(p) {
 			if (p.status === "waking") statusPhase.value = "waking";
 			break;
 		case "run:start":
+			// CDX-3: a stale-epoch run:start (a pump that lost the lease, or one that
+			// arrives after a higher-epoch terminal) must not re-lock a completed reply.
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, false);
 			currentRunId.value = p.run_id;
 			currentMsgId.value = p.message_id;
 			recovering.value = null;
@@ -7083,6 +7188,12 @@ function onEvent(p) {
 			}, 3500);
 			break;
 		case "assistant:delta": {
+			// CDX-3 end-to-end fence: skip a superseded writer's frame (lower epoch),
+			// a replayed/out-of-order frame (equal epoch, seq <= the last applied), or
+			// a straggler after a higher-epoch terminal. Legacy deltas (no pump_epoch)
+			// bypass and are always applied, unchanged.
+			if (pumpFenceReject(p)) break;
+			pumpFenceAccept(p, false);
 			waiting.value = false;
 			statusPhase.value = null;
 			recovering.value = null;
@@ -7099,6 +7210,8 @@ function onEvent(p) {
 			break;
 		}
 		case "tool:start": {
+			if (pumpFenceReject(p)) break; // CDX-3 (epoch-less legacy tool events bypass)
+			pumpFenceAccept(p, false);
 			const id = p.tool_call_id || `${p.tool_name}-${activeTools.value.length}`;
 			activeTools.value = [
 				...activeTools.value,
@@ -7110,6 +7223,8 @@ function onEvent(p) {
 			break;
 		}
 		case "tool:end": {
+			if (pumpFenceReject(p)) break; // CDX-3 (epoch-less legacy tool events bypass)
+			pumpFenceAccept(p, false);
 			const t = activeTools.value.find((x) => x.id === p.tool_call_id);
 			if (t) t.status = p.status || "completed";
 			// No tool running anymore and no text yet → the model is reading
@@ -7128,10 +7243,32 @@ function onEvent(p) {
 			break;
 		}
 		case "run:end": {
+			// CDX-3/CDX-12: fence a stale terminal (a superseded writer's late run:end) —
+			// it must not clear a fresher run's spinner — AND dedupe a repeat equal-epoch
+			// terminal (the finalize backstop re-publish) one-shot so the announcement +
+			// reload below fire exactly once per run/epoch. Accept marks this run terminated
+			// at pump_epoch E so ANY later lower-epoch straggler is blocked PERMANENTLY.
+			if (pumpFenceReject(p, true)) break;
+			pumpFenceAccept(p, true);
 			// Defensive: if a promoted turn's run:start was missed, retire the chip.
 			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			const m = messages.value.find((x) => x.name === p.message_id);
 			if (m) m.streaming = false;
+			// SUX-6: the terminal final text is the last cumulative mirror in the normal
+			// case, so a re-render would be identical — skip the visible churn. A VISIBLE
+			// replacement is legitimate only when the answer actually changed via snapshot
+			// recovery (was_recovered), which the reload below applies.
+			if (p.was_recovered) announceSR("Your answer is ready.");
+			// SUX-7: enrichment (canvas/attachments/title) may still be running after the
+			// authoritative terminal. Keep a subtle "finishing…" affordance until the
+			// message:enriched event clears it (a late pop-in is signalled, not silent).
+			if (p.message_id) {
+				if (p.enrichment_pending)
+					enrichmentPending.value = new Set(enrichmentPending.value).add(p.message_id);
+				// NB: the CDX-3 fence entry is deliberately NOT cleared here — the
+				// terminated-epoch marker must persist to permanently block a later
+				// lower-epoch straggler (clearing it re-opened the stale-delta window).
+			}
 			// Stamp metrics keyed by message_id so they survive the reload below.
 			if (p.message_id) {
 				runMeta.value = {
@@ -7154,12 +7291,35 @@ function onEvent(p) {
 			recovering.value = null;
 			announceSR(`${agentName} replied.`);
 			store.loadConversations();
+			// SUX-6 identical-skip (OARF-7): the streamed deltas already painted the
+			// final cumulative text, so on the normal path a full reload would just
+			// re-render an IDENTICAL message (a visible flash). Do the disruptive
+			// reload ONLY when the answer actually changed via snapshot recovery
+			// (was_recovered — a legitimate visible replacement), OR when there is no
+			// enrichment follow-up to reconcile a non-streamed terminal (e.g. a
+			// stopped turn: !enrichment_pending). On the ordinary success path the
+			// message:enriched event reloads once enrichment lands — no churn here.
+			if (p.was_recovered || !p.enrichment_pending) {
+				loadConversation(currentId.value);
+				// Re-render charts after the reload settles — late re-renders can swap a
+				// freshly-rendered mermaid node back to raw source; these idle passes
+				// (mutex-guarded, no-op when nothing's pending) catch that race.
+				setTimeout(processMermaid, 300);
+				setTimeout(processMermaid, 900);
+			}
+			break;
+		}
+		case "message:enriched": {
+			// SUX-7: the Relay-Pump finalize job finished the owed enrichment for a
+			// settled reply — clear the "finishing…" affordance and pull the late
+			// attachments/canvas/title in with one reload.
+			if (p.message_id && enrichmentPending.value.has(p.message_id)) {
+				const next = new Set(enrichmentPending.value);
+				next.delete(p.message_id);
+				enrichmentPending.value = next;
+			}
 			loadConversation(currentId.value);
-			// Re-render charts after the reload settles — late re-renders can swap a
-			// freshly-rendered mermaid node back to raw source; these idle passes
-			// (mutex-guarded, no-op when nothing's pending) catch that race.
 			setTimeout(processMermaid, 300);
-			setTimeout(processMermaid, 900);
 			break;
 		}
 		case "wiki:nudge": {
@@ -7186,6 +7346,11 @@ function onEvent(p) {
 			break;
 		}
 		case "run:error":
+			// CDX-3/CDX-12: a terminal — fence a superseded writer's late error, dedupe a
+			// repeat equal-epoch terminal one-shot, and mark this run terminated at
+			// pump_epoch E (blocks later lower-epoch stragglers).
+			if (pumpFenceReject(p, true)) break;
+			pumpFenceAccept(p, true);
 			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			if (p.message_id) {
 				errorMeta.value = {
@@ -7234,29 +7399,37 @@ function stopRun() {
 	notify("Stopped.");
 }
 
-// Phase-0 admission: cancel a turn that is still QUEUED (behind others, not yet
-// dispatched). Optimistically retires the chip; the server CASes queued ->
-// cancelled and publishes turn:cancelled to reconcile other tabs.
+// Cancel a pre-dispatch turn (queued OR the pump's preparing/ready window). CDX-8:
+// the server ROUTES BY STATE (queued -> cancel_queued clearing the reserved credit;
+// preparing/ready -> cancel_preparing_or_ready + placeholder cleanup) and returns
+// which path won. The UI KEEPS the chip + composer lock until the server CONFIRMS —
+// NO optimistic clear, so a failed/errored cancel never removes the chip while work
+// continues invisibly (the reserved-credit leak the old optimistic clear masked).
 async function cancelQueued() {
 	const q = queuedTurn.value;
 	if (!q) return;
-	queuedTurn.value = null;
-	sending.value = false;
-	waiting.value = false;
 	try {
 		const r = await api.cancelQueuedTurn(q.run_id);
-		if (r && r.ok === false) {
-			// It already started (a slot freed the instant we clicked). We
-			// optimistically cleared sending/waiting above; re-lock the composer so
-			// it reflects the now-streaming reply (run:end resets it) — otherwise the
-			// composer stays enabled during a live turn (SUXI-6).
-			sending.value = true;
-			notify(r.reason || "That reply already started.", { type: "info" });
-		} else {
+		if (r && r.ok) {
+			// Confirmed cancelled (queued or preparing/ready path). Retire the chip +
+			// unlock the composer, and let turn:cancelled reconcile other tabs.
+			if (queuedTurn.value && queuedTurn.value.run_id === q.run_id) queuedTurn.value = null;
+			sending.value = false;
+			waiting.value = false;
 			// SUXI-7: route the toast through the state->copy table.
 			notify(`${TURN_STATE_COPY.cancelled()}.`);
+		} else {
+			// It already started (a slot freed the instant we clicked). Drop the stale
+			// chip but KEEP the composer locked for the now-streaming reply (run:end
+			// resets it) — otherwise the composer would enable during a live turn.
+			if (queuedTurn.value && queuedTurn.value.run_id === q.run_id) queuedTurn.value = null;
+			sending.value = true;
+			waiting.value = true;
+			notify((r && r.reason) || "That reply already started.", { type: "info" });
 		}
 	} catch (e) {
+		// Server state UNKNOWN (network/500): KEEP the chip + lock so the user can retry
+		// the cancel. No optimistic clear on failure (CDX-8).
 		notifyActionError("Couldn't cancel the queued message", e);
 	}
 }
