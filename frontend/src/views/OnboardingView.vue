@@ -1038,8 +1038,17 @@ async function reconcileMidFlightSignup() {
 		}
 		// reason === "signup" (or call failed) - no completed signup yet, but
 		// one may still be mid-flight (started, awaiting verification/payment).
+		//
+		// The in-flight test goes through verifyPollAction rather than naming
+		// order ids here. This gate used to check razorpay_order_id only, which
+		// made it blind to BOTH Cashfree shapes - and a Cashfree mandate is
+		// exactly the case that needs it, because authorising one is a full-page
+		// redirect that lands back here with the wizard's in-memory state gone.
+		// Falling through dropped the customer at "intro", as if they had never
+		// signed up, moments after they authorised. verifyPollAction is the one
+		// place that knows every gateway/shape, so the two cannot drift again.
 		const pay = await checkSignupPaymentState();
-		if (pay && (pay.razorpay_order_id || pay.pending_verification)) {
+		if (pay && (pay.pending_verification || verifyPollAction(pay).kind === "checkout")) {
 			state.mode = "managed";
 			state.step = "pay";
 			state.payPhase = "verify";
