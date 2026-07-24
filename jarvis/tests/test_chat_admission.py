@@ -103,6 +103,16 @@ class _AdmissionTestCase(FrappeTestCase):
 			patch.object(pump, "pump_mode_active", return_value=False),
 			patch.object(pump, "pump_configured", return_value=False),
 			patch.object(pump, "pump_draining", return_value=False),
+			# CDX-21 sweep note: accept_or_queue now derives pump_mode + machine_active from ONE
+			# row read via transport_predicates_from_row (instead of pump_mode_active/pump_configured
+			# each re-reading the row). Pin it to the pump-OFF / phase-0 shape for this suite so the
+			# row's real value (patterntest ships transport_mode='pump') doesn't flip these
+			# legacy-admission tests into the pump branch.
+			patch.object(
+				pump,
+				"transport_predicates_from_row",
+				return_value={"mode": "legacy", "pump_active": False, "configured": False},
+			),
 		]
 		for p in self._pump_off_patches:
 			p.start()
@@ -984,9 +994,11 @@ class TestCutoverPreflight(_AdmissionTestCase):
 		self.assertIn("error", res)
 
 	def test_cutover_execute_recheck_catches_straggler(self):
-		# CDX-10: pump_cutover_execute is ONE pass — preflight clear -> remove the kill
-		# switch -> IMMEDIATE re-check. A legacy job that raced into that window flips the
-		# re-check to drain_first, so execute RE-SETS the explicit 0 and reports RETRY.
+		# CDX-10/CDX-21: pump_cutover_execute is ONE pass — preflight clear -> flip the ROW
+		# (uncommitted) -> IMMEDIATE re-check. A legacy job that raced into that window flips the
+		# re-check to drain_first, so execute ROLLS BACK the uncommitted row flip and reports RETRY.
+		# Under the CDX-21 ordering NO config mirror is written on the revert path (the mirror is
+		# written only AFTER a successful commit), so cfg_writes stays empty.
 		clear = {"clear": True, "verdict": "clear", "scan_ok": True, "legacy_jobs": 0, "legacy_streaming": 0}
 		straggler = {
 			"clear": False,
@@ -1007,11 +1019,13 @@ class TestCutoverPreflight(_AdmissionTestCase):
 		self.assertFalse(res["done"], "a straggler in the window blocks the cutover")
 		self.assertEqual(res["verdict"], "retry")
 		self.assertEqual(res["action"], "reverted")
-		# It removed the key (absent = ON), then RE-SET the explicit 0 kill switch.
-		self.assertEqual(cfg_writes, [("jarvis_pump_enabled", "None"), ("jarvis_pump_enabled", 0)])
+		# CDX-21: the row flip was uncommitted (rolled back), and the mirror is only written after
+		# a successful commit — so nothing was mirrored on the revert.
+		self.assertEqual(cfg_writes, [], "CDX-21: nothing mirrored on the revert path")
 
 	def test_cutover_execute_commits_when_recheck_still_clear(self):
-		# CDX-10: both passes clear => remove the key ONCE, no revert, done=True.
+		# CDX-10/CDX-21: both passes clear => commit the ROW flip, THEN mirror the config ONCE
+		# (absent = ON) AFTER the commit. done=True.
 		clear = {"clear": True, "verdict": "clear", "scan_ok": True, "legacy_jobs": 0, "legacy_streaming": 0}
 		cfg_writes = []
 		with (
@@ -1024,7 +1038,7 @@ class TestCutoverPreflight(_AdmissionTestCase):
 			res = admission.pump_cutover_execute()
 		self.assertTrue(res["done"])
 		self.assertEqual(res["action"], "cutover")
-		self.assertEqual(cfg_writes, [("jarvis_pump_enabled", "None")], "key removed once, no revert")
+		self.assertEqual(cfg_writes, [("jarvis_pump_enabled", "None")], "mirror written once, after commit")
 
 	def test_legacy_gate_reroutes_instead_of_enqueue_when_pump_flipped(self):
 		# CDX-10 (forward, deterministic): a PURE-LEGACY sender reaches the enqueue boundary
@@ -1082,13 +1096,15 @@ class TestCutoverPreflight(_AdmissionTestCase):
 
 		def rec_mode(*a, **k):
 			order.append("mode")
-			return False  # legacy branch — avoids pump ensure/wake side effects
+			# legacy branch — avoids pump ensure/wake side effects (CDX-21 sweep note: accept_or_queue
+			# now derives both decisions from this ONE row-predicate read).
+			return {"mode": "legacy", "pump_active": False, "configured": False}
 
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv, 1)
 		with (
 			patch.object(admission, "_lock_shard", side_effect=rec_lock),
-			patch.object(pump, "pump_mode_active", side_effect=rec_mode),
+			patch.object(pump, "transport_predicates_from_row", side_effect=rec_mode),
 			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
 		):
 			admission.accept_or_queue(
@@ -1356,3 +1372,203 @@ class TestRerouteResultPropagation(_AdmissionTestCase):
 			res.get("overloaded"), "R-7: the exemption survived the reroute — no overload rejection"
 		)
 		self.assertEqual(self._state(run_id), "queued", "the continuation is durably queued with a position")
+
+
+class TestEnqueueOverloadFourCallers(_AdmissionTestCase):
+	"""CDX-19 (residual) — an accept-gate OVERLOAD (MAX_QUEUE_DEPTH=0) must be handled HONESTLY
+	at ALL FOUR real callers, not just the reroute helper: the seed is disposed of, NO Turn row
+	is created, and the caller returns/defers correctly. Under _AdmissionTestCase the pump is
+	pinned off + phase-0 on, so every caller takes the machine branch and accept_or_queue's
+	overload guard fires deterministically at depth 0."""
+
+	def test_send_message_at_depth0_rejects_deletes_seed_no_turn(self):
+		conv = self._mk_conv()
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 0),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
+		):
+			res = chat_api.send_message(conversation=conv, message="hello there")
+		self.assertFalse(res["ok"], "send is an honest rejection at overload")
+		self.assertIn("busy", res["reason"].lower())
+		self.assertEqual(frappe.db.count(MSG, {"conversation": conv, "role": "user"}), 0, "seed deleted")
+		self.assertEqual(frappe.db.count(TURN, {"conversation": conv}), 0, "no Turn leaked")
+
+	def test_retry_message_at_depth0_rejects_no_turn_keeps_seed(self):
+		conv = self._mk_conv()
+		u = self._mk_msg(conv, 1, role="user", content="do it")
+		a = self._mk_msg(conv, 2, role="assistant", content="", error="boom")
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 0),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
+		):
+			res = chat_api.retry_message(a)
+		self.assertFalse(res["ok"], "retry is an honest rejection at overload")
+		self.assertIn("busy", (res.get("reason") or "").lower())
+		self.assertEqual(frappe.db.count(TURN, {"conversation": conv}), 0, "no Turn leaked")
+		# retry REUSES the existing user row (OAR-3) — it is NOT deleted on overload.
+		self.assertTrue(frappe.db.exists(MSG, u), "retry keeps its reused historical seed")
+
+	def test_enqueue_turn_macro_caller_at_depth0_deletes_seed_returns_rejection(self):
+		# The macro/app-learning seam. hidden=True skips the session-key gateway handshake.
+		conv = self._mk_conv()
+		with patch.object(admission, "MAX_QUEUE_DEPTH", 0):
+			out = chat_api._enqueue_turn(conv, "macro step", hidden=True)
+		self.assertFalse(out.get("ok"), "typed rejection, never a silent ok:true")
+		self.assertTrue(out.get("overloaded"))
+		self.assertEqual(frappe.db.count(MSG, {"conversation": conv, "role": "user"}), 0, "seed deleted")
+		self.assertEqual(frappe.db.count(TURN, {"conversation": conv}), 0, "no Turn leaked")
+
+	def test_enqueue_turn_continuation_exempt_never_rejected_at_depth0(self):
+		# R-7: a confirm CONTINUATION (exempt_overload=True) always QUEUES, never rejects — even
+		# at depth 0. Its seed is kept (a durable queued Turn owns it).
+		conv = self._mk_conv()
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 0),
+			patch.object(admission, "_max_inflight", return_value=0),
+		):
+			out = chat_api._enqueue_turn(conv, "continue", hidden=True, exempt_overload=True)
+		self.assertNotIn("overloaded", out, "the exemption survived — no rejection")
+		self.assertEqual(frappe.db.count(TURN, {"conversation": conv}), 1, "a durable queued Turn exists")
+		self.assertTrue(out.get("queued"))
+
+	def test_redispatch_orphan_at_depth0_returns_overload_no_turn(self):
+		conv = self._mk_conv()
+		u = self._mk_msg(conv, 1, role="user")
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 0),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
+		):
+			res = chat_api._redispatch_orphan(conv, u)
+		self.assertIsInstance(res, dict, "the orphan redispatch returns the admission result")
+		self.assertTrue(res.get("overloaded"), "a full queue yields an overload result, not a silent heal")
+		self.assertEqual(frappe.db.count(TURN, {"conversation": conv}), 0, "no replacement Turn on overload")
+
+	def test_redispatch_orphan_later_retry_succeeds_once_depth_frees(self):
+		# First attempt overloads (no Turn); once depth frees the SAME re-dispatch heals.
+		conv = self._mk_conv()
+		u = self._mk_msg(conv, 1, role="user")
+		with (
+			patch.object(admission, "MAX_QUEUE_DEPTH", 0),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
+		):
+			res1 = chat_api._redispatch_orphan(conv, u)
+		self.assertTrue(res1.get("overloaded"))
+		self.assertEqual(frappe.db.count(TURN, {"conversation": conv}), 0)
+		# Depth frees (default cap): the re-dispatch now creates a durable background Turn.
+		with (
+			patch.object(admission, "_max_inflight", return_value=4),
+			patch.object(chat_api, "_dispatch_turn", side_effect=lambda *a, **k: None),
+		):
+			res2 = chat_api._redispatch_orphan(conv, u)
+		self.assertFalse(bool(isinstance(res2, dict) and res2.get("overloaded")), "heals once capacity frees")
+		row = frappe.db.get_value(
+			TURN, {"conversation": conv, "seed_message": u}, ["turn_class", "state"], as_dict=True
+		)
+		self.assertIsNotNone(row, "a replacement Turn now exists")
+		self.assertEqual(row["turn_class"], "background")
+
+
+class TestTransportModeCommandCDX21(FrappeTestCase):
+	"""CDX-21 — ONE operational source of truth. The transport commands COMMIT the row first, then
+	best-effort mirror the config; a mirror failure NEVER unwinds the row, the mismatch is flagged
+	+ telemetried, and the watchdog reconciles the mirror from the row. Both the fenced accept
+	(transport_predicates_from_row) AND the lifecycle gate (pump_lifecycle_configured) read the
+	ROW — so NO combination of row/mirror can admit pump work while suppressing its pump owner."""
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)  # System Manager (gate for the operator commands)
+		self.target = f"cdx21-{frappe.generate_hash(length=8)}"
+		from jarvis.chat import turn_state as ts
+
+		ts._ensure_control_row(self.target)
+		frappe.db.set_value(PUMP, self.target, "transport_mode", "pump", update_modified=False)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(self.target, None)
+
+	def tearDown(self):
+		if frappe.db.exists(PUMP, self.target):
+			frappe.delete_doc(PUMP, self.target, force=True, ignore_permissions=True)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(self.target, None)
+		frappe.set_user(self._orig_user)
+
+	def _assert_no_split(self, target):
+		"""The core CDX-21 invariant: the fenced accept predicate and the lifecycle gate NEVER
+		disagree, because both read the authoritative ROW (whatever the config mirror says)."""
+		pump._LIFECYCLE_MODE_CACHE.pop(target, None)
+		accept_configured = pump.transport_predicates_from_row(target)["configured"]
+		gate_configured = pump.pump_lifecycle_configured(target)
+		self.assertEqual(
+			accept_configured, gate_configured, "accept and lifecycle gate agree (both read the row)"
+		)
+
+	def test_mirror_write_failure_keeps_row_flags_mismatch(self):
+		# Config-write failure (codex-named): the mirror write raises; the row commit stands, the
+		# mismatch is flagged + telemetried, and accept/gate stay coherent (both read the row).
+		events = []
+		with (
+			patch("frappe.installer.update_site_config", side_effect=RuntimeError("disk full")),
+			patch.object(pump, "_telemetry", side_effect=lambda ev, **k: events.append(ev)),
+		):
+			res = admission.pump_set_transport_mode("legacy", relay_target=self.target)
+		self.assertTrue(res["ok"])
+		self.assertTrue(res["mirror_mismatch"], "the command reports the mirror failure")
+		self.assertEqual(
+			frappe.db.get_value(PUMP, self.target, "transport_mode"), "legacy", "the ROW committed"
+		)
+		self.assertEqual(int(frappe.db.get_value(PUMP, self.target, "mirror_mismatch") or 0), 1, "flag set")
+		self.assertIn("transport_mode_mismatch", events, "mismatch telemetry fired")
+		# No split: the gate reads row=legacy (suppresses the pump) — coherent with the fenced accept.
+		self._assert_no_split(self.target)
+		self.assertFalse(pump.pump_lifecycle_configured(self.target), "row=legacy ⇒ lifecycle inert")
+
+	def test_watchdog_reconcile_repairs_mirror_from_row_both_directions(self):
+		# Crash-cut / commit-ack ambiguity converge here: the ROW is durable truth but the config
+		# mirror was left stale. reconcile_config_mirror (the default-shard watchdog step) rewrites
+		# the config FROM the row, flags the mismatch WHILE they differ, and clears it once they agree.
+		# Direction 1: row=legacy, config says pump (absent). Repair -> write 0, mismatch, telemetry.
+		frappe.db.set_value(PUMP, self.target, "transport_mode", "legacy", update_modified=False)
+		frappe.db.commit()
+		writes, events = [], []
+		with (
+			patch(
+				"frappe.installer.update_site_config",
+				side_effect=lambda k, v, *a, **kw: writes.append((k, v)),
+			),
+			patch.object(pump, "_config_transport_mode", return_value="pump"),  # stale mirror
+			patch.object(pump, "_telemetry", side_effect=lambda ev, **k: events.append(ev)),
+		):
+			mismatch = pump.reconcile_config_mirror(self.target)
+		self.assertTrue(mismatch, "a divergence was found + repaired")
+		self.assertEqual(writes, [("jarvis_pump_enabled", 0)], "config rewritten to the row's legacy mirror")
+		self.assertIn("transport_mode_mismatch", events)
+		self.assertEqual(
+			int(frappe.db.get_value(PUMP, self.target, "mirror_mismatch") or 0), 1, "flag raised"
+		)
+		# Once the mirror agrees with the row, the reconcile clears the flag (idempotent, no write).
+		writes2 = []
+		with (
+			patch(
+				"frappe.installer.update_site_config",
+				side_effect=lambda k, v, *a, **kw: writes2.append((k, v)),
+			),
+			patch.object(pump, "_config_transport_mode", return_value="legacy"),  # now agrees
+		):
+			mismatch2 = pump.reconcile_config_mirror(self.target)
+		self.assertFalse(mismatch2, "no divergence once they agree")
+		self.assertEqual(writes2, [], "no repair write when already consistent")
+		self.assertEqual(
+			int(frappe.db.get_value(PUMP, self.target, "mirror_mismatch") or 0), 0, "flag cleared"
+		)
+
+	def test_no_row_mirror_combination_admits_pump_while_suppressing_owner(self):
+		# Exhaustive coherence: for EACH row mode, whatever the config mirror says, the fenced
+		# accept and the lifecycle gate ALWAYS agree — so pump work can never be admitted while its
+		# pump owner is suppressed (or vice versa). Config is patched to the OPPOSITE of the row.
+		for row_mode, opp_conf in (("pump", "legacy"), ("legacy", "pump"), ("draining", "legacy")):
+			frappe.db.set_value(PUMP, self.target, "transport_mode", row_mode, update_modified=False)
+			frappe.db.commit()
+			with patch.object(pump, "_config_transport_mode", return_value=opp_conf):
+				self._assert_no_split(self.target)

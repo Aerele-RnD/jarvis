@@ -296,6 +296,9 @@ def set_transport_mode(target: str, mode: str) -> int:
 		WHERE relay_target_id=%(t)s""",
 		{"m": mode, "t": target},
 	)
+	# CDX-21: drop the lifecycle gate's TTL cache so a same-process ensure_pump/watchdog sees the
+	# deliberate change immediately rather than waiting out the 5s window.
+	_LIFECYCLE_MODE_CACHE.pop(target, None)
 	return int(frappe.db.get_value(PUMP, target, "mode_epoch") or 0)
 
 
@@ -354,6 +357,126 @@ def pump_configured(from_db: bool = False, target: str | None = None) -> bool:
 	if _pump_flag_explicit_off(frappe.conf.get("jarvis_pump_enabled")):
 		return False
 	return not selfhost.is_self_hosted()
+
+
+def transport_predicates_from_row(target: str) -> dict:
+	"""Sweep note (contention): read the shard control ROW's ``transport_mode`` EXACTLY ONCE
+	(the caller holds it FOR UPDATE) and derive the fenced predicates from that single value —
+	instead of ``turn_machine_enabled(from_db)`` + ``pump_mode_active(from_db)`` each re-reading
+	the row while the site-wide admission lock is held. ``is_self_hosted()`` is a static
+	per-bench property. Returns ``pump_active`` / ``configured`` (== not the legacy kill switch)
+	so ``accept_or_queue`` can compute BOTH ``pump_mode`` and ``machine_active`` from one read."""
+	from jarvis import selfhost
+
+	mode = _row_transport_mode(target)
+	self_host = selfhost.is_self_hosted()
+	return {
+		"mode": mode,
+		"pump_active": mode == _MODE_PUMP and not self_host,
+		"configured": mode != _MODE_LEGACY and not self_host,
+	}
+
+
+# CDX-21 — the non-fenced lifecycle gates (ensure_pump / watchdog) read the AUTHORITATIVE row,
+# never the site_config mirror. A tiny in-process TTL cache keeps ensure_pump (called after
+# EVERY durable send) from adding a row read per turn; 5s bounds how late a committed cutover is
+# observed by the lifecycle machinery (the fenced accept/dispatch decisions are ALWAYS exact —
+# they read the row under the shard lock). This closes the split the review flagged: with the
+# gate reading the row, a mirror that briefly disagrees can never make the pump go inert while
+# the fenced accept still admits pump-owned turns.
+DEFAULT_TARGET = "default"
+_LIFECYCLE_MODE_CACHE: dict[str, tuple[str, float]] = {}
+_LIFECYCLE_CACHE_TTL_S = 5.0
+
+
+def _lifecycle_row_mode(target: str) -> str:
+	import time as _t
+
+	now = _t.monotonic()
+	ent = _LIFECYCLE_MODE_CACHE.get(target)
+	if ent and ent[1] > now:
+		return ent[0]
+	mode = _row_transport_mode(target)
+	_LIFECYCLE_MODE_CACHE[target] = (mode, now + _LIFECYCLE_CACHE_TTL_S)
+	return mode
+
+
+def pump_lifecycle_configured(target: str) -> bool:
+	"""CDX-21 gate for ensure_pump/watchdog: configured == the ROW is not the ``legacy`` kill
+	switch (and not self-hosted). Row-authoritative (5s TTL read-through), REPLACING the old
+	config-based ``pump_configured()`` so the lifecycle machinery can never disagree with the
+	fenced accept. When the row is momentarily out of sync with the config mirror, the accept
+	gate (row) and this gate (row) still agree — no strand."""
+	from jarvis import selfhost
+
+	return _lifecycle_row_mode(target) != _MODE_LEGACY and not selfhost.is_self_hosted()
+
+
+def _mirror_value_for_mode(mode: str):
+	"""The site_config ``jarvis_pump_enabled`` MIRROR value for a row transport_mode:
+	pump -> remove the key (absence = managed default ON), draining -> 'draining', legacy -> 0."""
+	return {_MODE_PUMP: "None", _MODE_DRAINING: "draining", _MODE_LEGACY: 0}.get(mode, "None")
+
+
+def _set_mirror_mismatch(target: str, val: int) -> None:
+	"""Raise/clear the durable operator signal that the config mirror diverged from the row.
+	Best-effort; writes only on change so it never churns the row."""
+	try:
+		cur = frappe.db.get_value(PUMP, target, "mirror_mismatch")
+		if int(cur or 0) != int(val):
+			frappe.db.set_value(PUMP, target, "mirror_mismatch", int(val), update_modified=False)
+			frappe.db.commit()
+	except Exception:
+		pass
+
+
+def reconcile_config_mirror(target: str) -> bool:
+	"""CDX-21 — the shard ROW's ``transport_mode`` is the operational truth; ``site_config`` is an
+	asynchronously reconciled operator MIRROR. Each watchdog cycle, compare the file's config-
+	derived mode to the row; if they disagree (a mirror write failed, or a crash cut between the
+	row commit and the mirror write), idempotently REWRITE the file from the row, raise the
+	mismatch flag, and emit a ``transport_mode_mismatch`` telemetry warning WHILE they differ.
+	When they agree, clear the flag. Returns True when a mismatch was found/repaired. Never
+	raises out — the mirror is cosmetic/operator-facing; the row already decides."""
+	try:
+		row_mode = _row_transport_mode(target)
+		conf_mode = _config_transport_mode()
+		if row_mode == conf_mode:
+			_set_mirror_mismatch(target, 0)
+			return False
+		from frappe.installer import update_site_config
+
+		_telemetry("transport_mode_mismatch", target=target, row_mode=row_mode, conf_mode=conf_mode)
+		update_site_config("jarvis_pump_enabled", _mirror_value_for_mode(row_mode))
+		_set_mirror_mismatch(target, 1)
+		return True
+	except Exception:
+		frappe.log_error(title="pump.reconcile_config_mirror", message=frappe.get_traceback())
+		return False
+
+
+def mirror_config_from_row(target: str, mode: str) -> bool:
+	"""CDX-21 — write the operator-facing config mirror AFTER the row is durably committed (the
+	new ordering: row+epoch UPDATE, COMMIT, THEN this best-effort mirror). A failure here NEVER
+	unwinds the committed row — it logs, raises the mismatch flag, and emits telemetry; the
+	watchdog's ``reconcile_config_mirror`` repairs the file on its next cycle. Returns True on a
+	mirror-write FAILURE (mismatch). Never raises."""
+	from frappe.installer import update_site_config
+
+	try:
+		update_site_config("jarvis_pump_enabled", _mirror_value_for_mode(mode))
+		_set_mirror_mismatch(target, 0)
+		# Refresh the lifecycle cache immediately so a same-process reader sees the new mode
+		# without waiting out the TTL (the row is already authoritative regardless).
+		_LIFECYCLE_MODE_CACHE.pop(target, None)
+		return False
+	except Exception:
+		_set_mirror_mismatch(target, 1)
+		_telemetry("transport_mode_mismatch", target=target, mode=mode, phase="mirror_write_failed")
+		frappe.log_error(
+			title="pump mirror write failed (row is authoritative)", message=frappe.get_traceback()
+		)
+		return True
 
 
 # Operational-error tuple for the DB-disconnect park path (frappe.db exposes the
@@ -2620,7 +2743,10 @@ def ensure_pump(relay_target_id: str, *, deps: PumpDeps | None = None) -> dict:
 	target = relay_target_id
 	site = frappe.local.site
 
-	if not pump_configured():
+	# CDX-21: gate on the AUTHORITATIVE row (5s TTL), not the site_config mirror, so a mirror
+	# that momentarily disagrees with the row can never make the sender-driven start path go
+	# inert while the fenced accept still admits pump-owned turns (the strand the review flagged).
+	if not pump_lifecycle_configured(target):
 		return {"enqueued": False, "reason": "not_configured"}
 
 	# §8-I / F1: if this site is in the single-long-no-jarvis_chat shape, warn LOUDLY
@@ -2797,8 +2923,6 @@ def watchdog(deps: PumpDeps | None = None) -> dict:
 	then ``-> disabled``."""
 	deps = deps or _default_deps()
 	summary = {"aged_out": 0, "reclaimed": 0, "parked": 0, "finalize_requeued": 0, "errored": 0, "revived": 0}
-	if not pump_configured():
-		return summary
 	try:
 		targets = {
 			r[0]
@@ -2816,6 +2940,16 @@ def watchdog(deps: PumpDeps | None = None) -> dict:
 		return summary
 	for target in targets:
 		try:
+			# CDX-21: the config key is site-wide, so reconcile the operator mirror FROM the
+			# authoritative row only for the default/site shard (idempotent repair + telemetry
+			# while they differ). Then gate PER-SHARD on the AUTHORITATIVE row (5s TTL) — NOT the
+			# config mirror — so a mirror that momentarily disagrees can never suppress a shard's
+			# pump owner while the fenced accept still admits its turns. A shard whose row is the
+			# ``legacy`` kill switch is skipped (do not revive — use the drain ladder).
+			if target == DEFAULT_TARGET:
+				reconcile_config_mirror(target)
+			if not pump_lifecycle_configured(target):
+				continue
 			_watchdog_shard(target, deps, summary)
 		except Exception:
 			frappe.db.rollback()

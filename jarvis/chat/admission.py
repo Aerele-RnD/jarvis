@@ -462,8 +462,13 @@ def accept_or_queue(
 	# and update_site_config never refreshes, so it can be stale across a cutover. The SAME row
 	# pump_cutover_execute flips under this lock, so no mode change can interleave between the
 	# branch decision and the durable insert below.
-	machine_active = turn_machine_enabled(from_db=True, target=target)
-	pump_mode = pump.pump_mode_active(from_db=True, target=target)
+	#
+	# Sweep note (contention): read the row's transport_mode ONCE and derive BOTH decisions from
+	# it, rather than turn_machine_enabled(from_db) + pump_mode_active(from_db) each re-reading
+	# the row (three indexed reads) while the site-wide admission lock is held.
+	_pred = pump.transport_predicates_from_row(target)
+	pump_mode = _pred["pump_active"]
+	machine_active = pump_mode or (admission_enabled() and not _pred["configured"])
 
 	# OARI-11: everything below runs while holding the shard + conversation FOR
 	# UPDATE locks. The designed early-returns (legacy fallback, overload reject,
@@ -1209,29 +1214,30 @@ def pump_cutover_preflight(relay_target: str | None = None) -> dict:
 
 @frappe.whitelist()
 def pump_cutover_execute(relay_target: str | None = None) -> dict:
-	"""CDX-10 — ONE atomic cutover PASS that encodes the safe protocol (the loop is the
+	"""CDX-10/CDX-21 — ONE cutover PASS that encodes the safe protocol (the loop is the
 	operator's; this method is one pass). It closes the TOCTOU window the read-only
-	preflight left open (a legacy job arriving AFTER ``clear=True`` and BEFORE the key is
-	removed):
+	preflight left open (a legacy job arriving AFTER ``clear=True`` and BEFORE the flip):
 
 	  1. **Preflight.** If NOT clear (``drain_first`` / ``scan_failed``) => return
 	     ``done=False`` with the verdict; the operator drains / fixes the fault and
-	     re-runs. The kill switch is left untouched.
-	  2. **Remove the kill switch** (``jarvis_pump_enabled`` -> absent = default ON).
+	     re-runs. The mode is left untouched.
+	  2. **Flip the ROW** (``transport_mode`` -> ``pump``, ``mode_epoch``+1) under the lock,
+	     uncommitted. No config write here (CDX-21) — the operator mirror is written only
+	     after the row commits.
 	  3. **IMMEDIATE re-check.** If a legacy ``jarvis-turn::*`` job appeared in the tiny
-	     remove-vs-recheck window (or the recheck scan faulted), RE-SET the explicit ``0``
-	     (restore the kill switch) and return ``done=False, verdict="retry"`` so the
-	     operator drains the straggler and loops. Only when the re-check is STILL clear is
-	     the cutover committed (``done=True``).
+	     flip-vs-recheck window (or the recheck scan faulted), ROLL BACK (undoes the
+	     uncommitted row flip) and return ``done=False, verdict="retry"`` so the operator
+	     drains the straggler and loops. Only when the re-check is STILL clear is the row flip
+	     committed (``done=True``), and THEN the ``jarvis_pump_enabled`` config mirror is
+	     written best-effort (a mirror failure never unwinds the committed row; the watchdog
+	     repairs it — CDX-21).
 
-	Restart is not required (the flag is a cheap conf read; ``ensure_pump`` is the primary
+	Restart is not required (the row is the decider; ``ensure_pump`` is the primary
 	start path). System-Manager gated. Run:
 	``bench --site <site> execute jarvis.chat.admission.pump_cutover_execute`` — repeat
 	until it returns ``done=True``."""
 	frappe.only_for("System Manager")
 	target = relay_target or DEFAULT_RELAY_TARGET
-
-	from frappe.installer import update_site_config
 
 	from jarvis.chat import pump
 	from jarvis.chat import turn_state as _ts
@@ -1240,15 +1246,15 @@ def pump_cutover_execute(relay_target: str | None = None) -> dict:
 	# the ENTIRE scan -> flip -> recheck pass (no commit until the end), so this pass is mutually
 	# exclusive with every dispatch-deciding read that takes the SAME lock: the legacy path's
 	# enqueue-boundary re-check (_dispatch_turn) and accept_or_queue's under-lock decision. The
-	# FLIP is now DB-AUTHORITATIVE: it UPDATEs the shard control row's ``transport_mode`` to
-	# ``pump`` (mode_epoch+1), which IS the fenced value every dispatch decision reads under this
-	# lock. ``update_site_config`` is written too, but only as the operator-facing MIRROR — an
-	# already-initialized request's ``frappe.local.conf`` may be stale, so the file can never be
-	# the decider. That closes the round-3 race in BOTH directions: a legacy sender either (a)
-	# enqueued+committed BEFORE we take the lock — visible to the scan, so we do NOT flip; or (b)
-	# blocks on this lock until we finish — then reads the ROW (=pump) and does NOT enqueue an
-	# invisible legacy job. update_site_config + the row UPDATE do NOT db-commit, so the FOR
-	# UPDATE is held unbroken through the flip.
+	# FLIP is DB-AUTHORITATIVE: it UPDATEs the shard control row's ``transport_mode`` to ``pump``
+	# (mode_epoch+1), which IS the fenced value every dispatch decision reads under this lock.
+	# CDX-21: the ``jarvis_pump_enabled`` config mirror is NOT written under the lock — it is
+	# written best-effort ONLY AFTER the row flip commits, so the two stores are never claimed to
+	# update atomically and a mirror failure can't diverge from a not-yet-committed row. This
+	# closes the round-3 race in BOTH directions: a legacy sender either (a) enqueued+committed
+	# BEFORE we take the lock — visible to the scan, so we do NOT flip; or (b) blocks on this lock
+	# until we finish — then reads the ROW (=pump) and does NOT enqueue an invisible legacy job.
+	# The row UPDATE does NOT db-commit until the end, so the FOR UPDATE is held unbroken.
 	try:
 		_ts._lock_shard(target)  # commit-first; the FOR UPDATE is the first statement
 
@@ -1266,65 +1272,74 @@ def pump_cutover_execute(relay_target: str | None = None) -> dict:
 			}
 
 		# (2) FLIP the DB-authoritative transport_mode to pump (mode_epoch+1) — the fenced decision
-		# value — then MIRROR to config (absence = the managed default). Still locked, no commit.
+		# value. Still locked, no commit, and NO config write yet (CDX-21): the operator mirror is
+		# written only AFTER the row is durably committed, so a mirror failure can never diverge
+		# from a not-yet-committed row.
 		mode_epoch = pump.set_transport_mode(target, pump._MODE_PUMP)
-		update_site_config("jarvis_pump_enabled", "None")
 
 		# (3) IMMEDIATE re-check for a straggler that raced into the window — still locked.
 		post = pump_cutover_preflight(target)
 		if not post["clear"]:
-			# Revert: restore the config MIRROR, then ROLL BACK (which undoes the transport_mode
-			# flip — the row reverts to its last-committed mode) and release the lock. The pump
-			# never admitted here; the lock kept every dispatch-deciding read serialized behind
-			# this re-check, and none observed the (uncommitted) pump mode.
-			update_site_config("jarvis_pump_enabled", 0)
+			# ROLL BACK (undoes the uncommitted transport_mode flip — the row reverts to its
+			# last-committed mode) and release the lock. Nothing was mirrored, so there is nothing
+			# to restore. The pump never admitted here; the lock kept every dispatch-deciding read
+			# serialized behind this re-check, and none observed the (uncommitted) pump mode.
 			frappe.db.rollback()
 			_telemetry("cutover_execute", target=target, done=0, verdict="retry")
 			return {"ok": True, "done": False, "action": "reverted", "verdict": "retry", "preflight": post}
 
-		frappe.db.commit()  # commit the gate: the DB flip + mirror are durable, the lock is released
+		frappe.db.commit()  # (4) commit the gate: the ROW flip is durable, the lock is released
 	except Exception:
-		# Any fault mid-pass: restore the config mirror defensively (fail closed) and roll back
-		# (undoing the uncommitted transport_mode flip), releasing the lock.
-		try:
-			update_site_config("jarvis_pump_enabled", 0)
-		except Exception:
-			pass
+		# Any fault mid-pass: roll back (undoing the uncommitted transport_mode flip), releasing
+		# the lock. Nothing was mirrored, so there is nothing to restore.
 		frappe.db.rollback()
 		raise
 	finally:
 		_ts.reset_lock_tracking()
 
-	_telemetry("cutover_execute", target=target, done=1, verdict="cutover", mode_epoch=mode_epoch)
+	# (5) Best-effort config MIRROR — a failure here NEVER unwinds the committed row (CDX-21); the
+	# watchdog repairs the file from the row on its next cycle.
+	mirror_mismatch = pump.mirror_config_from_row(target, pump._MODE_PUMP)
+	_telemetry(
+		"cutover_execute",
+		target=target,
+		done=1,
+		verdict="cutover",
+		mode_epoch=mode_epoch,
+		mirror_mismatch=int(mirror_mismatch),
+	)
 	return {
 		"ok": True,
 		"done": True,
 		"action": "cutover",
 		"verdict": "cutover",
 		"mode_epoch": mode_epoch,
+		"mirror_mismatch": mirror_mismatch,
 		"preflight": post,
 	}
 
 
 @frappe.whitelist()
 def pump_set_transport_mode(mode: str, relay_target: str | None = None) -> dict:
-	"""CDX-10 — the operator command for a DELIBERATE transport-mode change OTHER than the
+	"""CDX-10/CDX-21 — the operator command for a DELIBERATE transport-mode change OTHER than the
 	forward cutover: the kill switch (``legacy``), the rollback ladder's drain step
-	(``draining``), or re-enabling (``pump``). It updates the DB-AUTHORITATIVE ``transport_mode``
-	ROW under the shard control-row FOR UPDATE (``mode_epoch``+1) — the fenced value every
-	dispatch decision reads — AND mirrors ``jarvis_pump_enabled`` in site_config so the cheap
-	non-fenced readers (``ensure_pump``/``watchdog``/``promote_next``/``sweep``) and the operator
-	see the same desired state.
+	(``draining``), or re-enabling (``pump``). ONE operational source of truth (CDX-21): it
+	updates the DB-AUTHORITATIVE ``transport_mode`` ROW under the shard control-row FOR UPDATE
+	(``mode_epoch``+1) — the fenced value EVERY decision reads, fenced accept AND the lifecycle
+	gates (ensure_pump/watchdog) alike — COMMITS it (the row is now the durable truth), and ONLY
+	THEN best-effort mirrors ``jarvis_pump_enabled`` in site_config for the operator's eye.
 
-	Editing ``site_config`` by hand is NOT sufficient under the DB-authoritative model: the
-	fenced accept/dispatch reads the ROW, so a raw config edit alone would leave the two engines
-	disagreeing (the pump machinery goes inert on the config while the fenced accept still admits
-	pump turns off a stale row). Always change the mode through this command (or
+	CDX-21 ordering (no cross-resource atomicity is claimed): row+epoch UPDATE, COMMIT, THEN the
+	mirror. A mirror-write failure NEVER unwinds the committed row — it logs, raises a mismatch
+	flag + ``transport_mode_mismatch`` telemetry, and the watchdog repairs the file on its next
+	cycle from the row. Because ensure_pump/watchdog now gate on the ROW too, no combination of
+	row/mirror can admit pump work while suppressing its pump owner.
+
+	Editing ``site_config`` by hand is NOT sufficient: the row decides, so a raw config edit alone
+	is reconciled AWAY by the watchdog. Always change the mode through this command (or
 	``pump_cutover_execute`` for the forward cutover). System-Manager gated. Run:
 	``bench --site <site> execute jarvis.chat.admission.pump_set_transport_mode --kwargs '{"mode":"legacy"}'``."""
 	frappe.only_for("System Manager")
-
-	from frappe.installer import update_site_config
 
 	from jarvis.chat import pump
 	from jarvis.chat import turn_state as _ts
@@ -1335,23 +1350,33 @@ def pump_set_transport_mode(mode: str, relay_target: str | None = None) -> dict:
 			frappe._("mode must be one of pump/draining/legacy, got {0}").format(repr(mode))
 		)
 	target = relay_target or DEFAULT_RELAY_TARGET
-	# The config MIRROR value for each mode (operator-facing desired state):
-	#   pump     -> remove the key (absence = the managed default = ON),
-	#   draining -> the explicit 'draining' sentinel,
-	#   legacy   -> the explicit 0 kill switch.
-	mirror = {pump._MODE_PUMP: "None", pump._MODE_DRAINING: "draining", pump._MODE_LEGACY: 0}[mode]
+	# (1) UPDATE the row + mode_epoch under the lock, then (2) COMMIT — the ROW is now the durable
+	# operational truth for every reader (fenced + lifecycle). The lock releases on this commit.
 	try:
 		_ts._lock_shard(target)  # commit-first; the FOR UPDATE is the first statement
 		mode_epoch = pump.set_transport_mode(target, mode)
-		update_site_config("jarvis_pump_enabled", mirror)
-		frappe.db.commit()  # the DB flip + mirror are durable atomically; lock released
+		frappe.db.commit()
 	except Exception:
 		frappe.db.rollback()
 		raise
 	finally:
 		_ts.reset_lock_tracking()
-	_telemetry("set_transport_mode", target=target, mode=mode, mode_epoch=mode_epoch)
-	return {"ok": True, "mode": mode, "mode_epoch": mode_epoch, "relay_target": target}
+	# (3) Best-effort config MIRROR — a failure here NEVER unwinds the committed row (CDX-21).
+	mirror_mismatch = pump.mirror_config_from_row(target, mode)
+	_telemetry(
+		"set_transport_mode",
+		target=target,
+		mode=mode,
+		mode_epoch=mode_epoch,
+		mirror_mismatch=int(mirror_mismatch),
+	)
+	return {
+		"ok": True,
+		"mode": mode,
+		"mode_epoch": mode_epoch,
+		"relay_target": target,
+		"mirror_mismatch": mirror_mismatch,
+	}
 
 
 def _write_cancel_marker(conversation: str, reason: str) -> None:

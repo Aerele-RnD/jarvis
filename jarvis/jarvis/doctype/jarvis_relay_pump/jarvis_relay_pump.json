@@ -9,6 +9,7 @@
   "relay_target_id",
   "transport_mode",
   "mode_epoch",
+  "mirror_mismatch",
   "pump_epoch",
   "lease_holder",
   "lease_expires_at",
@@ -43,6 +44,15 @@
    "read_only": 1,
    "no_copy": 1,
    "description": "CDX-10 — the transport_mode fencing generation. Advanced (+1) under the shard control-row FOR UPDATE on every DELIBERATE transport_mode change (pump_cutover_execute and any operator-driven mode flip), so a mode transition is observable/orderable and a stale actor's cached mode can be fenced. Distinct from pump_epoch (which fences pump LEASE ownership)."
+  },
+  {
+   "fieldname": "mirror_mismatch",
+   "fieldtype": "Check",
+   "label": "Mirror Mismatch",
+   "default": "0",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "CDX-21 — the operator-facing signal that the site_config jarvis_pump_enabled MIRROR currently disagrees with this row's authoritative transport_mode (a mirror write failed after the row committed, or a crash cut between the commit and the mirror write). The ROW still decides all admission + lifecycle behaviour regardless; the watchdog rewrites the config from the row each cycle and clears this flag once they agree. Purely informational — never read for a decision."
   },
   {
    "fieldname": "pump_epoch",

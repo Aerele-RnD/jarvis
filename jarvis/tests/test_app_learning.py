@@ -785,3 +785,52 @@ class TestScheduling(_AppLearningTestCase):
 			mock.patch.object(app_analysis, "_due_queued_runs", side_effect=RuntimeError("boom")),
 		):
 			app_analysis.tick()  # must swallow everything
+
+
+# --------------------------------------------------------------------------- #
+# CDX-19 (residual) — capacity deferral of an analysis turn
+# --------------------------------------------------------------------------- #
+class TestAppLearningCapacityDefer(_AppLearningTestCase):
+	"""When a batch/final turn cannot be admitted (`_enqueue_turn` overloaded), the run must NOT
+	fail and must NOT wait forever for a terminal that never comes — it defers, and the tick's
+	stale-recovery pass re-attempts the SAME pending turn promptly, bounded then Failed."""
+
+	def test_batch_overload_defers_not_fails_then_resume_heals(self):
+		run = self._analyzing_run()  # Analyzing, batches_total=2, batches_done=0
+		# A parseable batch-1 reply; its turn-end chains batch 2, whose enqueue OVERLOADS.
+		self._reply(run.conversation, _fenced({"notes": ["n1"]}))
+		overload = {"ok": False, "overloaded": True, "reason": "busy"}
+		with mock.patch("jarvis.chat.api._enqueue_turn", return_value=overload):
+			app_analysis.on_turn_end(run.conversation, errored=False)
+		run.reload()
+		self.assertEqual(run.status, "Analyzing", "overload DEFERS — the run is not failed")
+		self.assertEqual(int(run.batches_done), 1, "batch 1 landed; batch 2 is the deferred target")
+		cw = json.loads(run.notes or "{}").get("capacity_wait") or {}
+		self.assertEqual(cw.get("key"), "2")
+		self.assertGreaterEqual(int(cw.get("count") or 0), 1)
+		# The stale-recovery pass re-attempts PROMPTLY (no 45-min wait). Capacity freed → dispatch.
+		with (
+			mock.patch("jarvis.chat.api._enqueue_turn") as enq,
+			mock.patch.object(app_analysis, "_enqueue_tick"),
+		):
+			app_analysis._recover_stale_runs()
+		enq.assert_called_once()
+		run.reload()
+		self.assertEqual(run.status, "Analyzing")
+		self.assertNotIn("capacity_wait", json.loads(run.notes or "{}"), "marker cleared once dispatched")
+
+	def test_capacity_bounded_then_failed_honestly(self):
+		run = self._analyzing_run()
+		# Park at the ceiling; the next resume exceeds the bound and fails the run honestly.
+		notes = {"capacity_wait": {"key": "1", "count": app_analysis._MAX_CAPACITY_WAITS + 1}}
+		frappe.db.set_value(RUN, run.name, "notes", json.dumps(notes))
+		frappe.db.commit()
+		app_analysis._bust_active_conversations()
+		with (
+			mock.patch("jarvis.chat.api._enqueue_turn"),
+			mock.patch.object(app_analysis, "_enqueue_tick"),
+		):
+			app_analysis._recover_stale_runs()
+		run.reload()
+		self.assertEqual(run.status, "Failed")
+		self.assertIn("busy", (run.error or "").lower())

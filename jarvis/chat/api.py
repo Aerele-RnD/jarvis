@@ -1814,12 +1814,18 @@ def _redispatch_orphan(
 	message_id: str,
 	attachments=None,
 	context=None,
-) -> None:
+) -> dict | None:
 	"""Re-dispatch a turn whose original RQ job never ran (orphan sweep in
 	stale_scan). Fresh run_id; the 10s probe re-routes to a live queue.
 	``attachments``/``context`` are recovered from the dead job's kwargs
 	when it still exists - they ride only the enqueue payload, so dropping
-	them would resume the turn blind to its own file."""
+	them would resume the turn blind to its own file.
+
+	CDX-19 (residual): RETURNS the admission result (accept_or_queue's dict, or
+	_dispatch_turn's reroute dict) so the stale-scan sweep can see an overload
+	rejection and NOT consume the one healing strike — it resets the recovery
+	marker so the next scan retries instead of surfacing a spurious second-strike
+	error. Returns None on the pure-legacy normal-dispatch path (nothing to merge)."""
 	run_id = uuid.uuid4().hex[:12]
 	payload = {
 		"conversation_id": conversation_id,
@@ -1840,7 +1846,7 @@ def _redispatch_orphan(
 			_dispatch_payload["attachments"] = attachments
 		if context:
 			_dispatch_payload["context"] = context
-		admission.accept_or_queue(
+		return admission.accept_or_queue(
 			conversation=conversation_id,
 			run_id=run_id,
 			seed_message=message_id,
@@ -1848,8 +1854,9 @@ def _redispatch_orphan(
 			dispatch=lambda: _dispatch_turn(payload, interactive=False),
 			dispatch_payload=_dispatch_payload or None,
 		)
-		return
-	_dispatch_turn(payload, interactive=False, cutover_gate=True)
+	# Pure-legacy path: _dispatch_turn may itself reroute under the cutover gate and return an
+	# admission dict (queued/overloaded) — return it so the sweep sees an overload rejection.
+	return _dispatch_turn(payload, interactive=False, cutover_gate=True)
 
 
 def _reroute_legacy_to_pump(enqueue_kwargs: dict, interactive: bool, exempt_overload: bool = False) -> dict:
@@ -2087,6 +2094,16 @@ def _enqueue_turn(
 			dispatch=lambda: _dispatch_turn(_kwargs, interactive=interactive),
 			exempt_overload=exempt_overload,
 		)
+		# CDX-19 (residual): overload is an EXPLICIT branch — never inferred from a missing
+		# `dispatched` key. At MAX_QUEUE_DEPTH accept_or_queue returns {ok:False, overloaded:True}
+		# with NO Turn/job for the just-committed seed. Delete the orphan seed (the machine branch
+		# leaves nothing dangling) and RETURN a typed rejection so the internal workflow caller
+		# (macro step / app-learning batch) defers its run instead of advancing toward a terminal
+		# that can never arrive. A confirm continuation passes exempt_overload=True, so it never
+		# reaches this branch (accept_or_queue always queues it).
+		if _adm.get("overloaded"):
+			_delete_enqueue_seed(msg_doc.name)
+			return {"ok": False, "overloaded": True, "reason": _adm.get("reason")}
 		if not _adm.get("dispatched", True):
 			out["queued"] = True
 			out["queued_position"] = _adm.get("queued_position")
@@ -2098,10 +2115,27 @@ def _enqueue_turn(
 	_adm = _dispatch_turn(
 		_kwargs, interactive=interactive, cutover_gate=True, exempt_overload=exempt_overload
 	)
+	if isinstance(_adm, dict) and _adm.get("overloaded"):
+		# CDX-19 (residual): a full-queue reroute is an HONEST rejection — clean the orphan seed
+		# and return the typed rejection, exactly like the machine branch.
+		_delete_enqueue_seed(msg_doc.name)
+		return {"ok": False, "overloaded": True, "reason": _adm.get("reason")}
 	if isinstance(_adm, dict) and not _adm.get("dispatched", True):
 		out["queued"] = True
 		out["queued_position"] = _adm.get("queued_position")
 	return out
+
+
+def _delete_enqueue_seed(message_id: str) -> None:
+	"""Overload cleanup for the internal ``_enqueue_turn`` path: the seed user Message was
+	inserted + committed before admission, so an accept-time overload would otherwise leave a
+	dangling user row with no Turn/job (SUXI-5). Delete it in its own txn (mirrors send_message's
+	overload cleanup) so the deferred run re-attempts from a clean slate. Best-effort."""
+	try:
+		frappe.delete_doc(MSG, message_id, ignore_permissions=True, force=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(title="_enqueue_turn overload seed cleanup", message=frappe.get_traceback())
 
 
 # The continuation prompt after a human Apply/Confirm. The scaffold is

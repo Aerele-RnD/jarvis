@@ -262,6 +262,13 @@ scheduler_events = {
 			# keeps the prefix warm continuously while there is recent chat
 			# activity (the function itself gates on activity).
 			"jarvis.chat.prewarm.keep_warm_if_active",
+			# Chat-concurrency CDX-19 backstop: re-attempt macro runs parked in
+			# `waiting_capacity` (a step could not be admitted because the site's turn
+			# queue was momentarily full). A deferred step dispatches no turn, so the
+			# turn-end chaining hook never fires for it — this cron is its ONLY resume
+			# path. Bounded per run (capacity_attempts), then the run fails honestly.
+			# Cheap no-op (one indexed status query) when nothing is parked.
+			"jarvis.chat.macros.resume_waiting_capacity_runs",
 		],
 		"*/2 * * * *": [
 			"jarvis.chat.turn_recovery.recover_pending_turns",

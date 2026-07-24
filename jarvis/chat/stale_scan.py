@@ -180,15 +180,28 @@ def _sweep_orphan_turns(now) -> int:
 				pass
 		# Lost (no job / canceled / dead-queue). Heal once, then surface.
 		if not int(r["was_recovered"] or 0):
+			# Stamp the recovery-attempt marker BEFORE re-dispatch so the redispatch's
+			# job id carries the ::a1 suffix and the shard-lock commit inside admission
+			# makes it durable. CDX-19 (residual): if that re-dispatch hits a FULL admission
+			# queue the redispatch returns {overloaded:True} WITHOUT creating a replacement
+			# Turn/job — the momentary overload must NOT consume the one healing strike, or the
+			# next scan would surface a spurious second-strike error. Reset the marker to 0 so a
+			# later scan retries once capacity frees.
 			frappe.db.set_value(MSG, r["name"], "was_recovered", 1, update_modified=False)
 			from jarvis.chat.api import _redispatch_orphan
 
-			_redispatch_orphan(
+			_res = _redispatch_orphan(
 				r["conversation"],
 				r["name"],
 				attachments=orig_attachments,
 				context=orig_context,
 			)
+			if isinstance(_res, dict) and _res.get("overloaded"):
+				frappe.db.set_value(MSG, r["name"], "was_recovered", 0, update_modified=False)
+				frappe.db.commit()
+				frappe.logger("jarvis.chat.stale_scan").warning(
+					f"orphan redispatch deferred (site overloaded); will retry: {r['name']}"
+				)
 			continue
 		# Second strike: give the user the normal error + retry surface.
 		from jarvis.chat.api import _next_seq

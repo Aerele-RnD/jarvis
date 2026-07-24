@@ -69,11 +69,20 @@ class _FlagMatrixCase(_PipelineCase):
 		this test's target and stubs the pump wake so accept never enqueues a hop."""
 		if configured is None:
 			configured = pump_active or draining
+		# CDX-21 sweep note: accept_or_queue derives pump_mode + machine_active from ONE row read
+		# via transport_predicates_from_row — pin it to this cell too (patterntest's real row is
+		# 'pump', which would otherwise flip the non-pump cells into the pump branch).
+		mode = "pump" if pump_active else "draining" if draining else "legacy"
 		with (
 			patch.object(admission, "admission_enabled", return_value=admission_on),
 			patch.object(pump, "pump_mode_active", return_value=pump_active),
 			patch.object(pump, "pump_draining", return_value=draining),
 			patch.object(pump, "pump_configured", return_value=configured),
+			patch.object(
+				pump,
+				"transport_predicates_from_row",
+				return_value={"mode": mode, "pump_active": pump_active, "configured": configured},
+			),
 			patch.object(admission, "relay_target_id", lambda conversation=None: self._target),
 			patch.object(pump, "ensure_pump", self._ensure_rec),
 			patch.object(pump, "lpush_wake", lambda *a, **k: None),
@@ -266,14 +275,22 @@ class TestAdmissionOnly(_FlagMatrixCase):
 			self.assertEqual(summary_off["revived"], 0)
 			self.assertEqual(self._state(rid), "dispatching", "the Phase-0 row is untouched")
 
-		# Symmetric positive: configured -> the watchdog DOES revive live work, proving
-		# the explicit-0 gate is the ONLY thing holding it back. (No pump ever ran this
-		# test, so the shard control row's lease is vacant — the MariaDB revive path.)
+		# Symmetric positive: flip the ROW back to configured (pump) -> the watchdog DOES revive
+		# live work, proving the row is the ONLY thing holding it back (CDX-21: the gate reads the
+		# row, not the config). (No pump ever ran this test, so the shard control row's lease is
+		# vacant — the MariaDB revive path.)
+		frappe.db.set_value(
+			"Jarvis Relay Pump", self._target, "transport_mode", pump._MODE_PUMP, update_modified=False
+		)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(self._target, None)  # bypass the 5s gate cache
 		wd_on = pump.PumpDeps()
 		wd_on.enqueue_pump_job = _Recorder()
-		with patch.object(pump, "pump_configured", return_value=True):
+		with patch.object(admission, "relay_target_id", lambda conversation=None: self._target):
 			summary_on = pump.watchdog(deps=wd_on)
-		self.assertGreaterEqual(wd_on.enqueue_pump_job.count, 1, "configured watchdog revives the shard")
+		self.assertGreaterEqual(
+			wd_on.enqueue_pump_job.count, 1, "configured (row) watchdog revives the shard"
+		)
 		self.assertGreaterEqual(summary_on["revived"], 1)
 
 
@@ -467,13 +484,13 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 		self.assertEqual(self._state(rid), "done", "drained in-flight turn reached done — no strand")
 
 	def test_hard_flip_fully_off_watchdog_is_inert(self):
-		"""OARF-1: a HARD flip to fully-off makes the watchdog INERT — it does NOT
-		revive even an in-flight pump turn. Post default-ON inversion, "fully off" is
-		the EXPLICIT kill switch ``jarvis_pump_enabled=0`` (absence is now the DEFAULT =
-		ON), driven here through the REAL conf reader; the OARF-1 gate reads the SAME
-		explicit-0 rule the readers do. This is why the rollback ladder (enabled ->
-		draining -> disabled) is mandatory: draining is what keeps the no-strand
-		guarantee, not a hard flip to fully-off."""
+		"""OARF-1 / CDX-21: a HARD flip to the ``legacy`` kill switch makes the watchdog INERT —
+		it does NOT revive even an in-flight pump turn. Post default-ON inversion, "fully off" is
+		the EXPLICIT kill switch, and post CDX-21 the watchdog gate reads the AUTHORITATIVE ROW
+		(``transport_mode='legacy'``), not the config mirror — so this test flips the ROW to legacy
+		(what ``pump_set_transport_mode('legacy')`` commits) rather than only the config. This is
+		why the rollback ladder (enabled -> draining -> disabled) is mandatory: draining is what
+		keeps the no-strand guarantee, not a hard flip to fully-off."""
 		conv = self._mk_conv()
 		seed = self._mk_msg(conv)
 		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
@@ -504,13 +521,22 @@ class TestFlipOffMidTurn(_FlagMatrixCase):
 		frappe.db.commit()
 		pump._clear_lease_mirror(self._target)
 
-		# Fully OFF via the EXPLICIT kill switch (real conf jarvis_pump_enabled=0) ->
-		# pump_configured() reads it and the watchdog early-returns; NO revive.
+		# Fully OFF via the EXPLICIT kill switch — CDX-21: flip the ROW to legacy (what the
+		# operator command commits). The per-shard watchdog gate reads that row and skips the
+		# shard; NO revive. Config is mirrored 0 too for completeness.
+		frappe.db.set_value(
+			"Jarvis Relay Pump", self._target, "transport_mode", pump._MODE_LEGACY, update_modified=False
+		)
+		frappe.db.commit()
+		pump._LIFECYCLE_MODE_CACHE.pop(self._target, None)
 		wd_deps = pump.PumpDeps()
 		wd_deps.enqueue_pump_job = _Recorder()
-		with patch.dict(frappe.local.conf, {"jarvis_pump_enabled": 0}):
-			self.assertFalse(pump.pump_configured(), "explicit-0 ⇒ NOT configured (kill switch)")
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_pump_enabled": 0}),
+			patch.object(admission, "relay_target_id", lambda conversation=None: self._target),
+		):
+			self.assertFalse(pump.pump_lifecycle_configured(self._target), "row=legacy ⇒ NOT configured")
 			summary = pump.watchdog(deps=wd_deps)
-		self.assertEqual(wd_deps.enqueue_pump_job.count, 0, "explicit-0 watchdog starts NO hop")
+		self.assertEqual(wd_deps.enqueue_pump_job.count, 0, "legacy-row watchdog starts NO hop")
 		self.assertEqual(summary["revived"], 0)
 		self.assertEqual(self._state(rid), "terminal_observed", "the turn is left as-is (use the ladder)")
