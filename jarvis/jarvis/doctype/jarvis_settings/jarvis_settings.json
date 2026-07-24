@@ -109,9 +109,7 @@
   "release_notice_section",
   "release_notice_active",
   "latest_jarvis_version",
-  "release_notice_title",
   "release_notice_message",
-  "release_notice_url",
   "agent_tools_section",
   "run_query_doctype_allowlist",
   "auto_apply_changes",
@@ -804,21 +802,9 @@
    "read_only": 1
   },
   {
-   "fieldname": "release_notice_title",
-   "fieldtype": "Data",
-   "label": "Release Notice Title",
-   "read_only": 1
-  },
-  {
    "fieldname": "release_notice_message",
    "fieldtype": "Small Text",
    "label": "Release Notice Message",
-   "read_only": 1
-  },
-  {
-   "fieldname": "release_notice_url",
-   "fieldtype": "Data",
-   "label": "Release Notice URL",
    "read_only": 1
   },
   {

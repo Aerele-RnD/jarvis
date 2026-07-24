@@ -1,19 +1,16 @@
 // Release notice for the mobile PWA, delivered by jarvis_mobile.py boot as
-// window.release_notice = {active, title, message, url, latest_version}. Mirrors
-// the desktop SPA's src/noticeGate.js. A fleet-wide operator switch — no version
-// comparison. Read once at module load — boot values are stable for the page.
+// window.release_notice = {active, version, message}. Mirrors the desktop SPA's
+// src/noticeGate.js. Read once at module load — boot values are stable.
 import { computed } from "vue";
 
 const n = window.release_notice || {};
 
 export const notice = {
 	active: !!n.active,
-	title: (n.title || "").trim(),
+	version: (n.version || "").trim(),
 	message: n.message || "",
-	url: (n.url || "").trim(),
-	latestVersion: (n.latest_version || "").trim(),
 };
 
-// Hard gate: while active it blocks the app until the operator clears it. No
-// per-session dismiss.
-export const showNotice = computed(() => notice.active && !!notice.title);
+// Hard gate: blocks the app while a notice is published for this tenant's host,
+// until the operator unpublishes it. No per-session dismiss.
+export const showNotice = computed(() => notice.active);

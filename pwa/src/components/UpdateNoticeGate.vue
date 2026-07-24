@@ -12,11 +12,9 @@ import { notice } from "../noticeGate";
 		<div class="jv-nu-card">
 			<BrandMark :size="56" />
 
-			<span v-if="notice.latestVersion" class="jv-nu-badge"
-				>Version {{ notice.latestVersion }}</span
-			>
+			<span v-if="notice.version" class="jv-nu-badge">Version {{ notice.version }}</span>
 
-			<h1 class="jv-nu-title">{{ notice.title }}</h1>
+			<h1 class="jv-nu-title">A new {{ agentName }} update is available</h1>
 
 			<p v-if="notice.message" class="jv-nu-msg">{{ notice.message }}</p>
 
@@ -24,16 +22,6 @@ import { notice } from "../noticeGate";
 				Chat with {{ agentName }} is paused for this workspace until it's updated. Please
 				ask your administrator to update.
 			</p>
-
-			<a
-				v-if="notice.url"
-				class="jv-nu-link"
-				:href="notice.url"
-				target="_blank"
-				rel="noopener noreferrer"
-			>
-				Release notes ↗
-			</a>
 		</div>
 	</div>
 </template>

@@ -11,9 +11,7 @@ from jarvis.www import jarvis_mobile as www_mobile
 _FIELDS = (
 	"release_notice_active",
 	"latest_jarvis_version",
-	"release_notice_title",
 	"release_notice_message",
-	"release_notice_url",
 )
 
 
@@ -23,9 +21,7 @@ class TestWwwReleaseNotice(FrappeTestCase):
 		self._snap = {f: s.get(f) for f in _FIELDS}
 		s.db_set("release_notice_active", 1)
 		s.db_set("latest_jarvis_version", "0.0.2")
-		s.db_set("release_notice_title", "Heads up")
-		s.db_set("release_notice_message", "msg")
-		s.db_set("release_notice_url", "https://x")
+		s.db_set("release_notice_message", "New dashboards.")
 		frappe.db.commit()
 
 	def tearDown(self):
@@ -46,8 +42,8 @@ class TestWwwReleaseNotice(FrappeTestCase):
 			www_desktop.get_context(ctx)
 		rn = ctx.boot["release_notice"]
 		self.assertTrue(rn["active"])
-		self.assertEqual(rn["latest_version"], "0.0.2")
-		self.assertEqual(rn["title"], "Heads up")
+		self.assertEqual(rn["version"], "0.0.2")
+		self.assertEqual(rn["message"], "New dashboards.")
 
 	def test_mobile_boot_exposes_release_notice(self):
 		ctx = frappe._dict()
@@ -55,4 +51,4 @@ class TestWwwReleaseNotice(FrappeTestCase):
 			www_mobile.get_context(ctx)
 		rn = ctx.boot["release_notice"]
 		self.assertTrue(rn["active"])
-		self.assertEqual(rn["title"], "Heads up")
+		self.assertEqual(rn["version"], "0.0.2")

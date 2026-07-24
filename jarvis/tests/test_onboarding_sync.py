@@ -42,9 +42,7 @@ _SNAPSHOTTED_FIELDS = (
 	"agent_token",
 	"release_notice_active",
 	"latest_jarvis_version",
-	"release_notice_title",
 	"release_notice_message",
-	"release_notice_url",
 )
 
 
@@ -111,10 +109,8 @@ class TestSyncConnection(FrappeTestCase):
 				"tenant_status": "running",
 				"release_notice": {
 					"active": True,
-					"latest_version": "0.0.2",
-					"title": "What's new in Acme",
+					"version": "0.0.2",
 					"message": "Faster search.",
-					"url": "https://example.com/notes",
 				},
 			},
 		):
@@ -122,14 +118,14 @@ class TestSyncConnection(FrappeTestCase):
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.release_notice_active, 1)
 		self.assertEqual(s.latest_jarvis_version, "0.0.2")
-		self.assertEqual(s.release_notice_title, "What's new in Acme")
+		self.assertEqual(s.release_notice_message, "Faster search.")
 
 	def test_sync_clears_release_notice(self):
 		"""A payload without a notice clears a previously-mirrored one - the
 		operator switching it off must reach the tenant."""
 		s = frappe.get_single("Jarvis Settings")
 		s.db_set("release_notice_active", 1)
-		s.db_set("release_notice_title", "stale")
+		s.db_set("release_notice_message", "stale")
 		s.db_set("latest_jarvis_version", "0.0.2")
 		frappe.db.commit()
 		_set_token("tok")
@@ -144,7 +140,7 @@ class TestSyncConnection(FrappeTestCase):
 			onboarding.sync_connection()
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.release_notice_active, 0)
-		self.assertEqual(s.release_notice_title, "")
+		self.assertEqual(s.release_notice_message, "")
 
 	def test_sync_noop_when_pending(self):
 		_set_token("tok")

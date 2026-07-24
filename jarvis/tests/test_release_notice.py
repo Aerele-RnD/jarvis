@@ -1,5 +1,5 @@
-"""Tests for jarvis.release_notice: persist + boot payload (fleet-wide switch,
-no version comparison)."""
+"""Tests for jarvis.release_notice: persist + boot payload. The control plane
+decides which notice applies (per host); the bench mirrors and renders it."""
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -9,9 +9,7 @@ from jarvis import release_notice
 _FIELDS = (
 	"release_notice_active",
 	"latest_jarvis_version",
-	"release_notice_title",
 	"release_notice_message",
-	"release_notice_url",
 )
 
 
@@ -44,40 +42,29 @@ class TestBootPayload(FrappeTestCase):
 		self._set(
 			release_notice_active=1,
 			latest_jarvis_version="0.0.2",
-			release_notice_title="Heads up",
-			release_notice_message="msg",
-			release_notice_url="https://x",
+			release_notice_message="New dashboards.",
 		)
 		p = release_notice.boot_payload()
 		self.assertTrue(p["active"])
-		self.assertEqual(p["title"], "Heads up")
-		self.assertEqual(p["message"], "msg")
-		self.assertEqual(p["latest_version"], "0.0.2")
-		# Version comparison is gone — boot never computes these.
-		self.assertNotIn("update_available", p)
-		self.assertNotIn("current_version", p)
+		self.assertEqual(p["version"], "0.0.2")
+		self.assertEqual(p["message"], "New dashboards.")
+		# No authored title/url travel — the SPA composes the heading.
+		self.assertNotIn("title", p)
+		self.assertNotIn("url", p)
 
 	def test_inactive_notice(self):
-		self._set(release_notice_active=0, release_notice_title="t")
+		self._set(release_notice_active=0, release_notice_message="m")
 		self.assertFalse(release_notice.boot_payload()["active"])
 
-	def test_version_is_optional(self):
-		self._set(release_notice_active=1, latest_jarvis_version="", release_notice_title="t")
-		p = release_notice.boot_payload()
-		self.assertTrue(p["active"])
-		self.assertEqual(p["latest_version"], "")
-
 	def test_persist_then_clear_round_trip(self):
-		release_notice.persist(
-			{"active": True, "latest_version": "0.0.2", "title": "T", "message": "M", "url": "U"}
-		)
+		release_notice.persist({"active": True, "version": "0.0.2", "message": "M"})
 		p = release_notice.boot_payload()
 		self.assertTrue(p["active"])
-		self.assertEqual(p["title"], "T")
-		self.assertEqual(p["latest_version"], "0.0.2")
+		self.assertEqual(p["version"], "0.0.2")
+		self.assertEqual(p["message"], "M")
 		# Empty dict clears every field.
 		release_notice.persist({})
 		p = release_notice.boot_payload()
 		self.assertFalse(p["active"])
-		self.assertEqual(p["title"], "")
-		self.assertEqual(p["latest_version"], "")
+		self.assertEqual(p["version"], "")
+		self.assertEqual(p["message"], "")

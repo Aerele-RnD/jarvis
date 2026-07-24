@@ -12,11 +12,9 @@
 		<div class="jv-gate-card">
 			<JarvisMark :size="56" :radius="14" class="jv-gate-logo" />
 
-			<span v-if="notice.latestVersion" class="jv-gate-badge"
-				>Version {{ notice.latestVersion }}</span
-			>
+			<span v-if="notice.version" class="jv-gate-badge">Version {{ notice.version }}</span>
 
-			<h1 class="jv-gate-title">{{ notice.title }}</h1>
+			<h1 class="jv-gate-title">A new {{ agentName }} update is available</h1>
 
 			<p v-if="notice.message" class="jv-gate-sub">{{ notice.message }}</p>
 
@@ -24,17 +22,6 @@
 				Chat with {{ agentName }} is paused for this workspace until it's updated. Please
 				ask your administrator to update.
 			</p>
-
-			<a
-				v-if="notice.url"
-				class="jv-gate-link"
-				:href="notice.url"
-				target="_blank"
-				rel="noopener noreferrer"
-			>
-				Release notes
-				<span class="jv-gate-arrow" aria-hidden="true">↗</span>
-			</a>
 		</div>
 	</div>
 </template>

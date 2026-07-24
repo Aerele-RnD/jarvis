@@ -151,9 +151,7 @@ class TestAdminChatGate(FrappeTestCase):
 	_RELEASE_FIELDS = (
 		"release_notice_active",
 		"latest_jarvis_version",
-		"release_notice_title",
 		"release_notice_message",
-		"release_notice_url",
 	)
 
 	def setUp(self):
@@ -171,7 +169,7 @@ class TestAdminChatGate(FrappeTestCase):
 	def test_release_notice_persisted_on_gate(self):
 		# The gate mirrors an active notice so boot can read it; the returned
 		# verdict shape is unchanged (release_notice never rides the gate reply).
-		notice = {"active": True, "latest_version": "9.9.9", "title": "Update", "message": "m", "url": "u"}
+		notice = {"active": True, "version": "9.9.9", "message": "Please update"}
 		with patch.object(
 			admin_client,
 			"get_connection",
@@ -182,7 +180,7 @@ class TestAdminChatGate(FrappeTestCase):
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.release_notice_active, 1)
 		self.assertEqual(s.latest_jarvis_version, "9.9.9")
-		self.assertEqual(s.release_notice_title, "Update")
+		self.assertEqual(s.release_notice_message, "Please update")
 
 	def test_blocks_when_admin_not_ready(self):
 		with patch.object(
