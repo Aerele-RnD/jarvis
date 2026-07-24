@@ -86,6 +86,14 @@ _INFLIGHT_STATES = ("preparing", "ready", "dispatching", "streaming", "terminal_
 # Same set + 'queued' = "any turn on this conversation not yet terminal" — the
 # single-flight scope (a pump 'queued' turn also blocks a second send on its conv).
 _CONV_ACTIVE_STATES = ("queued",) + _INFLIGHT_STATES
+# CDX-24: 'recovering' joins the PER-CONVERSATION single-flight set ONLY (never the
+# credit sets above — a parked turn still holds NO shard credit). A kill-/drop-parked
+# turn releases capacity but its conversation stays BLOCKED: the old gateway run may
+# still be live and owned by turn_recovery, so a second send on that conversation must
+# not dispatch a concurrent run until the parked turn reaches a genuine terminal
+# (done/errored/cancelled). 'recovering' is a pump/watchdog-only state, so when the
+# pump is OFF no such row exists and the single-flight check stays byte-identical.
+_CONV_BLOCKING_STATES = _CONV_ACTIVE_STATES + ("recovering",)
 
 
 def _in_sql(values) -> str:
@@ -294,11 +302,13 @@ def shard_overloaded(conversation: str | None = None) -> bool:
 def _conv_has_other_active_turn(conversation: str, run_id: str) -> bool:
 	"""Any other non-terminal Turn row on this conversation (single-flight scope).
 	Byte-identical to ('queued','dispatching') when the pump is off; sees a
-	pump-owned in-flight turn during coexistence (OAR-11)."""
+	pump-owned in-flight turn during coexistence (OAR-11). CDX-24: also treats a
+	sibling 'recovering' Turn as blocking — a parked turn's old gateway run may
+	still be live, so the conversation stays single-flight until it settles."""
 	return bool(
 		frappe.db.sql(
 			f"""SELECT 1 FROM `tab{TURN}`
-			WHERE conversation=%(c)s AND name!=%(r)s AND state IN ({_in_sql(_CONV_ACTIVE_STATES)})
+			WHERE conversation=%(c)s AND name!=%(r)s AND state IN ({_in_sql(_CONV_BLOCKING_STATES)})
 			LIMIT 1""",
 			{"c": conversation, "r": run_id},
 		)
@@ -319,10 +329,50 @@ def _conv_legacy_busy(conversation: str) -> bool:
 	sentinel made ``name != ''`` exclude nothing, so the inner query counted the
 	just-inserted queued row and always returned True, making this guard return
 	False (dead) at BOTH call sites. Dropping the subtraction restores the
-	OAR-11 coexistence interlock."""
+	OAR-11 coexistence interlock.
+
+	CDX-24: OR a fresh ``recovering=1`` legacy assistant Message with no owning
+	Turn row (the legacy dual-signal mirror of the Turn-row recovering block) — a
+	legacy turn parked recovering still has its old gateway run owned by
+	turn_recovery, so its conversation must stay single-flight-blocked here even
+	though ``_conversation_busy`` deliberately UNLOCKS the composer for it."""
 	from jarvis.chat.api import _conversation_busy
 
-	return _conversation_busy(conversation)
+	return _conversation_busy(conversation) or _conv_legacy_recovering_busy(conversation)
+
+
+def _conv_legacy_recovering_busy(conversation: str) -> bool:
+	"""CDX-24 legacy dual-signal: True when this conversation's newest assistant
+	Message is ``streaming=1 AND recovering=1`` with NO owning blocking Turn row.
+	Mirrors the Turn-row ``recovering`` single-flight block for the pure-legacy /
+	coexistence case that ``api._conversation_busy`` intentionally treats as free
+	(the composer is unlocked while recovering, but a NEW admission dispatch must
+	not start a second run on the same session). turn_recovery resolves the parked
+	run — ``_finalize``/``_error`` clear ``streaming`` — so the block lifts exactly
+	when recovery proves the old run terminal (ceiling-bounded, never wall-clock).
+	The ``NOT EXISTS`` de-dups against an owning Turn already caught by
+	``_conv_has_other_active_turn`` (this signal is for the Turn-less legacy park)."""
+	rows = frappe.db.sql(
+		f"""SELECT streaming, recovering FROM `tab{MSG}`
+		WHERE conversation=%(c)s AND role='assistant'
+		ORDER BY seq DESC LIMIT 1""",
+		{"c": conversation},
+		as_dict=True,
+	)
+	if not rows or not (rows[0].get("streaming") and rows[0].get("recovering")):
+		return False
+	# De-dup against a Turn that OWNS a run (in-flight or recovering) — that case is
+	# already caught by _conv_has_other_active_turn. A merely 'queued' Turn owns no run
+	# (it is the candidate waiting BEHIND the recovering message), so it must NOT hide
+	# the Turn-less legacy park from this signal (mirrors _legacy_streaming_count's
+	# NOT EXISTS, which de-dups only against _INFLIGHT_STATES).
+	return not bool(
+		frappe.db.sql(
+			f"""SELECT 1 FROM `tab{TURN}`
+			WHERE conversation=%(c)s AND state IN ({_in_sql(_INFLIGHT_STATES + ("recovering",))}) LIMIT 1""",
+			{"c": conversation},
+		)
+	)
 
 
 # --------------------------------------------------------------------------- #

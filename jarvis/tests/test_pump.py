@@ -793,7 +793,7 @@ class TestDBDisconnect(_PumpTestCase):
 
 		op_error = frappe.db.OperationalError("(2013, 'Lost connection to MySQL server')")
 		# The dispatch CAS raises a DB operational error persistently; the pump
-		# must bound the backoff, park the affected turn, and exit (never spin).
+		# must bound the backoff, park the affected in-flight turns, and exit (never spin).
 		with (
 			patch.object(ts, "confirm_dispatching", side_effect=op_error),
 			patch.object(pump, "_backoff_reconnect", lambda *_a, **_k: None),
@@ -801,7 +801,66 @@ class TestDBDisconnect(_PumpTestCase):
 			res = pump.run_pump_hop(self._target, deps=deps, soft_budget_s=999)
 
 		self.assertEqual(res["exit"], "db_disconnect")
-		self.assertEqual(self._state(rid), "recovering", "affected turn parked recovering")
+		# CDX-24: the DB-disconnect park is now epoch-fenced. This turn is PRE-dispatch
+		# (`ready`, pump_epoch never stamped — lease_acquire re-stamps only in-flight
+		# dispatching/streaming turns), so it carries no gateway run and the epoch-fenced
+		# park affects 0 rows: it stays `ready` and the next healthy hop's `_dispatch_ready`
+		# re-dispatches it. The in-flight (epoch-stamped) park-on-disconnect is covered by
+		# test_pump_pipeline.test_db_disconnect_park_writes_mirror_and_publishes.
+		self.assertEqual(self._state(rid), "ready", "pre-dispatch turn is NOT epoch-fence-parked")
+
+	def test_stale_pump_park_affects_zero_rows(self):
+		"""CDX-24: after a takeover adopted the turn to the NEXT epoch (re-stamping its
+		pump_epoch), a delayed OLD pump's epoch-fenced park matches 0 rows — no park, no
+		Message-row mirror, no run:recovering publish."""
+		conv = self._mk_conv()
+		rid = "pmp_stale_park"
+		ctx = self._make_ctx(self._deps(), with_mux=False)  # epoch E, lease held
+		amsg = self._inflight_turn(ctx, rid, conv)  # pump_epoch=E, assistant_message=amsg
+		# A takeover adopts the turn to the NEXT epoch; ctx is now STALE (E < E+1).
+		frappe.db.set_value(TURN, rid, "pump_epoch", ctx.epoch + 1, update_modified=False)
+		frappe.db.commit()
+		captured = []
+		with patch.object(ts, "publish_to_user", side_effect=lambda u, p: captured.append(p)):
+			pump._park_affected_recovering(ctx)
+		self.assertEqual(self._state(rid), "streaming", "stale pump parks 0 rows")
+		self.assertEqual(int(self._val(rid, "recovering") or 0), 0, "no recovering flag set")
+		self.assertEqual(int(frappe.db.get_value(MSG, amsg, "recovering") or 0), 0, "no Message mirror")
+		self.assertEqual(
+			[p for p in captured if p.get("kind") == "run:recovering"], [], "no run:recovering publish"
+		)
+
+	def test_current_epoch_park_recovers_inflight(self):
+		"""CDX-24 companion: the CURRENT pump's epoch-fenced park DOES recover its own
+		in-flight (epoch-stamped) turn — the fence blocks only STALE hops."""
+		conv = self._mk_conv()
+		rid = "pmp_live_park"
+		ctx = self._make_ctx(self._deps(), with_mux=False)
+		self._inflight_turn(ctx, rid, conv)  # pump_epoch=ctx.epoch
+		with patch.object(ts, "publish_to_user", side_effect=lambda u, p: None):
+			pump._park_affected_recovering(ctx)
+		self.assertEqual(self._state(rid), "recovering", "current pump parks its in-flight turn")
+
+	def _inflight_turn(self, ctx, rid, conv):
+		"""A streaming turn owned by ctx.epoch (mirror of the kill-switch suite's
+		helper, local to this class)."""
+		seed = self._mk_msg(conv)
+		amsg = self._mk_msg(conv, role="assistant", content="partial", streaming=1)
+		self._mk_turn(
+			conv,
+			rid,
+			seed,
+			"streaming",
+			version=4,
+			pump_epoch=ctx.epoch,
+			reserved=1,
+			assistant_message=amsg,
+			gateway_run_id=rid,
+			dispatching_at=frappe.utils.now(),
+			last_event_seq=2,
+			dispatch_payload=json.dumps({"session_key": f"sess-{rid}", "message": "hi"}),
+		)
+		return amsg
 
 
 # --------------------------------------------------------------------------- #

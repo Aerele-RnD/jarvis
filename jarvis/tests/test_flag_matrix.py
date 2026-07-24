@@ -60,6 +60,16 @@ class _FlagMatrixCase(_PipelineCase):
 	def setUp(self):
 		super().setUp()
 		self._ensure_rec = _Recorder()
+		# The default (a) + explicit-off (b/c) cells drive the REAL flag readers (no
+		# function patch) and assert ``admission.admission_enabled()`` as a precondition.
+		# That reads ``jarvis_phase0_admission_enabled`` from conf: patterntest's
+		# site_config ships it =1, but a fresh CI ``test_site`` does not, so the
+		# precondition failed there. Pin it ON in-conf here (these cells are
+		# single-threaded, so a ``frappe.local.conf`` patch is sufficient) instead of
+		# depending on ambient site config. The function-patched cells override this.
+		_flag = patch.dict(frappe.local.conf, {admission.FLAG: 1})
+		_flag.start()
+		self.addCleanup(_flag.stop)
 
 	@contextmanager
 	def _flags(self, *, pump_active=False, draining=False, admission_on=True, configured=None):

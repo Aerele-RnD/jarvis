@@ -847,6 +847,7 @@ def mark_recovering(
 	*,
 	require_prepare_deadline: bool = False,
 	require_deadline_passed: bool = False,
+	epoch: int | None = None,
 ) -> bool:
 	"""D2 row 20 (any nonterminal -> recovering, EXCLUDES finalizing per R-13), wd,
 	ACTOR-fenced (the watchdog is not a pump). Set ``recovering=1``,
@@ -859,6 +860,12 @@ def mark_recovering(
 	  * ``require_prepare_deadline`` adds state='preparing' AND
 	    now > preparing_at + PREPARE_DEADLINE_S (=300, OAR-5).
 	  * ``require_deadline_passed`` adds now > deadline_at.
+	CDX-24 ``epoch`` (pump-driven parks ONLY): when given, ADD ``pump_epoch=%(e)s``
+	so a delayed OLD pump whose lease epoch a takeover already bumped parks 0 rows
+	(the takeover re-stamped its adopted in-flight turns to the new epoch — §10.11).
+	Watchdog/recovery callers (not pumps) omit ``epoch`` and keep the actor-fenced
+	form. A pre-dispatch turn (pump_epoch=0, no gateway run) therefore is NOT parked
+	by an epoch-fenced pump park; reconcile-on-start / the watchdog reclaim it.
 	Caller publishes ``run:recovering`` fenced AFTER commit (SUX-1). Returns
 	won/lost. No commit."""
 	now = _now()
@@ -868,6 +875,9 @@ def mark_recovering(
 		"version=%(v)s",
 	]
 	params = {"r": run_id, "v": version, "now": now}
+	if epoch is not None:
+		clauses.append("pump_epoch=%(e)s")
+		params["e"] = epoch
 	if require_prepare_deadline:
 		clauses.append("state='preparing' AND preparing_at IS NOT NULL AND preparing_at < %(pcut)s")
 		params["pcut"] = frappe.utils.add_to_date(None, seconds=-PREPARE_DEADLINE_S)

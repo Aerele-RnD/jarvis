@@ -233,6 +233,16 @@ class TestSimultaneousSendsCASRace(_AdmissionTestCase):
 			frappe.init(site=site)
 			frappe.connect()
 			frappe.set_user(TEST_USER)
+			# The main-thread setUp pins admission ON with a patch.dict on
+			# ``frappe.local.conf``, but that is THREAD-LOCAL and does NOT reach this
+			# freshly ``frappe.init``'d worker (the pump-off patches DO — they are
+			# module-level function patches). patterntest's site_config ambiently ships
+			# ``jarvis_phase0_admission_enabled=1`` so the thread still saw admission ON;
+			# a fresh CI ``test_site`` does not, so the thread took the legacy fallback
+			# (no Turn row) and the state sort hit two Nones. Set the flag in-thread —
+			# mirrors ``TestCutoverDbAuthoritativeMode.sender_worker`` — so
+			# ``admission_enabled()`` is ON here regardless of the site's config.
+			frappe.local.conf[admission.FLAG] = 1
 			try:
 				barrier.wait(timeout=10)
 				results[run_id] = admission.accept_or_queue(
@@ -621,6 +631,123 @@ class TestLegacyCoexistenceGuard(_AdmissionTestCase):
 			1,
 			"a queued row must not hide the legacy stream from the shard count",
 		)
+
+
+class TestRecoveringSingleFlightCDX24(_AdmissionTestCase):
+	"""CDX-24: a turn parked ``recovering`` (its old gateway run may still be live,
+	owned by turn_recovery) keeps its conversation single-flight-blocked. A new send is
+	accepted-QUEUED and CANNOT dispatch, and a queued turn behind it is NOT promoted,
+	until the parked turn reaches a genuine terminal. The parked turn holds NO shard
+	credit, so OTHER conversations keep dispatching."""
+
+	def _mk_recovering_turn(self, conv: str, run_id: str, seed: str) -> None:
+		# A parked in-flight turn: dispatching_at set (it WAS in flight), recovering=1.
+		self._insert_turn(conv, run_id, seed, "recovering", recovering=1, dispatching_at=frappe.utils.now())
+
+	def test_recovering_turn_blocks_new_send_accepts_queued(self):
+		"""Codex #1: a parked-recovering turn (old run still ACTIVE) => a new send on the
+		SAME conversation is accepted-QUEUED and CANNOT dispatch (no dispatch call, state
+		stays queued, position returned)."""
+		conv = self._mk_conv()
+		s1 = self._mk_msg(conv, 1)
+		# The parked assistant message (Reconnecting banner) + its owning recovering Turn.
+		self._mk_msg(conv, 2, role="assistant", content="partial", streaming=1, recovering=1)
+		self._mk_recovering_turn(conv, "parked", s1)
+		s3 = self._mk_msg(conv, 3)
+		calls = []
+		with patch.object(admission, "_max_inflight", return_value=4):
+			res = self._accept(conv, "newrun", s3, calls=calls)
+		self.assertTrue(res["ok"])
+		self.assertFalse(res["dispatched"], "must not dispatch a 2nd run while the old one recovers")
+		self.assertEqual(self._state("newrun"), "queued")
+		self.assertEqual(res["queued_position"], 1)
+		self.assertEqual(calls, [], "no legacy dispatch fired for the blocked send")
+
+	def test_recovery_resolves_done_then_promotes_once(self):
+		"""Codex #2a: while parked-recovering the queued turn is NOT promoted; once the
+		parked turn settles to ``done`` (snapshot recovery) it dispatches exactly once."""
+		self._assert_promotes_after_terminal("done")
+
+	def test_recovery_resolves_errored_then_promotes_once(self):
+		"""Codex #2b: same as #2a but the parked turn resolves to ``errored``."""
+		self._assert_promotes_after_terminal("errored")
+
+	def _assert_promotes_after_terminal(self, terminal: str) -> None:
+		conv = self._mk_conv()
+		s1 = self._mk_msg(conv, 1)
+		s2 = self._mk_msg(conv, 2)
+		self._mk_recovering_turn(conv, "parked", s1)
+		self._insert_turn(conv, "queued1", s2, "queued")
+		dispatched = []
+		with (
+			patch.object(admission, "_max_inflight", return_value=4),
+			patch.object(
+				chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+			),
+		):
+			# Blocked while the sibling recovers.
+			admission.promote_next(admission.DEFAULT_RELAY_TARGET)
+			self.assertEqual(self._state("queued1"), "queued", "not promoted while the sibling recovers")
+			self.assertEqual(dispatched, [])
+			# Recovery resolves to a genuine terminal — the parked turn settles.
+			frappe.db.set_value(
+				TURN, "parked", {"state": terminal, "recovering": 0, "reserved": 0}, update_modified=False
+			)
+			frappe.db.commit()
+			admission.promote_next(admission.DEFAULT_RELAY_TARGET)
+		self.assertEqual(self._state("queued1"), "dispatching", "promoted once the sibling settled")
+		self.assertEqual(dispatched, ["queued1"], "dispatched exactly once")
+
+	def test_other_conversation_dispatches_credit_conserved(self):
+		"""Codex #4: while conversation A has a recovering turn + a queued turn behind it,
+		conversation B can still dispatch — A's parked/queued turns hold no shard credit,
+		so B is neither blocked nor starved."""
+		conv_a = self._mk_conv()
+		conv_b = self._mk_conv()
+		sa1 = self._mk_msg(conv_a, 1)
+		sa2 = self._mk_msg(conv_a, 2)
+		self._mk_recovering_turn(conv_a, "a_parked", sa1)
+		self._insert_turn(conv_a, "a_queued", sa2, "queued")
+		sb = self._mk_msg(conv_b, 1)
+		calls = []
+		with patch.object(admission, "_max_inflight", return_value=4):
+			res = self._accept(conv_b, "b_run", sb, calls=calls)
+		self.assertTrue(res["dispatched"], "B dispatches — A's recovering+queued hold no credit")
+		self.assertEqual(self._state("b_run"), "dispatching")
+		self.assertEqual(calls, ["b_run"])
+		# A stays blocked (single-flight) — its queued turn did not sneak out.
+		self.assertEqual(self._state("a_queued"), "queued")
+
+	def test_legacy_recovering_message_blocks_promotion(self):
+		"""Codex #5 (legacy dual-signal): a fresh ``recovering=1`` assistant Message with
+		NO owning Turn row blocks promotion of a queued turn on that conversation, then
+		releases when recovery clears ``streaming`` (turn_recovery._finalize/_error)."""
+		conv = self._mk_conv()
+		self._mk_msg(conv, 1, role="user")
+		amsg = self._mk_msg(conv, 2, role="assistant", content="partial", streaming=1, recovering=1)
+		seed = self._mk_msg(conv, 3, role="user")
+		self._insert_turn(conv, "q_on_legacy_rec", seed, "queued")
+		# The legacy-busy signal must FIRE for a recovering message (mirrors the Turn-row block).
+		self.assertTrue(admission._conv_legacy_busy(conv))
+		dispatched = []
+		with (
+			patch.object(admission, "_max_inflight", return_value=4),
+			patch.object(
+				chat_api, "_dispatch_turn", side_effect=lambda *a, **k: dispatched.append(a[0]["run_id"])
+			),
+		):
+			admission.promote_next(admission.DEFAULT_RELAY_TARGET)
+			self.assertEqual(
+				self._state("q_on_legacy_rec"), "queued", "blocked by the recovering legacy message"
+			)
+			self.assertEqual(dispatched, [])
+			# turn_recovery resolves: streaming cleared -> the block lifts.
+			frappe.db.set_value(MSG, amsg, {"streaming": 0, "recovering": 0}, update_modified=False)
+			frappe.db.commit()
+			self.assertFalse(admission._conv_legacy_busy(conv))
+			admission.promote_next(admission.DEFAULT_RELAY_TARGET)
+		self.assertEqual(self._state("q_on_legacy_rec"), "dispatching", "promoted after recovery cleared")
+		self.assertEqual(dispatched, ["q_on_legacy_rec"])
 
 
 class TestFlagOffDrainInertia(_AdmissionTestCase):

@@ -1783,11 +1783,17 @@ def _pump_local_reservations(target: str) -> int:
 
 
 def _pump_active_convs(target: str) -> set[str]:
-	"""Conversations with a turn already in flight (single-flight scope)."""
+	"""Conversations with a turn already in flight (single-flight scope). CDX-24:
+	includes ``recovering`` — a parked turn's old gateway run may still be live and
+	owned by turn_recovery, so the pump must NOT promote/reserve a second queued turn
+	on that conversation until the parked turn settles (done/errored/cancelled), at
+	which point the queued turn promotes on the next slice. Single-flight scope ONLY;
+	credit accounting (``_pump_local_reservations``/``_shard_inflight``) is unchanged,
+	so other conversations keep dispatching against the freed capacity."""
 	rows = frappe.db.sql(
 		f"""SELECT DISTINCT conversation FROM `tab{TURN}`
 		WHERE relay_target_id=%(t)s
-		  AND state IN ('preparing','ready','dispatching','streaming','terminal_observed')""",
+		  AND state IN ('preparing','ready','dispatching','streaming','terminal_observed','recovering')""",
 		{"t": target},
 	)
 	return {r[0] for r in rows}
@@ -2642,6 +2648,10 @@ def _mark_recovering_mirror(
 		version,
 		require_deadline_passed=require_deadline_passed,
 		require_prepare_deadline=require_prepare_deadline,
+		# CDX-24: pump-driven parks (they pass pump_epoch) fence the CAS on the epoch so a
+		# stale hop parks 0 rows; the watchdog deadline park omits pump_epoch (None) and
+		# stays actor-fenced, unchanged.
+		epoch=pump_epoch,
 	):
 		return False
 	frappe.db.commit()
