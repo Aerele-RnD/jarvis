@@ -1,0 +1,198 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:run_id",
+ "creation": "2026-07-22 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "run_id",
+  "conversation",
+  "relay_target_id",
+  "turn_class",
+  "state",
+  "version",
+  "seed_message",
+  "assistant_message",
+  "reserved",
+  "reservation_expires_at",
+  "cancel_requested",
+  "cancel_reason",
+  "was_recovered",
+  "error",
+  "dispatch_payload",
+  "enqueued_at",
+  "dispatching_at",
+  "done_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "run_id",
+   "fieldtype": "Data",
+   "label": "Run ID",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "length": 32,
+   "description": "Server-minted idempotency key for this send; immutable; the doctype name."
+  },
+  {
+   "fieldname": "conversation",
+   "fieldtype": "Link",
+   "label": "Conversation",
+   "options": "Jarvis Conversation",
+   "reqd": 1,
+   "search_index": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Owning conversation; per-conversation single-flight scopes on it."
+  },
+  {
+   "fieldname": "relay_target_id",
+   "fieldtype": "Data",
+   "label": "Relay Target ID",
+   "reqd": 1,
+   "search_index": 1,
+   "in_standard_filter": 1,
+   "length": 140,
+   "description": "Container/gateway shard; admission credits key on it. Phase 0 uses one site-wide shard."
+  },
+  {
+   "fieldname": "turn_class",
+   "fieldtype": "Select",
+   "label": "Turn Class",
+   "options": "interactive\nbackground",
+   "default": "interactive",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Fairness class: interactive (typed/retry/continuation) vs background (File Box / app-learning)."
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "label": "State",
+   "options": "queued\ndispatching\ndone\nerrored\ncancelled",
+   "default": "queued",
+   "reqd": 1,
+   "search_index": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Phase-0 state machine: queued -> dispatching -> done|errored|cancelled."
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version",
+   "default": "0",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Optimistic-concurrency token; bumped on every transition; the actor-fence half of every CAS."
+  },
+  {
+   "fieldname": "seed_message",
+   "fieldtype": "Link",
+   "label": "Seed Message",
+   "options": "Jarvis Chat Message",
+   "reqd": 1,
+   "search_index": 1,
+   "description": "The user message row that seeded this turn."
+  },
+  {
+   "fieldname": "assistant_message",
+   "fieldtype": "Link",
+   "label": "Assistant Message",
+   "options": "Jarvis Chat Message",
+   "description": "The assistant row deltas stream into; null until the worker creates the placeholder."
+  },
+  {
+   "fieldname": "reserved",
+   "fieldtype": "Check",
+   "label": "Reserved",
+   "default": "0",
+   "description": "Holds one admission credit. In Phase 0 the dispatching row itself is the reservation."
+  },
+  {
+   "fieldname": "reservation_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Reservation Expires At",
+   "search_index": 1,
+   "description": "A dispatching turn whose enqueue was lost is returned to the queue after this instant (crashed-enqueue guard)."
+  },
+  {
+   "fieldname": "cancel_requested",
+   "fieldtype": "Check",
+   "label": "Cancel Requested",
+   "default": "0",
+   "description": "Set by stop_run on an in-flight turn; the legacy worker's aborted-terminal settles it."
+  },
+  {
+   "fieldname": "cancel_reason",
+   "fieldtype": "Small Text",
+   "label": "Cancel Reason",
+   "description": "Recorded reason when the sweep system-cancels an aged-out queued turn."
+  },
+  {
+   "fieldname": "was_recovered",
+   "fieldtype": "Check",
+   "label": "Was Recovered",
+   "default": "0",
+   "description": "Set when the sweep re-dispatched or reconciled this turn."
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "description": "User-facing error payload on errored terminal. Mirrors Message.error."
+  },
+  {
+   "fieldname": "dispatch_payload",
+   "fieldtype": "Long Text",
+   "label": "Dispatch Payload",
+   "description": "JSON of the extra enqueue kwargs (attachments/context) so a queued turn re-dispatches with them on promotion."
+  },
+  {
+   "fieldname": "enqueued_at",
+   "fieldtype": "Datetime",
+   "label": "Enqueued At",
+   "in_list_view": 1,
+   "description": "Stamped at (none)->queued; queue_wait_ms baseline."
+  },
+  {
+   "fieldname": "dispatching_at",
+   "fieldtype": "Datetime",
+   "label": "Dispatching At",
+   "in_list_view": 1,
+   "description": "Stamped at queued->dispatching; admission-credit confirm point."
+  },
+  {
+   "fieldname": "done_at",
+   "fieldtype": "Datetime",
+   "label": "Done At",
+   "in_list_view": 1,
+   "description": "Stamped at the terminal transition; retention/GC timestamp."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-22 00:00:00.000000",
+ "module": "Jarvis",
+ "name": "Jarvis Chat Turn",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Jarvis Admin"
+  }
+ ],
+ "quick_entry": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

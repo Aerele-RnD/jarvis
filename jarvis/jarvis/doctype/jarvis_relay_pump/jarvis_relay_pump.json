@@ -1,0 +1,45 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:relay_target_id",
+ "creation": "2026-07-22 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "relay_target_id"
+ ],
+ "fields": [
+  {
+   "fieldname": "relay_target_id",
+   "fieldtype": "Data",
+   "label": "Relay Target ID",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "length": 140,
+   "description": "The shard key; the container/gateway this pump serves. Phase-0 minimal control row: the admission serializer takes SELECT ... FOR UPDATE on it. Pump fields arrive in WP-1."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-22 00:00:00.000000",
+ "module": "Jarvis",
+ "name": "Jarvis Relay Pump",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Jarvis Admin"
+  }
+ ],
+ "quick_entry": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

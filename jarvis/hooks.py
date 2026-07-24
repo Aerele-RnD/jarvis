@@ -246,6 +246,12 @@ scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
+			# Phase-0 admission backstop (chat concurrency, WP-0): reclaim lost
+			# reservations, reconcile dispatching Turn rows against Message truth,
+			# age-out stale queued turns, then re-promote. Cheap no-op when no
+			# non-terminal Turn rows exist (so it costs one COUNT when the feature
+			# is off or idle).
+			"jarvis.chat.admission.sweep",
 			# Onboarding convergence safety net (review P0-2): when an LLM
 			# apply parked at "pending: admin applying config" (admin accepted
 			# it and its reconcile is converging server-side), probe
@@ -400,6 +406,13 @@ doc_events["Jarvis Wiki Page"] = {
 # save, inactive rules no-op).
 doc_events["Jarvis Personalise Question Rule"] = {
 	"on_update": "jarvis.learning.questions.on_rule_update",
+}
+
+# Phase-0 admission (chat concurrency, WP-0): a deleted conversation must not
+# leave orphaned Jarvis Chat Turn rows behind (they would linger as ghost queued/
+# dispatching rows in the admission shard). Cascade-delete them on trash.
+doc_events["Jarvis Conversation"] = {
+	"on_trash": "jarvis.chat.admission.on_conversation_trash",
 }
 
 # ---------------------------------------------------------------------------

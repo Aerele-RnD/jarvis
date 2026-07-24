@@ -957,8 +957,39 @@
 										</div>
 									</div>
 								</div>
+								<!-- Phase-0 admission (SUXI-4): a cancelled/aged-out queued turn
+								     leaves a durable marker. Render it as a MUTED note, not the
+								     red error alert - the user (or the system) cancelled it; it
+								     is not a failure. -->
 								<div
-									v-if="m.error"
+									v-if="m.error && errorInfo(m).code === 'cancelled'"
+									role="status"
+									style="
+										display: flex;
+										align-items: center;
+										gap: 8px;
+										font-size: 12.5px;
+										color: var(--text-3);
+										padding: 2px 0;
+									"
+								>
+									<svg
+										width="14"
+										height="14"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									>
+										<circle cx="12" cy="12" r="9" />
+										<path d="M15 9l-6 6M9 9l6 6" />
+									</svg>
+									<span>{{ m.error }}</span>
+								</div>
+								<div
+									v-else-if="m.error"
 									role="alert"
 									style="
 										border: 1px solid var(--red-bd);
@@ -1973,6 +2004,81 @@
 									<path d="M12 3a9 9 0 1 0 9 9" />
 								</svg>
 								<span>{{ recoveringLabel }}</span>
+							</div>
+						</div>
+					</div>
+
+					<!-- SUX-3: immediate "change saved" acknowledgment after a confirm
+					     write, so the card doesn't vanish into silence while the
+					     continuation turn queues. Auto-clears (~3.5s). -->
+					<div
+						v-if="confirmedAck"
+						role="status"
+						aria-live="polite"
+						style="
+							display: flex;
+							align-items: center;
+							gap: 7px;
+							font-size: 12px;
+							color: var(--text-3);
+							padding-left: 40px;
+						"
+					>
+						<svg
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.4"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="M20 6 9 17l-5-5" />
+						</svg>
+						<span>Change saved</span>
+					</div>
+
+					<!-- Phase-0 admission (chat concurrency): the just-sent turn is
+					     QUEUED behind others (all in-flight slots taken). The composer
+					     stays unlocked; this chip shows the approximate position and a
+					     Cancel affordance. Retired when the turn is promoted (run:start),
+					     cancelled, or aged out. -->
+					<div v-if="queuedTurn" style="display: flex; gap: 12px">
+						<JarvisMark :size="28" :radius="7" style="margin-top: 2px" />
+						<div style="flex: 1; min-width: 0; padding-top: 3px">
+							<div
+								role="status"
+								aria-live="polite"
+								style="
+									display: flex;
+									align-items: center;
+									gap: 10px;
+									font-size: 12px;
+									color: var(--text-3);
+								"
+							>
+								<svg
+									class="jv-spin"
+									width="13"
+									height="13"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="var(--text-3)"
+									stroke-width="2.4"
+									stroke-linecap="round"
+								>
+									<path d="M12 3a9 9 0 1 0 9 9" />
+								</svg>
+								<span>{{ queuedChipLabel(queuedTurn.position) }}</span>
+								<button
+									type="button"
+									class="jv-queued-cancel"
+									aria-label="Cancel this queued message"
+									@click="cancelQueued"
+								>
+									Cancel
+								</button>
 							</div>
 						</div>
 					</div>
@@ -3545,6 +3651,10 @@ const currentId = ref(null);
 watch(currentId, (id) => {
 	store.currentConvId = id;
 	if (id) store.clearUnread(id);
+	// Phase-0 admission: the queued chip belongs to the conversation we sent
+	// from; never carry it into a different chat.
+	queuedTurn.value = null;
+	confirmedAck.value = false;
 	try {
 		id
 			? localStorage.setItem("jarvis-last-conv", id)
@@ -3564,6 +3674,17 @@ const histIdx = ref(null);
 const histDraft = ref("");
 const sending = ref(false);
 const waiting = ref(false);
+// Phase-0 admission (chat concurrency): when a send is accepted but QUEUED
+// (all in-flight slots taken), the reply hasn't started - we show a "~N ahead"
+// chip with a Cancel button instead of the streaming spinner. Cleared when the
+// turn is promoted (run:start), cancelled, or errors out.
+// { run_id, message_id, position } | null
+const queuedTurn = ref(null);
+// Transient "Change saved" acknowledgment after a confirm write (SUX-3), shown
+// immediately so the card doesn't vanish into silence while the continuation
+// turn queues. Auto-clears.
+const confirmedAck = ref(false);
+let _confirmedAckTimer = null;
 const ui = ref({});
 // Renew-banner copy when the subscription has lapsed; null while entitled.
 // The composer is disabled alongside it (no send can succeed while stopped).
@@ -4062,9 +4183,38 @@ const ERROR_HEADLINES = {
 	provider: "The model is busy right now",
 	"recovery-expired": "This took too long, so I stopped waiting",
 	internal: "Something went wrong",
+	cancelled: "This message was cancelled",
 };
+// Phase-0 admission (chat concurrency): the ONLY place a Turn's internal state
+// name maps to user-facing copy (SUX-8). No raw internal state name
+// ("dispatching", "queued", …) ever renders in the UI. `queued` takes a
+// position and reads "~N ahead" (approximate, SUX-2).
+// Phase-0 WIRES `queued` (the chip) and `cancelled` (cancelQueued toast + the
+// turn:cancelled fallback). `dispatching`/`errored`/`done` are defined for the
+// full state set but are NOT reached in Phase 0 (run:start jumps straight to the
+// pre-existing "Thinking…" UI; reply errors flow through ERROR_HEADLINES; a done
+// reply renders normally) — kept so the mapping is complete for WP-1 (SUXI-7).
+const TURN_STATE_COPY = {
+	queued: (pos) => (pos && pos > 0 ? `Queued — ~${pos} ahead` : "Queued"),
+	dispatching: () => "Starting…",
+	cancelled: () => "Cancelled",
+	errored: () => "Something went wrong",
+	done: () => "",
+};
+function queuedChipLabel(pos) {
+	return TURN_STATE_COPY.queued(pos);
+}
 function classifyErrorCode(raw) {
 	const low = (raw || "").toLowerCase();
+	// Phase-0 admission cancel markers (SUXI-4): a queued turn cancelled by the
+	// user or aged out by the system leaves a durable transcript marker so a
+	// later reload shows WHY there's no reply (not a silent drop). Classified as
+	// "cancelled" so it renders as a muted note, NOT a red "something went wrong".
+	if (
+		low.startsWith("you cancelled this message") ||
+		low.startsWith("waited too long in the queue")
+	)
+		return "cancelled";
 	if (
 		low.includes("ws open failed") ||
 		low.includes("unreachable") ||
@@ -4092,6 +4242,7 @@ function errorInfo(m) {
 	const meta = errorMeta.value[m.name] || {};
 	const code = meta.code || classifyErrorCode(m.error);
 	return {
+		code,
 		headline: ERROR_HEADLINES[code] || "Something went wrong",
 		noChange: meta.changed_data === false,
 	};
@@ -5464,6 +5615,16 @@ async function applyDraft(submitFlag, model = draftPanel.value) {
 		closeDraftPanel();
 		await loadConversation(currentId.value);
 		store.loadConversations();
+		// SUX-3/SUXI-2: the continuation turn queued — show the chip + lock the
+		// composer instead of the card vanishing into silence.
+		if (r && r.queued) {
+			queuedTurn.value = {
+				run_id: r.run_id,
+				message_id: r.message_id,
+				position: r.queued_position || null,
+			};
+			sending.value = true;
+		}
 	} catch (e) {
 		p.applying = false;
 		p.error = {
@@ -5546,9 +5707,13 @@ onMounted(() => {
 	_expiryTick = setInterval(() => {
 		pendingNowMs.value = Date.now();
 	}, 15000);
+	// Phase-0 admission: refresh the queued chip's position when the tab
+	// regains focus (poll-on-focus fallback for a missed queue:position push).
+	window.addEventListener("focus", refreshQueuePositionOnFocus);
 });
 onUnmounted(() => {
 	if (_expiryTick) clearInterval(_expiryTick);
+	window.removeEventListener("focus", refreshQueuePositionOnFocus);
 });
 function pendingExpiredOf(pa) {
 	return pendingExpiry(pa && pa.expires_at, pendingNowMs.value).expired;
@@ -5622,6 +5787,17 @@ async function confirmPending(pa) {
 		removePending(token);
 		await loadConversation(currentId.value);
 		store.loadConversations();
+		// SUX-3/SUXI-2: the continuation turn queued (all slots taken). Show the
+		// standard queued chip + lock the composer so the card doesn't vanish into
+		// silence after the "Change saved" ack clears (mirrors send()'s r.queued).
+		if (r && r.queued) {
+			queuedTurn.value = {
+				run_id: r.run_id,
+				message_id: r.message_id,
+				position: r.queued_position || null,
+			};
+			sending.value = true;
+		}
 	} catch (e) {
 		const card = cardById();
 		if (card)
@@ -5681,6 +5857,41 @@ async function resyncPendingConfirmations(id) {
 			run_id: it.run_id || null,
 			expires_at: it.expires_at || null,
 		});
+	}
+}
+
+// Resync the queued chip from server truth (SUXI-1). The chip + its Cancel
+// affordance are otherwise client-only state, lost on reload / conversation
+// switch / a second tab / a WS reconnect — leaving a still-queued turn with no
+// visible position and no way to cancel, and a re-enabled empty composer that
+// invites a duplicate send. Mirrors resyncPendingConfirmations: called from
+// loadConversation. Repopulates queuedTurn (and keeps the composer locked) when
+// the conversation's own turn is queued; a dispatching turn is covered by
+// loadConversation's existing streaming resume.
+async function resyncQueuedTurn(id) {
+	if (!id) return;
+	let active = null;
+	try {
+		const r = await api.getActiveTurn(id);
+		active = (r && r.ok && r.active) || null;
+	} catch (e) {
+		return; // best-effort — never block the load
+	}
+	if (currentId.value !== id) return; // navigated away while the request was in flight
+	if (active && active.state === "queued") {
+		queuedTurn.value = {
+			run_id: active.run_id,
+			message_id: active.message_id,
+			position: active.position || null,
+		};
+		// Keep the composer locked while a turn is queued so the re-enabled empty
+		// composer can't invite a duplicate send.
+		sending.value = true;
+		waiting.value = false;
+	} else if (queuedTurn.value) {
+		// The turn we were showing has since dispatched/settled — drop the chip;
+		// the streaming/run:end events reconcile the rest.
+		queuedTurn.value = null;
 	}
 }
 
@@ -6176,6 +6387,9 @@ async function loadConversation(id) {
 	// confirmations (R3 fix for #3 - survives reload / reconnect).
 	pendingActions.value = pendingActions.value.filter((pa) => pa.conversation === id);
 	resyncPendingConfirmations(id);
+	// SUXI-1: rebuild the queued chip from server truth (reload / switch / second
+	// tab / reconnect all lose the client-only chip otherwise).
+	resyncQueuedTurn(id);
 	// Seed Up/Down recall from THIS conversation's past prompts. Without this,
 	// promptHistory only held prompts typed in the current page session, so
 	// after a reload or when opening an existing chat the arrows did nothing.
@@ -6667,6 +6881,18 @@ async function send(textArg) {
 		}
 		// Send accepted — the one-shot grounding is now consumed.
 		if (groundWiki) groundNextTurn.value = false;
+		// Phase-0 admission: the send was accepted but QUEUED (all slots taken).
+		// Show the "~N ahead" chip + Cancel instead of the streaming spinner; the
+		// reply begins when a slot frees (run:start clears queuedTurn). Position
+		// refreshes via the queue:position realtime event + poll-on-focus.
+		if (r && r.queued) {
+			queuedTurn.value = {
+				run_id: r.run_id,
+				message_id: r.message_id,
+				position: r.queued_position || null,
+			};
+			waiting.value = false; // not streaming yet — the chip carries the state
+		}
 		if (r?.conversation_id && (currentId.value || "") === sentFrom) {
 			// Still on the chat we sent from — safe to reconcile it. Adopt the
 			// server's id when it differs (a brand-new chat that just got its id, or
@@ -6817,12 +7043,44 @@ function onEvent(p) {
 			currentRunId.value = p.run_id;
 			currentMsgId.value = p.message_id;
 			recovering.value = null;
+			// Phase-0 admission: a queued turn just got promoted and is now
+			// streaming — retire the "~N ahead" chip.
+			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			runStartMs.value = Date.now();
 			nowMs.value = Date.now();
 			activeTools.value = [];
 			waiting.value = true;
 			statusPhase.value = "model";
 			store.streamingConvId = p.conversation_id || currentId.value;
+			break;
+		case "queue:position":
+			// Phase-0 admission: this queued turn's approximate position shifted
+			// (someone ahead settled / cancelled). Update the chip.
+			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id)
+				queuedTurn.value = { ...queuedTurn.value, position: p.position };
+			break;
+		case "turn:cancelled":
+			// A queued turn was cancelled (by this user, or system age-out).
+			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) {
+				queuedTurn.value = null;
+				sending.value = false;
+				waiting.value = false;
+				// SUXI-3: surface WHY the message disappeared (system age-out reason,
+				// or the cancel reason) instead of a silently emptied composer. Routed
+				// through the state->copy table (SUXI-7). Guarded by the chip check so
+				// the tab that itself clicked Cancel (chip already cleared) doesn't
+				// double-toast on top of its own optimistic "Cancelled.".
+				notify(p.reason || TURN_STATE_COPY.cancelled(), { type: "info" });
+			}
+			break;
+		case "action:confirmed":
+			// SUX-3: a confirm write was saved. Acknowledge immediately so the
+			// card doesn't vanish into silence while the continuation turn queues.
+			confirmedAck.value = true;
+			if (_confirmedAckTimer) clearTimeout(_confirmedAckTimer);
+			_confirmedAckTimer = setTimeout(() => {
+				confirmedAck.value = false;
+			}, 3500);
 			break;
 		case "assistant:delta": {
 			waiting.value = false;
@@ -6870,6 +7128,8 @@ function onEvent(p) {
 			break;
 		}
 		case "run:end": {
+			// Defensive: if a promoted turn's run:start was missed, retire the chip.
+			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			const m = messages.value.find((x) => x.name === p.message_id);
 			if (m) m.streaming = false;
 			// Stamp metrics keyed by message_id so they survive the reload below.
@@ -6926,6 +7186,7 @@ function onEvent(p) {
 			break;
 		}
 		case "run:error":
+			if (queuedTurn.value && queuedTurn.value.run_id === p.run_id) queuedTurn.value = null;
 			if (p.message_id) {
 				errorMeta.value = {
 					...errorMeta.value,
@@ -6971,6 +7232,53 @@ function stopRun() {
 	recovering.value = null;
 	if (cid) api.stopRun(cid, rid).catch(() => {});
 	notify("Stopped.");
+}
+
+// Phase-0 admission: cancel a turn that is still QUEUED (behind others, not yet
+// dispatched). Optimistically retires the chip; the server CASes queued ->
+// cancelled and publishes turn:cancelled to reconcile other tabs.
+async function cancelQueued() {
+	const q = queuedTurn.value;
+	if (!q) return;
+	queuedTurn.value = null;
+	sending.value = false;
+	waiting.value = false;
+	try {
+		const r = await api.cancelQueuedTurn(q.run_id);
+		if (r && r.ok === false) {
+			// It already started (a slot freed the instant we clicked). We
+			// optimistically cleared sending/waiting above; re-lock the composer so
+			// it reflects the now-streaming reply (run:end resets it) — otherwise the
+			// composer stays enabled during a live turn (SUXI-6).
+			sending.value = true;
+			notify(r.reason || "That reply already started.", { type: "info" });
+		} else {
+			// SUXI-7: route the toast through the state->copy table.
+			notify(`${TURN_STATE_COPY.cancelled()}.`);
+		}
+	} catch (e) {
+		notifyActionError("Couldn't cancel the queued message", e);
+	}
+}
+
+// Poll-on-focus fallback (SUX-2): when the tab regains focus, refresh the queued
+// chip's position in case a realtime queue:position push was missed.
+async function refreshQueuePositionOnFocus() {
+	const q = queuedTurn.value;
+	if (!q) return;
+	try {
+		const r = await api.getQueuePosition(q.run_id);
+		if (!r || r.ok === false) return;
+		if (r.state !== "queued") {
+			// Promoted or settled while we were away — the stream/end events will
+			// reconcile; drop the stale chip.
+			if (queuedTurn.value && queuedTurn.value.run_id === q.run_id) queuedTurn.value = null;
+		} else if (queuedTurn.value && queuedTurn.value.run_id === q.run_id) {
+			queuedTurn.value = { ...queuedTurn.value, position: r.position };
+		}
+	} catch {
+		/* best-effort */
+	}
 }
 
 // ---- voice dictation (composer mic) ----
@@ -8153,6 +8461,25 @@ onUnmounted(() => {
 	to {
 		transform: rotate(360deg);
 	}
+}
+/* Phase-0 admission: Cancel affordance on the queued chip. Text-button idiom
+   (design.md), muted until hover. */
+.jv-queued-cancel {
+	appearance: none;
+	background: transparent;
+	border: none;
+	padding: 2px 6px;
+	margin: 0;
+	font: inherit;
+	font-size: 12px;
+	color: var(--text-3);
+	text-decoration: underline;
+	cursor: pointer;
+	border-radius: 5px;
+}
+.jv-queued-cancel:hover {
+	color: var(--text-1);
+	background: var(--surface-gray-2, rgba(0, 0, 0, 0.05));
 }
 /* thinking dots — classed so reduced-motion can disable them (UX #13) */
 .jv-tdot {
