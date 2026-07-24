@@ -721,9 +721,21 @@
 							@open-attachment="openArtifact(m, $event)"
 						/>
 						<!-- assistant -->
-						<div v-else class="jv-amsg" style="display: flex; gap: 12px">
-							<JarvisMark :size="28" :radius="7" style="margin-top: 2px" />
-							<div style="flex: 1; min-width: 0">
+						<Message
+							v-else
+							variant="row"
+							:html="m.error ? '' : render(m.content)"
+							:attachments="m.canvas"
+							:timestamp="msgTime(m)"
+							:timestampFull="msgTimeFull(m)"
+							:copied="copiedId === m.name"
+							@copy="copyMsg(m.name, stripBlocks(m.content))"
+							@open-attachment="openArtifact(m, $event)"
+						>
+							<template #avatar>
+								<JarvisMark :size="28" :radius="7" style="margin-top: 2px" />
+							</template>
+							<template #above-body>
 								<!-- Activity: the tool calls (with input + output) that produced
 								     this answer — openclaw-style, collapsible. -->
 								<div
@@ -936,12 +948,8 @@
 										</button>
 									</div>
 								</div>
-								<div
-									v-else
-									class="jv-md"
-									style="font-size: 14px; line-height: 1.6; color: var(--text)"
-									v-html="render(m.content)"
-								></div>
+							</template>
+							<template #below-body>
 								<!-- The user stopped this reply. A SIBLING of the body, not part of
 								     it: gated only on `stopped`, so it shows for a partial stop
 								     (content present) and an empty one alike, and the renderer can
@@ -1727,8 +1735,8 @@
 										</button>
 									</div>
 								</div>
-							</div>
-						</div>
+							</template>
+						</Message>
 					</template>
 
 					<!-- live tool activity + thinking (Claude Code style) -->
@@ -7960,41 +7968,6 @@ onUnmounted(() => {
 	max-height: 320px;
 	overflow-y: auto;
 }
-/* per-message Copy/Edit bar — revealed on hover */
-.jv-msgbar {
-	display: flex;
-	align-items: center;
-	gap: 3px;
-	margin-top: 0;
-	opacity: 0;
-	transition: opacity 0.12s ease;
-}
-.jv-amsg:hover .jv-msgbar {
-	opacity: 1;
-}
-.jv-msgtime {
-	font-size: 11.5px;
-	color: var(--text-3);
-	padding: 0 3px;
-	cursor: default;
-	user-select: none;
-}
-.jv-msgbtn {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 26px;
-	height: 26px;
-	border: none;
-	background: transparent;
-	border-radius: 6px;
-	cursor: pointer;
-	color: var(--text-3);
-}
-.jv-msgbtn:hover {
-	background: var(--surface-2);
-	color: var(--text);
-}
 .jv-meta span {
 	display: inline-flex;
 	align-items: center;
@@ -8052,7 +8025,6 @@ onUnmounted(() => {
 .jv-suggest:focus-visible,
 .jv-sendbtn:focus-visible,
 .jv-iconbtn:focus-visible,
-.jv-msgbtn:focus-visible,
 .jv-retry:focus-visible,
 .jv-modelpill:focus-visible {
 	outline: 2px solid var(--cta);
@@ -8072,9 +8044,6 @@ onUnmounted(() => {
 		animation: none;
 	}
 	.jv-sendbtn.ready {
-		animation: none;
-	}
-	.jv-md :deep(.jv-mermaid:not([data-rendered]))::after {
 		animation: none;
 	}
 	.jv-settings,
@@ -8100,12 +8069,6 @@ onUnmounted(() => {
 	}
 	.jv-welcome-h1 {
 		font-size: 24px !important;
-	}
-}
-/* touch devices can't hover, so always show per-message actions/timestamps */
-@media (hover: none) {
-	.jv-msgbar {
-		opacity: 1 !important;
 	}
 }
 
@@ -8205,100 +8168,11 @@ onUnmounted(() => {
 	font-weight: 600;
 	color: var(--text);
 }
-/* mermaid diagrams + fenced code blocks in markdown */
-/* Narrow-window resilience: without min-width:0 a flex child refuses to shrink
-   below its content, so on minimize the layout "breaks"; wide content (tables,
-   code) must scroll INSIDE its own box, never squeeze the text around it. */
-.jv-md {
-	min-width: 0;
-	max-width: 100%;
-	overflow-wrap: anywhere;
-}
-.jv-md :deep(table) {
-	display: block;
-	max-width: 100%;
-	overflow-x: auto;
-	border-collapse: collapse;
-}
-.jv-md :deep(pre) {
-	max-width: 100%;
-	overflow-x: auto;
-}
-.jv-md :deep(img) {
-	max-width: 100%;
-	height: auto;
-}
 .jv-cards,
 .jv-action,
 .jv-email {
 	min-width: 0;
 	max-width: 100%;
-}
-.jv-md :deep(.jv-mermaid) {
-	position: relative;
-	margin: 8px 0 12px;
-	text-align: center;
-	overflow-x: auto;
-}
-.jv-md :deep(.jv-mermaid svg) {
-	max-width: 100%;
-	height: auto;
-}
-/* skeleton shimmer while a chart hasn't rendered to SVG yet (no data-rendered) —
-   hides the raw mermaid source so the user never sees the markup flash. */
-.jv-md :deep(.jv-mermaid:not([data-rendered])) {
-	min-height: 196px;
-	color: transparent !important;
-	user-select: none;
-	overflow: hidden;
-	border-radius: 10px;
-	border: 1px solid var(--border);
-	background: var(--surface-1);
-}
-.jv-md :deep(.jv-mermaid:not([data-rendered])) * {
-	color: transparent !important;
-}
-.jv-md :deep(.jv-mermaid:not([data-rendered]))::after {
-	content: "";
-	position: absolute;
-	inset: 0;
-	background: linear-gradient(100deg, transparent 20%, var(--surface-2) 50%, transparent 80%);
-	background-size: 220% 100%;
-	animation: jv-shimmer 1.25s ease-in-out infinite;
-}
-@keyframes jv-shimmer {
-	0% {
-		background-position: 180% 0;
-	}
-	100% {
-		background-position: -180% 0;
-	}
-}
-.jv-md :deep(.jv-chart-dl) {
-	position: absolute;
-	top: 6px;
-	right: 6px;
-	width: 26px;
-	height: 26px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	padding: 0;
-	background: var(--surface);
-	color: var(--text-3);
-	border: 1px solid var(--border);
-	border-radius: 6px;
-	cursor: pointer;
-	opacity: 0;
-	transition: opacity 0.12s, color 0.12s, background 0.12s;
-}
-.jv-md :deep(.jv-mermaid:hover .jv-chart-dl) {
-	opacity: 1;
-}
-.jv-md :deep(.jv-chart-dl:hover) {
-	color: var(--text);
-	background: var(--surface-1);
-	border-color: var(--border-2);
 }
 .jv-switch {
 	width: 38px;
@@ -8329,73 +8203,6 @@ onUnmounted(() => {
 .jv-switch.on .jv-switch-knob {
 	left: 18px;
 }
-.jv-md :deep(.jv-md-pre) {
-	margin: 6px 0 12px;
-	padding: 12px 14px;
-	background: var(--surface-2);
-	border: 1px solid var(--border);
-	border-radius: 8px;
-	overflow-x: auto;
-}
-.jv-md :deep(.jv-md-pre code) {
-	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	font-size: 12px;
-	color: var(--text);
-	white-space: pre;
-}
-
-/* markdown content → the imported design's table look */
-.jv-md :deep(.jv-md-p) {
-	margin: 0 0 10px;
-}
-.jv-md :deep(.jv-md-p:last-child) {
-	margin-bottom: 0;
-}
-.jv-md :deep(.jv-md-h) {
-	margin: 14px 0 6px;
-	font-weight: 600;
-	color: var(--text);
-}
-.jv-md :deep(h3.jv-md-h) {
-	font-size: 15px;
-}
-.jv-md :deep(h4.jv-md-h) {
-	font-size: 14px;
-}
-.jv-md :deep(h5.jv-md-h),
-.jv-md :deep(h6.jv-md-h) {
-	font-size: 13px;
-}
-.jv-md :deep(.jv-md-h:first-child) {
-	margin-top: 0;
-}
-.jv-md :deep(.jv-md-list) {
-	margin: 0 0 10px;
-	padding-left: 20px;
-}
-.jv-md :deep(.jv-md-list li) {
-	margin: 2px 0;
-}
-.jv-md :deep(.jv-md-code) {
-	background: var(--surface-2);
-	padding: 1px 5px;
-	border-radius: 4px;
-	font-size: 12px;
-	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	overflow-wrap: anywhere;
-}
-.jv-md :deep(.jv-md-list .jv-md-list) {
-	margin: 2px 0;
-}
-.jv-md :deep(.jv-md-quote) {
-	margin: 0 0 10px;
-	padding: 2px 0 2px 12px;
-	border-left: 3px solid var(--border-2);
-	color: var(--text-2);
-}
-.jv-md :deep(del) {
-	opacity: 0.65;
-}
 /* day separators between message groups (UX #23) */
 .jv-daydivider {
 	display: flex;
@@ -8421,53 +8228,6 @@ onUnmounted(() => {
 	border-top: 1px solid var(--border);
 	font-size: 11.5px;
 	color: var(--text-3);
-}
-.jv-md :deep(.jv-md-link) {
-	color: var(--cta);
-	text-decoration: none;
-	font-weight: 500;
-}
-/* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
-   marks them as record links, distinct from plain markdown links. */
-.jv-md :deep(.jv-doclink) {
-	color: var(--cta);
-	text-decoration: none;
-	font-weight: 550;
-	border-bottom: 1px dashed var(--cta);
-	cursor: pointer;
-	transition: background 0.12s;
-}
-.jv-md :deep(.jv-doclink:hover) {
-	border-bottom-style: solid;
-	background: var(--cta-bg);
-	border-radius: 3px;
-}
-.jv-md :deep(.jv-md-tablewrap) {
-	border: 1px solid var(--border);
-	border-radius: 10px;
-	overflow: hidden;
-	margin: 4px 0 10px;
-}
-.jv-md :deep(.jv-md-table) {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 12.5px;
-}
-.jv-md :deep(.jv-md-table th) {
-	padding: 8px 13px;
-	font-weight: 550;
-	color: var(--text-3);
-	background: var(--surface-1);
-	border-bottom: 1px solid var(--border);
-}
-.jv-md :deep(.jv-md-table td) {
-	padding: 9px 13px;
-	border-bottom: 1px solid var(--border);
-	color: var(--text);
-	font-variant-numeric: tabular-nums;
-}
-.jv-md :deep(.jv-md-table tr:last-child td) {
-	border-bottom: 0;
 }
 
 /* ===== settings panel (slide-over console) ===== */
@@ -9627,41 +9387,6 @@ onUnmounted(() => {
 }
 
 /* artifact card (in the message) */
-/* generated-image artifact: clickable thumbnail */
-.jv-img-artifact {
-	display: block;
-	position: relative;
-	margin-top: 12px;
-	padding: 0;
-	border: 1px solid var(--border);
-	border-radius: 12px;
-	background: var(--surface-1);
-	cursor: zoom-in;
-	overflow: hidden;
-	max-width: 380px;
-	line-height: 0;
-}
-.jv-img-artifact:hover {
-	border-color: var(--border-2);
-}
-.jv-img-artifact img {
-	display: block;
-	width: 100%;
-	max-height: 320px;
-	object-fit: cover;
-}
-.jv-img-artifact-cap {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 7px 10px;
-	font-family: inherit;
-	font-size: 11.5px;
-	line-height: 1.3;
-	color: var(--text-3);
-	background: var(--surface);
-	border-top: 1px solid var(--border);
-}
 .jv-artifact {
 	display: flex;
 	align-items: center;

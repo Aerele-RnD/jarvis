@@ -79,8 +79,9 @@ test("clicking an image attachment emits open-attachment with the canvas record"
 	expect(emitted[0][0]).toEqual(USER_MSG.canvas[0]);
 });
 
-test("variant=row renders nothing yet (Task 3 stub)", () => {
+test("variant=row now renders the assistant body (Task 3, no longer a stub)", () => {
 	const w = mountWithPalette(Message, { variant: "row", html: "<p>hi</p>" });
-	expect(w.find(".jv-umsg").exists()).toBe(false);
-	expect(w.text()).toBe("");
+	expect(w.find(".jv-umsg").exists()).toBe(false); // not the bubble path
+	expect(w.find(".jv-md-body").exists()).toBe(true);
+	expect(w.html()).toContain("hi");
 });
