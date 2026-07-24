@@ -705,139 +705,21 @@
 						     inline in place of the confirmation card that used to vanish -->
 						<ReceiptChip v-if="m.role === 'tool'" :message="m" />
 						<!-- user -->
-						<div
+						<Message
 							v-else-if="m.role === 'user'"
-							class="jv-umsg"
-							style="display: flex; flex-direction: column; align-items: flex-end"
-						>
-							<div
-								v-if="m.content"
-								class="jv-ububble"
-								style="
-									max-width: 78%;
-									min-width: 0;
-									background: var(--surface-2);
-									border: 1px solid var(--border);
-									border-radius: 14px 14px 4px 14px;
-									padding: 10px 14px;
-									font-size: 14px;
-									line-height: 1.5;
-									color: var(--text);
-									white-space: pre-wrap;
-									overflow-wrap: anywhere;
-								"
-							>
-								{{ m.content }}
-							</div>
-							<div
-								v-if="m.failed"
-								style="
-									display: flex;
-									align-items: center;
-									gap: 8px;
-									margin-top: 4px;
-									font-size: 11.5px;
-									color: var(--red);
-								"
-							>
-								<span>Not sent</span>
-								<button
-									@click="resendFailed(m)"
-									style="
-										background: none;
-										border: none;
-										color: var(--link);
-										font: inherit;
-										cursor: pointer;
-										padding: 0;
-										text-decoration: underline;
-									"
-								>
-									Retry
-								</button>
-							</div>
-							<!-- attached images → same clickable thumbnail + preview as generated ones -->
-							<template v-for="cv in m.canvas || []" :key="cv.name">
-								<button
-									v-if="cv.type === 'image' && cv.file_url"
-									class="jv-img-artifact"
-									@click="openArtifact(m, cv)"
-									:title="'Open ' + cv.title"
-									style="margin-top: 8px; cursor: zoom-in"
-								>
-									<img :src="cv.file_url" :alt="cv.title" loading="lazy" />
-								</button>
-							</template>
-							<div class="jv-msgbar">
-								<!-- sent-time: revealed with the bar on hover; its own hover
-								     (native title) gives the full day-date-month-year-time.
-								     Order: time → edit → copy (edit before copy). -->
-								<span
-									v-if="msgTime(m)"
-									class="jv-msgtime"
-									:title="msgTimeFull(m)"
-									>{{ msgTime(m) }}</span
-								>
-								<button
-									class="jv-msgbtn"
-									@click="editCommand(m)"
-									title="Edit & resend"
-								>
-									<svg
-										width="14"
-										height="14"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.8"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									>
-										<path
-											d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-										/>
-										<path
-											d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-										/>
-									</svg>
-								</button>
-								<button
-									class="jv-msgbtn"
-									@click="copyMsg(m.name, m.content)"
-									:title="copiedId === m.name ? 'Copied' : 'Copy'"
-								>
-									<svg
-										v-if="copiedId === m.name"
-										width="14"
-										height="14"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="var(--green)"
-										stroke-width="2.2"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									>
-										<path d="M20 6 9 17l-5-5" />
-									</svg>
-									<svg
-										v-else
-										width="14"
-										height="14"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.8"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									>
-										<rect x="9" y="9" width="13" height="13" rx="2" />
-										<path
-											d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-										/>
-									</svg>
-								</button>
-							</div>
-						</div>
+							variant="bubble"
+							:text="m.content"
+							:attachments="m.canvas"
+							:timestamp="msgTime(m)"
+							:timestampFull="msgTimeFull(m)"
+							editable
+							:copied="copiedId === m.name"
+							:failed="m.failed"
+							@edit="editCommand(m)"
+							@copy="copyMsg(m.name, m.content)"
+							@retry="resendFailed(m)"
+							@open-attachment="openArtifact(m, $event)"
+						/>
 						<!-- assistant -->
 						<div v-else class="jv-amsg" style="display: flex; gap: 12px">
 							<JarvisMark :size="28" :radius="7" style="margin-top: 2px" />
@@ -3510,6 +3392,7 @@ import ActionError from "@/components/ActionError.vue";
 import Banner from "@/components/Banner.vue";
 import PendingCard from "@/components/PendingCard.vue";
 import ReceiptChip from "@/components/ReceiptChip.vue";
+import Message from "@/components/chat/Message.vue";
 import { checkReady, readinessDetailOf } from "@/onboarding/readiness.js";
 import { suspensionNotice, SUSPENDED_FALLBACK } from "@/onboarding/steps.js";
 import { billingBanner } from "@/account/format.js";
@@ -8086,7 +7969,6 @@ onUnmounted(() => {
 	opacity: 0;
 	transition: opacity 0.12s ease;
 }
-.jv-umsg:hover .jv-msgbar,
 .jv-amsg:hover .jv-msgbar {
 	opacity: 1;
 }
@@ -8218,9 +8100,6 @@ onUnmounted(() => {
 	}
 	.jv-welcome-h1 {
 		font-size: 24px !important;
-	}
-	.jv-ububble {
-		max-width: 92% !important;
 	}
 }
 /* touch devices can't hover, so always show per-message actions/timestamps */
