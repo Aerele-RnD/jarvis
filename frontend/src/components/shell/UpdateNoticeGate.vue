@@ -1,8 +1,5 @@
 <template>
-	<!-- Full-screen release-notice gate: AppShell renders it IN PLACE OF the app
-	     while this bench is behind the operator's latest jarvis version, so chat
-	     and every other feature stay out of reach until the workspace updates. A
-	     rendered gate, not a redirect (mirrors OnboardingGate). No dismiss. -->
+	<!-- Full-screen gate, rendered by AppShell in place of the app. No dismiss. -->
 	<div class="jv-gate">
 		<div class="jv-gate-bg" aria-hidden="true">
 			<div class="jv-gate-orb jv-gate-orb-tl"></div>
@@ -22,14 +19,28 @@
 				Chat with {{ agentName }} is paused for this workspace until it's updated. Please
 				ask your administrator to update.
 			</p>
+
+			<button class="jv-gate-btn" :disabled="checking" @click="recheck">
+				{{ checking ? "Checking…" : "I've updated — check again" }}
+			</button>
 		</div>
 	</div>
 </template>
 
 <script setup>
+import { onMounted, onBeforeUnmount } from "vue";
 import JarvisMark from "@/components/JarvisMark.vue";
 import { agentName } from "@/branding";
-import { notice } from "@/noticeGate";
+import { checking, notice, recheck } from "@/noticeGate";
+
+// Boot read a mirror that may predate the update, so re-pull once on mount and
+// then poll: an open tab has no other way to learn the notice was lifted.
+let timer = null;
+onMounted(() => {
+	recheck();
+	timer = setInterval(recheck, 60000);
+});
+onBeforeUnmount(() => clearInterval(timer));
 </script>
 
 <style scoped>
@@ -122,26 +133,27 @@ import { notice } from "@/noticeGate";
 	max-width: 400px;
 }
 
-.jv-gate-link {
+.jv-gate-btn {
 	display: inline-flex;
 	align-items: center;
-	gap: 6px;
-	font-size: 14px;
-	font-weight: 500;
-	color: #6e5cf6;
-	text-decoration: none;
-}
-.jv-gate-link:hover {
-	text-decoration: underline;
-}
-.jv-gate-arrow {
+	gap: 8px;
+	padding: 10px 26px;
+	border: none;
+	border-radius: 9px;
 	font-size: 15px;
-	line-height: 1;
+	font-weight: 500;
+	color: #fff;
+	cursor: pointer;
+	background: linear-gradient(135deg, #6e8bff, #8b5cf6);
+	box-shadow: 0 6px 18px rgba(110, 92, 246, 0.3);
+	transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-
-.jv-gate-foot {
-	margin-top: 18px;
-	font-size: 12px;
-	color: var(--ink-gray-5, #9ca3af);
+.jv-gate-btn:hover:not(:disabled) {
+	transform: translateY(-1px);
+	box-shadow: 0 10px 24px rgba(110, 92, 246, 0.38);
+}
+.jv-gate-btn:disabled {
+	opacity: 0.6;
+	cursor: default;
 }
 </style>

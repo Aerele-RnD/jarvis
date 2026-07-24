@@ -182,6 +182,20 @@ class TestAdminChatGate(FrappeTestCase):
 		self.assertEqual(s.latest_jarvis_version, "9.9.9")
 		self.assertEqual(s.release_notice_message, "Please update")
 
+	def test_release_notice_cleared_on_gate(self):
+		"""The transition that unblocks an updated tenant: admin stops sending a
+		notice, so the mirror must zero rather than keep the stale block up."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("release_notice_active", 1)
+		s.db_set("latest_jarvis_version", "9.9.9")
+		s.db_set("release_notice_message", "stale")
+		frappe.db.commit()
+		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}):
+			account._admin_chat_gate()
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.release_notice_active, 0)
+		self.assertEqual(s.release_notice_message, "")
+
 	def test_blocks_when_admin_not_ready(self):
 		with patch.object(
 			admin_client, "get_connection", return_value={"chat_readiness": "Provisioning"}

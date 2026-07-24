@@ -1,13 +1,21 @@
 <script setup>
+import { onMounted, onBeforeUnmount } from "vue";
 import BrandMark from "./BrandMark.vue";
 import { agentName } from "@/branding";
-import { notice } from "../noticeGate";
+import { checking, notice, recheck } from "../noticeGate";
+
+// The PWA never calls the chat-readiness gate, so this is its only way to learn
+// the notice was lifted short of the daily sync.
+let timer = null;
+onMounted(() => {
+	recheck();
+	timer = setInterval(recheck, 60000);
+});
+onBeforeUnmount(() => clearInterval(timer));
 </script>
 
 <template>
-	<!-- Full-screen overlay that blocks the app while this bench is behind the
-	     operator's latest jarvis version — chat stays out of reach until the
-	     workspace updates. No dismiss. -->
+	<!-- Full-screen overlay above the app. No dismiss. -->
 	<div class="jv-nu jv-safe-bottom">
 		<div class="jv-nu-card">
 			<BrandMark :size="56" />
@@ -22,6 +30,10 @@ import { notice } from "../noticeGate";
 				Chat with {{ agentName }} is paused for this workspace until it's updated. Please
 				ask your administrator to update.
 			</p>
+
+			<button class="jv-nu-btn" :disabled="checking" @click="recheck">
+				{{ checking ? "Checking…" : "I've updated — check again" }}
+			</button>
 		</div>
 	</div>
 </template>
@@ -77,15 +89,22 @@ import { notice } from "../noticeGate";
 	font-weight: 500;
 	color: var(--ink8, #2f2f37);
 }
-.jv-nu-link {
-	font-size: 14px;
-	font-weight: 500;
-	color: var(--accent, #6e5cf6);
-	text-decoration: none;
+.jv-nu-btn {
+	margin-top: 8px;
+	width: 100%;
+	max-width: 280px;
+	height: 48px;
+	border: 0;
+	border-radius: 12px;
+	background: var(--accent-solid, #6e5cf6);
+	color: #fff;
+	font: inherit;
+	font-size: 15px;
+	font-weight: 600;
+	cursor: pointer;
 }
-.jv-nu-foot {
-	margin: 4px 0 0;
-	font-size: 12px;
-	color: var(--ink5, #9ca3af);
+.jv-nu-btn:disabled {
+	opacity: 0.6;
+	cursor: default;
 }
 </style>

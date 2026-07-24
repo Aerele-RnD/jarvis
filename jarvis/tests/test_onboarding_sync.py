@@ -142,6 +142,23 @@ class TestSyncConnection(FrappeTestCase):
 		self.assertEqual(s.release_notice_active, 0)
 		self.assertEqual(s.release_notice_message, "")
 
+	def test_sync_persists_release_notice_without_agent_url(self):
+		"""A payload with no agent_url still has to raise/clear the notice - for an
+		idle bench this daily sync is the only refresh it gets."""
+		_set_token("tok")
+		with patch(
+			"jarvis.onboarding.admin_client.get_connection",
+			return_value={
+				"agent_url": "",
+				"tenant_status": "pending",
+				"release_notice": {"active": True, "version": "0.0.2", "message": "Please update."},
+			},
+		):
+			onboarding.sync_connection()
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.release_notice_active, 1)
+		self.assertEqual(s.latest_jarvis_version, "0.0.2")
+
 	def test_sync_noop_when_pending(self):
 		_set_token("tok")
 		with patch(

@@ -139,6 +139,10 @@ def sync_connection() -> dict:
 	if not (api_key and api_secret):
 		return {"synced": False, "reason": "not onboarded"}
 	data = admin_client.get_connection()
+	# Outside the agent_url branch: a payload without one must still be able to
+	# raise or clear the release notice, and this is the only refresh an idle
+	# bench gets.
+	release_notice.persist(data.get("release_notice") or {})
 	if data.get("agent_url"):
 		write_connection(data)
 		return {"synced": True, "tenant_status": data.get("tenant_status")}

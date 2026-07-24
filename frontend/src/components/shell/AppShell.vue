@@ -12,10 +12,10 @@
 			     forced D11 redirect caused. The /onboarding wizard itself is
 			     exempt so the poster's "Complete setup" button can reach it. -->
 			<OnboardingGate v-else-if="showGate" />
-			<!-- Release-notice gate: shown only once the app would otherwise render
-			     (yields to onboarding), while this bench is behind the latest
-			     jarvis version. Continue is per-session; a reload re-shows it. -->
-			<UpdateNoticeGate v-else-if="showNotice" />
+			<!-- Release-notice gate: a hard block, shown only once the app would
+			     otherwise render. Exempts the wizard so a mid-onboarding workspace
+			     can still finish setup. -->
+			<UpdateNoticeGate v-else-if="showNotice && route.name !== 'Onboarding'" />
 			<template v-else>
 				<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
 				     not-yet-onboarded customer has no app to navigate. -->

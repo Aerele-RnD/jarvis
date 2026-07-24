@@ -111,9 +111,8 @@ onUnmounted(() => {
 			<component :is="Component" />
 		</router-view>
 		<AppDrawer />
-		<!-- Release-notice overlay: shown to a signed-in user while this bench is
-		     behind the latest jarvis version. Sits above the app; Continue is
-		     per-session, so a reload re-shows it. -->
+		<!-- Release-notice overlay: a hard block above the app for a signed-in
+		     user, until the control plane stops serving the notice. -->
 		<UpdateNoticeGate v-if="showNotice && sessionUser()" />
 	</div>
 </template>

@@ -1,5 +1,6 @@
-"""Tests for jarvis.release_notice: persist + boot payload. The control plane
-decides which notice applies (per host); the bench mirrors and renders it."""
+"""Tests for jarvis.release_notice: persist, boot payload and the gate's refresh."""
+
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -55,6 +56,28 @@ class TestBootPayload(FrappeTestCase):
 	def test_inactive_notice(self):
 		self._set(release_notice_active=0, release_notice_message="m")
 		self.assertFalse(release_notice.boot_payload()["active"])
+
+	def test_check_refreshes_from_admin_and_returns_payload(self):
+		self._set(release_notice_active=1, latest_jarvis_version="0.0.2", release_notice_message="old")
+		fresh = {"active": True, "version": "0.0.3", "message": "new"}
+		with patch("jarvis.admin_client.get_connection", return_value={"release_notice": fresh}) as gc:
+			out = release_notice.check()
+		gc.assert_called_once_with(timeout_s=8)
+		self.assertEqual(out["version"], "0.0.3")
+		self.assertEqual(out["message"], "new")
+
+	def test_check_clears_when_admin_sends_none(self):
+		# The gate polls this; a cleared notice is what lets an updated tenant back in.
+		self._set(release_notice_active=1, latest_jarvis_version="0.0.2", release_notice_message="m")
+		with patch("jarvis.admin_client.get_connection", return_value={}):
+			out = release_notice.check()
+		self.assertFalse(out["active"])
+
+	def test_check_keeps_mirror_when_admin_unreachable(self):
+		self._set(release_notice_active=1, latest_jarvis_version="0.0.2", release_notice_message="m")
+		with patch("jarvis.admin_client.get_connection", side_effect=RuntimeError("boom")):
+			out = release_notice.check()
+		self.assertTrue(out["active"])
 
 	def test_persist_then_clear_round_trip(self):
 		release_notice.persist({"active": True, "version": "0.0.2", "message": "M"})
