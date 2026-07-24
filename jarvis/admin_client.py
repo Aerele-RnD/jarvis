@@ -236,6 +236,20 @@ def get_plans() -> list:
 	return _post_guest(path=_m("billing.signup.get_plans"), body={})
 
 
+def get_payment_providers() -> dict:
+	"""Which gateways the control plane will actually charge on right now, and
+	which to preselect: ``{providers: [...], default: "..."}``.
+
+	Guest-safe like get_plans - the wizard needs it before the customer has any
+	credentials. Returns only enabled keys and the default, never gateway
+	configuration.
+
+	The caller intersects the result with SUPPORTED_PROVIDERS: admin may enable a
+	gateway this bench build cannot render, and offering it would strand the
+	customer at a checkout step that never opens."""
+	return _post_guest(path=_m("billing.signup.get_payment_providers"), body={})
+
+
 # Admin-owned preset catalog (spec 3.3). Guest-safe fetch (get_plans pattern),
 # cached in per-site Redis, bundled fallback so onboarding never hard-fails.
 # The path is built per-call via _m() so the admin-app namespace override is

@@ -148,6 +148,32 @@ def list_plans() -> list:
 
 
 @frappe.whitelist()
+def list_payment_providers() -> dict:
+	"""Gateways the wizard may offer, already narrowed to what THIS bench can
+	render: ``{providers: [...], default: "..."}``.
+
+	Two filters, and both matter. Admin drops gateways the operator disabled;
+	this intersects with ``SUPPORTED_PROVIDERS`` so a gateway enabled on a newer
+	control plane than this bench build is not offered here and then dead-ended
+	at a checkout that cannot open.
+
+	Fails OPEN to razorpay: the chooser is a convenience, and a control-plane
+	blip must not leave a customer unable to pay at all. Razorpay is the gateway
+	that supports every flow, so it is the safe floor.
+	"""
+	try:
+		data = admin_client.get_payment_providers() or {}
+	except Exception:
+		return {"providers": ["razorpay"], "default": "razorpay"}
+
+	providers = [p for p in (data.get("providers") or []) if p in admin_client.SUPPORTED_PROVIDERS]
+	if not providers:
+		return {"providers": ["razorpay"], "default": "razorpay"}
+	default = (data.get("default") or "").strip().lower()
+	return {"providers": providers, "default": default if default in providers else providers[0]}
+
+
+@frappe.whitelist()
 def get_preset_catalog() -> list:
 	"""Preset catalog for the desk onboarding step + the /ai SPA route.
 	Thin wrapper over admin_client (fetch/cache/bundled fallback)."""

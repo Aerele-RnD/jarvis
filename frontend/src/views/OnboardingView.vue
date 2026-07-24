@@ -428,12 +428,13 @@
 										}}
 									</div>
 									<div
-										v-if="!isFreePlan && !isTrialPlan && !state.devActive"
+										v-if="showProviderChooser"
 										class="jv-ob-provseg"
 										role="radiogroup"
 										aria-label="Payment method"
 									>
 										<button
+											v-if="providerAvailable('razorpay')"
 											type="button"
 											class="jv-ob-provseg-opt"
 											:class="{ sel: state.paymentProvider === 'razorpay' }"
@@ -462,6 +463,7 @@
 											</span>
 										</button>
 										<button
+											v-if="providerAvailable('cashfree')"
 											type="button"
 											class="jv-ob-provseg-opt"
 											:class="{ sel: state.paymentProvider === 'cashfree' }"
@@ -827,6 +829,7 @@ import {
 	isReadyForChat,
 	getLlmSyncStatus,
 	listPlans,
+	listPaymentProviders,
 	startSignup,
 	finishPayment,
 	saveSelfHosted,
@@ -895,6 +898,10 @@ const state = reactive({
 	// pay (renderPay / renderVerifyEmail / startPay / openCheckout)
 	payPhase: "review", // "review" | "verify" - mirrors desk's step-3 vs "check your email" sub-screen
 	paymentProvider: "razorpay", // gateway chosen on Review & Pay: "razorpay" | "cashfree"
+	// Gateways the operator has actually enabled, narrowed to what this build
+	// can render. Starts as razorpay-only so the step is never briefly empty
+	// while the lookup is in flight, and stays that way if the lookup fails.
+	availableProviders: ["razorpay"],
 	payErr: "",
 	payBusy: false,
 	// True when reconcile landed us directly on "connect" (signup + payment
@@ -941,6 +948,40 @@ const frameSub = computed(() => FRAME_SUBS[state.step] || "Set up your workspace
 // autopay mandate now; the first charge fires when the trial ends.
 const trialDays = computed(() => Number(selectedPlan.value.trial_days) || 0);
 const isTrialPlan = computed(() => trialDays.value > 0);
+
+// The chooser is only a choice when there is more than one gateway. With a
+// single enabled gateway a radiogroup of one is noise: it asks the customer to
+// decide something already decided, and the "Secured by X" line below already
+// names it. Free/trial plans collect no payment at all.
+const providerChoices = computed(() => state.availableProviders || []);
+const showProviderChooser = computed(
+	() =>
+		!isFreePlan.value &&
+		!isTrialPlan.value &&
+		!state.devActive &&
+		providerChoices.value.length > 1,
+);
+const providerAvailable = (p) => providerChoices.value.includes(p);
+
+// Ask the control plane which gateways are live and preselect its default.
+// Fail-open and non-blocking: the wizard must render even if this never
+// answers, and the razorpay-only seed above is the floor.
+async function loadPaymentProviders() {
+	try {
+		const r = (await listPaymentProviders()) || {};
+		const providers = Array.isArray(r.providers) ? r.providers.filter(Boolean) : [];
+		if (!providers.length) return;
+		state.availableProviders = providers;
+		// Preselect admin's default; never leave the selection pointing at a
+		// gateway that is no longer offered, or Pay would post a provider the
+		// server refuses.
+		const preferred = providers.includes(r.default) ? r.default : providers[0];
+		if (!providers.includes(state.paymentProvider)) state.paymentProvider = preferred;
+		else if (providers.length === 1) state.paymentProvider = providers[0];
+	} catch (e) {
+		// Keep the seed: a control-plane blip must not block payment entirely.
+	}
+}
 
 // Pay CTA copy: "Start free trial" for an autopay trial (nothing due
 // today); "Pay ₹X" for a plain paid plan.
@@ -1711,6 +1752,7 @@ async function prefillAccount() {
 onMounted(async () => {
 	prefillAccount();
 	restoreBillingDetails();
+	loadPaymentProviders();
 	await reconcileMidFlightSignup();
 	// Prefetch the plan catalog behind the intro tour so the Plan step rarely
 	// first-paints in its loading state. Reconciled resumes land past "plan"

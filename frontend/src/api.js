@@ -195,6 +195,9 @@ export const testLlmApiKey = (args) => call("jarvis.llm_key_probe.test_llm_api_k
 // jarvis/account.py, jarvis/selfhost.py) - verified against the desk wizard's
 // frappe.call usage in jarvis/jarvis/page/jarvis_onboarding/jarvis_onboarding.js.
 export const listPlans = () => call("jarvis.onboarding.list_plans");
+// {providers: [...], default: "..."} - already narrowed to gateways the
+// operator enabled AND this bench build can render.
+export const listPaymentProviders = () => call("jarvis.onboarding.list_payment_providers");
 export const getAccountDefaults = () => call("jarvis.onboarding.get_account_defaults");
 export const syncConnection = () => call("jarvis.onboarding.sync_connection");
 export const startSignup = (email, company, plan, provider) =>
@@ -373,7 +376,7 @@ export const supportAwaitingCount = () => call("jarvis.support.api.awaiting_coun
 // Same-origin GET so <img>/<a> resolve against the bench; session cookie authenticates.
 export const supportDownloadUrl = (ticket, fileUrl) =>
 	`/api/method/jarvis.support.media.download?ticket=${encodeURIComponent(
-		ticket
+		ticket,
 	)}&file_url=${encodeURIComponent(fileUrl)}`;
 
 export async function supportUpload(ticket, file) {
