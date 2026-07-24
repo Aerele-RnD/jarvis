@@ -30,7 +30,34 @@ no_cache = 1
 _WIZARD_ROUTE = "/jarvis/onboarding"
 
 
+def _keep_the_browsers_session_cookie():
+	"""Emit NO Set-Cookie on this response.
+
+	Without this the page makes the problem worse rather than better. The
+	cross-site POST arrives with no cookie, so Frappe resolves a Guest session -
+	and then answers with ``Set-Cookie: sid=Guest``, which OVERWRITES the real
+	session cookie the browser still holds. The customer is not merely treated as
+	logged out for one request; they are actually logged out, and the following
+	GET carries the Guest sid too, so the redirect lands on the login page all
+	the same.
+
+	CookieManager collects pending cookies in a plain dict and writes them at
+	response time, so clearing it here leaves the browser's existing ``sid``
+	untouched. Safe on this page specifically because it only redirects: it has
+	no session of its own to persist and nothing to remember.
+	"""
+	cm = getattr(frappe.local, "cookie_manager", None)
+	if not cm:
+		return
+	cm.cookies.clear()
+	# to_delete would emit expiry headers for the same cookies, which clears them
+	# in the browser just as effectively.
+	if getattr(cm, "to_delete", None):
+		cm.to_delete.clear()
+
+
 def get_context(context):
+	_keep_the_browsers_session_cookie()
 	# 303, explicitly, rather than Frappe's default 301. Two reasons, both
 	# load-bearing:
 	#

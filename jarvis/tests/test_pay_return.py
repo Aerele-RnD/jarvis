@@ -56,6 +56,45 @@ class TestPayReturnLanding(FrappeTestCase):
 		finally:
 			frappe.set_user(original)
 
+	def test_it_emits_no_cookies_so_the_real_session_survives(self):
+		"""The subtle half, and the one that actually logged customers out.
+
+		The cross-site POST arrives with no cookie, so Frappe resolves a Guest
+		session and would answer ``Set-Cookie: sid=Guest`` - OVERWRITING the real
+		session the browser still holds. The customer would then be genuinely
+		logged out rather than merely unrecognised for one request, and the GET
+		that follows would carry the Guest sid and land on login anyway.
+
+		Suppressing every cookie on this response is what makes the redirect
+		worth doing at all.
+		"""
+
+		class _FakeCookieManager:
+			def __init__(self):
+				self.cookies = {"sid": {"value": "Guest"}, "user_id": {"value": "Guest"}}
+				self.to_delete = ["something"]
+
+		cm = _FakeCookieManager()
+		original = getattr(frappe.local, "cookie_manager", None)
+		frappe.local.cookie_manager = cm
+		try:
+			self._redirect()
+		finally:
+			frappe.local.cookie_manager = original
+
+		self.assertEqual(cm.cookies, {}, "a Set-Cookie here overwrites the customer's session")
+		self.assertEqual(cm.to_delete, [], "queued deletions clear the cookie just as effectively")
+
+	def test_it_survives_a_missing_cookie_manager(self):
+		"""Never let cookie handling be the thing that breaks a payment return."""
+		original = getattr(frappe.local, "cookie_manager", None)
+		frappe.local.cookie_manager = None
+		try:
+			_exc, location = self._redirect()
+		finally:
+			frappe.local.cookie_manager = original
+		self.assertEqual(location, "/jarvis/onboarding")
+
 	def test_it_carries_no_gateway_state_into_the_wizard(self):
 		"""The gateway's cf_status is unverified client input and confirmation is
 		a server-side fetch regardless, so nothing from the POST body is trusted
