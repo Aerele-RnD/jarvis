@@ -60,13 +60,16 @@ export function suspensionNotice(readyResp) {
 //   {kind: "stale"}                         - unrecognized shape: ask for a refresh
 export function verifyPollAction(d) {
 	if (!d || d.pending_verification) return { kind: "wait" };
-	// checkout covers Razorpay (one-shot order `razorpay_order_id` or autopay
-	// mandate `razorpay_subscription_id`) and Cashfree (`payment_session_id`).
+	// checkout covers both gateways in both shapes: Razorpay (one-shot order
+	// `razorpay_order_id`, autopay mandate `razorpay_subscription_id`) and
+	// Cashfree (one-shot order `payment_session_id`, autopay mandate
+	// `subscription_session_id`). Missing the mandate token here would strand a
+	// resuming Cashfree autopay customer on "stale" with no way to pay.
 	// The provider rides the response so the caller launches the right SDK;
 	// absent ⇒ razorpay (an older admin that predates the discriminator).
 	const prov = (d.payment_provider || d.provider || "").toLowerCase();
 	const hasRz = d.razorpay_order_id || d.razorpay_subscription_id;
-	const hasCf = d.payment_session_id;
+	const hasCf = d.payment_session_id || d.subscription_session_id;
 	if (hasRz || hasCf) {
 		return { kind: "checkout", provider: prov || (hasCf ? "cashfree" : "razorpay") };
 	}

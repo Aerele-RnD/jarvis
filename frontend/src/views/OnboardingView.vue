@@ -421,7 +421,11 @@
 											<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 										</svg>
 										Secured by
-										{{ state.paymentProvider === "cashfree" ? "Cashfree" : "Razorpay" }}
+										{{
+											state.paymentProvider === "cashfree"
+												? "Cashfree"
+												: "Razorpay"
+										}}
 									</div>
 									<div
 										v-if="!isFreePlan && !isTrialPlan && !state.devActive"
@@ -439,9 +443,20 @@
 											@click="state.paymentProvider = 'razorpay'"
 										>
 											<span class="jv-ob-rzp-logo" aria-hidden="true">
-												<svg class="jv-ob-rzp-mark" viewBox="0 0 20 24" width="15" height="18">
-													<path fill="#3395ff" d="M14.4 0 8 12.1l1.6 3.8L18 3.5z" />
-													<path fill="#0b2a6b" d="M9.2 8 2 24h4.7l3-7.5 2.1-4.6z" />
+												<svg
+													class="jv-ob-rzp-mark"
+													viewBox="0 0 20 24"
+													width="15"
+													height="18"
+												>
+													<path
+														fill="#3395ff"
+														d="M14.4 0 8 12.1l1.6 3.8L18 3.5z"
+													/>
+													<path
+														fill="#0b2a6b"
+														d="M9.2 8 2 24h4.7l3-7.5 2.1-4.6z"
+													/>
 												</svg>
 												<span class="jv-ob-rzp-word">Razorpay</span>
 											</span>
@@ -455,7 +470,11 @@
 											aria-label="Cashfree"
 											@click="state.paymentProvider = 'cashfree'"
 										>
-											<img :src="cashfreeLogo" alt="Cashfree" class="jv-ob-cf-logo" />
+											<img
+												:src="cashfreeLogo"
+												alt="Cashfree"
+												class="jv-ob-cf-logo"
+											/>
 										</button>
 									</div>
 									<Banner
@@ -1088,7 +1107,7 @@ function persistBillingDetails() {
 				billingAddress: state.billingAddress,
 				city: state.city,
 				gstin: state.gstin,
-			})
+			}),
 		);
 	} catch (e) {
 		/* storage full/blocked - purely best-effort */
@@ -1212,7 +1231,12 @@ async function proceedAfterPay() {
 
 async function runStartPay() {
 	try {
-		const d = await startSignup(state.email, state.company, state.planName, state.paymentProvider);
+		const d = await startSignup(
+			state.email,
+			state.company,
+			state.planName,
+			state.paymentProvider,
+		);
 		if (d && d.pending_verification) {
 			state.payPhase = "verify";
 			state.payBusy = false;
@@ -1311,6 +1335,14 @@ async function openCashfreeCheckout(d) {
 		state.payErr = "Couldn't start Cashfree checkout.";
 		return;
 	}
+	// Paid MONTHLY plans authorize a recurring mandate instead of paying an
+	// order, and the two are NOT interchangeable: the mandate carries a
+	// subscription_session_id and needs subscriptionsCheckout({subsSessionId}).
+	// Passing it to checkout({paymentSessionId}) fails.
+	if (d.subscription_session_id) {
+		return openCashfreeMandate(cf, d);
+	}
+
 	try {
 		// _modal keeps the SPA mounted (a full redirect would tear down wizard state).
 		await cf.checkout({ paymentSessionId: d.payment_session_id, redirectTarget: "_modal" });
@@ -1320,6 +1352,35 @@ async function openCashfreeCheckout(d) {
 	}
 	state.payBusy = true;
 	await confirmCashfree(d.cashfree_order_id);
+}
+
+// Mandate authorization (autopay monthly). This is a REDIRECT journey, not the
+// order flow's modal, and that is imposed by the SDK rather than chosen:
+// subscriptionsCheckout POSTs a form whose target is the raw redirectTarget, so
+// "_modal" would open a window literally named _modal instead of an overlay.
+// It also resolves the moment the form is submitted - {redirect:true} - so
+// there is nothing to await and no result to inspect.
+//
+// The customer therefore leaves the wizard. Admin sets Cashfree's return_url to
+// this page, and on the way back the wizard's normal resume path
+// (verifyPollAction -> finish_payment) confirms the mandate server-side, exactly
+// as it already does after email verification. Nothing trusts the redirect
+// itself: confirm refuses any mandate Cashfree does not report ACTIVE.
+async function openCashfreeMandate(cf, d) {
+	try {
+		const r = await cf.subscriptionsCheckout({
+			subsSessionId: d.subscription_session_id,
+			redirectTarget: "_self",
+		});
+		// The SDK resolves with {error} rather than throwing for bad input.
+		if (r && r.error) {
+			state.payBusy = false;
+			state.payErr = "Couldn't start the auto-pay authorisation. Try again.";
+		}
+	} catch (e) {
+		state.payBusy = false;
+		state.payErr = "Couldn't start the auto-pay authorisation. Try again.";
+	}
 }
 
 // Poll finish_payment (→ admin confirm_payment → Cashfree Get Order/Payments).
@@ -1620,7 +1681,7 @@ watch(
 			loadPlansSafe();
 		}
 		if (s === "pay") enterPayStep();
-	}
+	},
 );
 
 // Prefill the Details step from what the site already knows (caller's email +
@@ -1752,7 +1813,9 @@ onMounted(async () => {
 	background: var(--surface);
 	border: 1px solid var(--border);
 	border-radius: 16px;
-	box-shadow: 0 0 1px rgba(0, 0, 0, 0.2), 0 24px 30px -8px rgba(0, 0, 0, 0.1);
+	box-shadow:
+		0 0 1px rgba(0, 0, 0, 0.2),
+		0 24px 30px -8px rgba(0, 0, 0, 0.1);
 	overflow: hidden;
 }
 .jv-ob-screen {
@@ -1813,7 +1876,9 @@ onMounted(async () => {
 	gap: 4px;
 	padding: 6px 8px;
 	border-radius: 8px;
-	transition: background-color 0.15s ease, color 0.15s ease;
+	transition:
+		background-color 0.15s ease,
+		color 0.15s ease;
 }
 .jv-ob-back svg {
 	flex: none;
@@ -1871,7 +1936,10 @@ onMounted(async () => {
 	white-space: nowrap;
 	background: var(--surface-2);
 	color: var(--text);
-	transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+	transition:
+		background-color 0.15s ease,
+		color 0.15s ease,
+		border-color 0.15s ease;
 }
 /* :not(:disabled) is REQUIRED here. Without it this rule (specificity 0,2,0)
    outranks .jv-ob-btn-grad/.jv-ob-btn-primary (0,1,0) on hover, repainting a
@@ -1971,7 +2039,10 @@ onMounted(async () => {
 	background: var(--surface);
 	cursor: pointer;
 	position: relative;
-	transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+	transition:
+		border-color 0.15s ease,
+		background-color 0.15s ease,
+		box-shadow 0.15s ease;
 }
 .jv-ob-plan:hover {
 	background: var(--surface-1);
@@ -2029,7 +2100,9 @@ onMounted(async () => {
 	border: 1px solid var(--border-2);
 	display: grid;
 	place-items: center;
-	transition: border-color 0.15s ease, background-color 0.15s ease;
+	transition:
+		border-color 0.15s ease,
+		background-color 0.15s ease;
 }
 .jv-ob-plan.sel .jv-ob-plan-rd {
 	border-color: var(--text);
@@ -2082,7 +2155,9 @@ onMounted(async () => {
 	color: var(--text);
 	width: 100%;
 	box-sizing: border-box;
-	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+	transition:
+		border-color 0.15s ease,
+		box-shadow 0.15s ease;
 }
 .jv-ob-inp::placeholder {
 	color: var(--text-3);
@@ -2118,7 +2193,9 @@ onMounted(async () => {
 	border-color: var(--border-2);
 	border-radius: 8px;
 	font-size: 13.5px;
-	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+	transition:
+		border-color 0.15s ease,
+		box-shadow 0.15s ease;
 }
 .jv-ob-form :deep(.jvc-field:hover) {
 	border-color: var(--text-3);
@@ -2198,7 +2275,10 @@ onMounted(async () => {
 	background: transparent;
 	cursor: pointer;
 	opacity: 0.6;
-	transition: background 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+	transition:
+		background 0.16s ease,
+		box-shadow 0.16s ease,
+		opacity 0.16s ease;
 }
 .jv-ob-provseg-opt:hover {
 	opacity: 0.85;
@@ -2206,7 +2286,9 @@ onMounted(async () => {
 .jv-ob-provseg-opt.sel {
 	background: #ffffff;
 	opacity: 1;
-	box-shadow: 0 1px 3px rgba(16, 24, 40, 0.16), 0 0 0 1px rgba(16, 24, 40, 0.04);
+	box-shadow:
+		0 1px 3px rgba(16, 24, 40, 0.16),
+		0 0 0 1px rgba(16, 24, 40, 0.04);
 }
 .jv-ob-provseg-opt:focus-visible {
 	outline: 2px solid #3395ff;
