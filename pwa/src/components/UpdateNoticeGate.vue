@@ -1,13 +1,13 @@
 <script setup>
 import BrandMark from "./BrandMark.vue";
 import { agentName } from "@/branding";
-import { continueSession, notice } from "../noticeGate";
+import { notice } from "../noticeGate";
 </script>
 
 <template>
-	<!-- Full-screen overlay shown over the app while this bench is behind the
-	     operator's latest jarvis version. Continue is per-session only, so a fresh
-	     reload re-shows it until the tenant updates. -->
+	<!-- Full-screen overlay that blocks the app while this bench is behind the
+	     operator's latest jarvis version — chat stays out of reach until the
+	     workspace updates. No dismiss. -->
 	<div class="jv-nu jv-safe-bottom">
 		<div class="jv-nu-card">
 			<BrandMark :size="56" />
@@ -19,7 +19,11 @@ import { continueSession, notice } from "../noticeGate";
 			<h1 class="jv-nu-title">{{ notice.title }}</h1>
 
 			<p v-if="notice.message" class="jv-nu-msg">{{ notice.message }}</p>
-			<p v-else class="jv-nu-msg">A new version of {{ agentName }} is available.</p>
+
+			<p class="jv-nu-block">
+				Chat with {{ agentName }} is paused for this workspace until it's updated to the
+				latest version. Please ask your administrator to update.
+			</p>
 
 			<a
 				v-if="notice.url"
@@ -31,10 +35,8 @@ import { continueSession, notice } from "../noticeGate";
 				Release notes ↗
 			</a>
 
-			<button class="jv-nu-btn" @click="continueSession">Continue</button>
-
 			<p v-if="notice.currentVersion" class="jv-nu-foot">
-				You're on {{ agentName }} {{ notice.currentVersion }}.
+				This workspace is on {{ agentName }} {{ notice.currentVersion }}.
 			</p>
 		</div>
 	</div>
@@ -84,25 +86,18 @@ import { continueSession, notice } from "../noticeGate";
 	color: var(--ink6, #6b7280);
 	white-space: pre-line;
 }
+.jv-nu-block {
+	margin: 0;
+	font-size: 15px;
+	line-height: 1.55;
+	font-weight: 500;
+	color: var(--ink8, #2f2f37);
+}
 .jv-nu-link {
 	font-size: 14px;
 	font-weight: 500;
 	color: var(--accent, #6e5cf6);
 	text-decoration: none;
-}
-.jv-nu-btn {
-	margin-top: 8px;
-	width: 100%;
-	max-width: 260px;
-	height: 48px;
-	border: 0;
-	border-radius: 12px;
-	background: var(--accent-solid, #6e5cf6);
-	color: #fff;
-	font: inherit;
-	font-size: 15px;
-	font-weight: 600;
-	cursor: pointer;
 }
 .jv-nu-foot {
 	margin: 4px 0 0;

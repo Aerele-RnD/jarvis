@@ -1,8 +1,8 @@
 <template>
-	<!-- Full-screen release-notice gate: shown by AppShell IN PLACE OF the app
-	     when this bench is behind the operator's latest jarvis version. A rendered
-	     gate (not a redirect), mirroring OnboardingGate. Continue is per-session
-	     only, so a fresh reload re-shows it until the tenant updates. -->
+	<!-- Full-screen release-notice gate: AppShell renders it IN PLACE OF the app
+	     while this bench is behind the operator's latest jarvis version, so chat
+	     and every other feature stay out of reach until the workspace updates. A
+	     rendered gate, not a redirect (mirrors OnboardingGate). No dismiss. -->
 	<div class="jv-gate">
 		<div class="jv-gate-bg" aria-hidden="true">
 			<div class="jv-gate-orb jv-gate-orb-tl"></div>
@@ -19,7 +19,11 @@
 			<h1 class="jv-gate-title">{{ notice.title }}</h1>
 
 			<p v-if="notice.message" class="jv-gate-sub">{{ notice.message }}</p>
-			<p v-else class="jv-gate-sub">A new version of {{ agentName }} is available.</p>
+
+			<p class="jv-gate-block">
+				Chat with {{ agentName }} is paused for this workspace until it's updated to the
+				latest version. Please ask your administrator to update.
+			</p>
 
 			<a
 				v-if="notice.url"
@@ -32,10 +36,8 @@
 				<span class="jv-gate-arrow" aria-hidden="true">↗</span>
 			</a>
 
-			<button class="jv-gate-btn" @click="continueSession">Continue</button>
-
 			<p v-if="notice.currentVersion" class="jv-gate-foot">
-				You're on {{ agentName }} {{ notice.currentVersion }}.
+				This workspace is on {{ agentName }} {{ notice.currentVersion }}.
 			</p>
 		</div>
 	</div>
@@ -44,7 +46,7 @@
 <script setup>
 import JarvisMark from "@/components/JarvisMark.vue";
 import { agentName } from "@/branding";
-import { continueSession, notice } from "@/noticeGate";
+import { notice } from "@/noticeGate";
 </script>
 
 <style scoped>
@@ -124,15 +126,23 @@ import { continueSession, notice } from "@/noticeGate";
 	font-size: 15px;
 	line-height: 1.55;
 	color: var(--ink-gray-6, #6b7280);
-	margin: 0 0 22px;
+	margin: 0 0 14px;
 	white-space: pre-line;
+}
+
+.jv-gate-block {
+	font-size: 15px;
+	line-height: 1.55;
+	font-weight: 500;
+	color: var(--ink-gray-8, #2f2f37);
+	margin: 0 0 22px;
+	max-width: 400px;
 }
 
 .jv-gate-link {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	margin-bottom: 22px;
 	font-size: 14px;
 	font-weight: 500;
 	color: #6e5cf6;
@@ -141,36 +151,13 @@ import { continueSession, notice } from "@/noticeGate";
 .jv-gate-link:hover {
 	text-decoration: underline;
 }
-
-.jv-gate-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	padding: 10px 26px;
-	border: none;
-	border-radius: 9px;
-	font-size: 15px;
-	font-weight: 500;
-	color: #fff;
-	cursor: pointer;
-	background: linear-gradient(135deg, #6e8bff, #8b5cf6);
-	box-shadow: 0 6px 18px rgba(110, 92, 246, 0.3);
-	transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.jv-gate-btn:hover {
-	transform: translateY(-1px);
-	box-shadow: 0 10px 24px rgba(110, 92, 246, 0.38);
-}
-.jv-gate-btn:active {
-	transform: translateY(0);
-}
 .jv-gate-arrow {
 	font-size: 15px;
 	line-height: 1;
 }
 
 .jv-gate-foot {
-	margin-top: 16px;
+	margin-top: 18px;
 	font-size: 12px;
 	color: var(--ink-gray-5, #9ca3af);
 }

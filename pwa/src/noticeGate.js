@@ -2,7 +2,7 @@
 // window.release_notice = {active, title, message, url, current_version,
 // latest_version, update_available}. Mirrors the desktop SPA's src/noticeGate.js.
 // Read once at module load — boot values are stable for the page's lifetime.
-import { computed, ref } from "vue";
+import { computed } from "vue";
 
 const n = window.release_notice || {};
 
@@ -16,13 +16,8 @@ export const notice = {
 	updateAvailable: !!n.update_available,
 };
 
-// Per-session acknowledgement — NOT persisted, so it returns on the next fresh
-// load until the tenant updates or the operator clears the notice.
-const continued = ref(false);
-export function continueSession() {
-	continued.value = true;
-}
-
+// Hard gate: a tenant that is behind the latest version is blocked from chat
+// until it updates (or the operator clears the notice). No per-session dismiss.
 export const showNotice = computed(
-	() => notice.active && notice.updateAvailable && !!notice.title && !continued.value
+	() => notice.active && notice.updateAvailable && !!notice.title
 );
