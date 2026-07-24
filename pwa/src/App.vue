@@ -3,8 +3,10 @@ import { onMounted, onUnmounted, inject } from "vue";
 import { useRouter } from "vue-router";
 import AppDrawer from "./components/AppDrawer.vue";
 import InstallBanner from "./components/InstallBanner.vue";
+import UpdateNoticeGate from "./components/UpdateNoticeGate.vue";
 import { store } from "./store";
 import { sessionUser } from "./router";
+import { showNotice } from "./noticeGate";
 import { prefs } from "./lib/prefs";
 import { agentName } from "@/branding";
 import { recordEvent } from "./lib/notifications";
@@ -109,5 +111,9 @@ onUnmounted(() => {
 			<component :is="Component" />
 		</router-view>
 		<AppDrawer />
+		<!-- Release-notice overlay: shown to a signed-in user while this bench is
+		     behind the latest jarvis version. Sits above the app; Continue is
+		     per-session, so a reload re-shows it. -->
+		<UpdateNoticeGate v-if="showNotice && sessionUser()" />
 	</div>
 </template>
