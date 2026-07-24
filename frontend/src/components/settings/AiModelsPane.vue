@@ -2,8 +2,10 @@
 	<!-- AI models pane (System Managers only — the dialog rail gates the section).
 	     Ported from views/AccountView.vue's "AI models" card: a segmented
 	     Chat-subscription | API-keys/failover control, a brief save note, and a
-	     retryable load. The dialog root supplies paletteVars + .jv-dark, so the
-	     shared jv-* classes resolve here without a local palette wrapper. -->
+	     retryable load. SettingsDialog's CONTENT root binds paletteVars +
+	     .jv-dark, so the shared jv-* classes below resolve without a local
+	     palette wrapper. If that binding is ever dropped, every var(--) here and
+	     in LlmPoolEditor resolves to nothing (none of them carry fallbacks). -->
 	<!-- The dialog shell stopped rendering a shared header, so this pane supplies
 	     its own like every other one. Only the header is migrated here: the body
 	     below still uses the legacy jv-* markup because LlmPoolEditor (3,959

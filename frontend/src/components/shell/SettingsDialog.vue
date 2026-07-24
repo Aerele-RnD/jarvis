@@ -18,7 +18,22 @@
 			     unresolvable aria-labelledby. DialogTitle is visually hidden
 			     because each pane already renders its own visible header. -->
 			<DialogTitle as="h1" class="sr-only">Settings</DialogTitle>
-			<div class="relative flex h-[calc(100vh-8rem)] flex-col sm:flex-row">
+			<!-- jv-dark + paletteVars are load-bearing, not decoration. The jv-
+			     palette (--surface, --text, --red, ...) is deliberately NOT on
+			     :root; it resolves only inside a subtree that binds it (see the
+			     brand-token comment in main.css, and ConfirmDialog, which does the
+			     same thing for the same reason). Dialog portals this content into
+			     <body>, so it cannot inherit the palette from ChatView's root.
+			     Panes still on legacy markup (AiModelsPane and the LlmPoolEditor
+			     under it, BrandingPane) would otherwise render with every var(--)
+			     unresolved, and not one of the 161 in settings.css carries a
+			     fallback. Worst in dark mode: frappe-ui chrome themes correctly
+			     around a pane that has lost its backgrounds and borders. -->
+			<div
+				class="relative flex h-[calc(100vh-8rem)] flex-col sm:flex-row"
+				:class="{ 'jv-dark': dark }"
+				:style="paletteVars"
+			>
 				<!-- ===== grouped rail =====
 				     Presentation, NOT a security boundary: /api/method is reachable
 				     directly, so every endpoint gates itself server-side. -->
@@ -82,8 +97,12 @@ import { Dialog, FeatherIcon } from "frappe-ui";
 // renders by default.
 import { DialogClose, DialogTitle } from "reka-ui";
 import { useShellStore } from "@/stores/shell";
+// MUST be @/theme's useJarvisTheme, the same singleton the header toggle
+// writes to. @/composables/useTheme was a separate instance and is deleted.
+import { useJarvisTheme } from "@/theme";
 
 const store = useShellStore();
+const { effectiveDark: dark, paletteVars } = useJarvisTheme();
 
 // Panes are lazy: this dialog is mounted eagerly by AppShell for EVERY user, so
 // static imports would pull each pane's dependency tree (charts + usageCharts
