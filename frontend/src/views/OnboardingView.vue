@@ -430,18 +430,30 @@
 									<div
 										v-if="showProviderChooser"
 										class="jv-ob-provseg"
-										role="radiogroup"
-										aria-label="Payment method"
+										:class="{ 'is-single': isSingleProvider }"
+										:role="isSingleProvider ? undefined : 'radiogroup'"
+										:aria-label="
+											isSingleProvider ? undefined : 'Payment method'
+										"
 									>
 										<button
 											v-if="providerAvailable('razorpay')"
 											type="button"
 											class="jv-ob-provseg-opt"
 											:class="{ sel: state.paymentProvider === 'razorpay' }"
-											role="radio"
-											:aria-checked="state.paymentProvider === 'razorpay'"
-											aria-label="Razorpay"
-											@click="state.paymentProvider = 'razorpay'"
+											:role="isSingleProvider ? undefined : 'radio'"
+											:aria-checked="
+												isSingleProvider
+													? undefined
+													: state.paymentProvider === 'razorpay'
+											"
+											:aria-label="
+												isSingleProvider
+													? 'Payment method: Razorpay'
+													: 'Razorpay'
+											"
+											:disabled="isSingleProvider"
+											@click="chooseProvider('razorpay')"
 										>
 											<span class="jv-ob-rzp-logo" aria-hidden="true">
 												<svg
@@ -467,10 +479,19 @@
 											type="button"
 											class="jv-ob-provseg-opt"
 											:class="{ sel: state.paymentProvider === 'cashfree' }"
-											role="radio"
-											:aria-checked="state.paymentProvider === 'cashfree'"
-											aria-label="Cashfree"
-											@click="state.paymentProvider = 'cashfree'"
+											:role="isSingleProvider ? undefined : 'radio'"
+											:aria-checked="
+												isSingleProvider
+													? undefined
+													: state.paymentProvider === 'cashfree'
+											"
+											:aria-label="
+												isSingleProvider
+													? 'Payment method: Cashfree'
+													: 'Cashfree'
+											"
+											:disabled="isSingleProvider"
+											@click="chooseProvider('cashfree')"
 										>
 											<img
 												:src="cashfreeLogo"
@@ -968,8 +989,26 @@ const providerChoices = computed(() => state.availableProviders || []);
 //
 // Dropped rather than carried forward: a condition that cannot fire reads as a
 // rule someone still has to reason about.
-const showProviderChooser = computed(() => !isTrialPlan.value && providerChoices.value.length > 1);
+//
+// Shown for ONE gateway too, not only for a choice. An earlier version hid the
+// row entirely below two options, reasoning that a radiogroup of one is a fake
+// decision. That reasoning was right but discarded the wrong half: the customer
+// still needs to see who is about to take their money, and a line of small text
+// is weaker assurance than the brand they are about to be handed to. A single
+// gateway therefore renders as a NON-INTERACTIVE chip - present and legible,
+// with nothing to decide.
+const showProviderChooser = computed(
+	() => !isTrialPlan.value && providerChoices.value.length >= 1,
+);
+const isSingleProvider = computed(() => providerChoices.value.length === 1);
 const providerAvailable = (p) => providerChoices.value.includes(p);
+// Clicking is only meaningful when there is something to switch to. Guarding
+// here as well as via :disabled keeps the selection honest even if the chip is
+// reached some other way (keyboard, a stray programmatic click).
+function chooseProvider(p) {
+	if (isSingleProvider.value || !providerAvailable(p)) return;
+	state.paymentProvider = p;
+}
 
 // Ask the control plane which gateways are live and preselect its default.
 // Fail-open and non-blocking: the wizard must render even if this never
@@ -2348,6 +2387,23 @@ onMounted(async () => {
 	box-shadow:
 		0 1px 3px rgba(16, 24, 40, 0.16),
 		0 0 0 1px rgba(16, 24, 40, 0.04);
+}
+/* Single gateway: the row states which brand takes the payment, it does not
+   offer a choice. So it reads at full strength but drops every affordance that
+   implies one - no pointer, no hover lift, no pressed state. The browser's
+   default disabled dimming is overridden deliberately: this is not an
+   unavailable control, it is a label. */
+.jv-ob-provseg.is-single {
+	max-width: 220px;
+	cursor: default;
+}
+.jv-ob-provseg.is-single .jv-ob-provseg-opt,
+.jv-ob-provseg.is-single .jv-ob-provseg-opt:disabled {
+	cursor: default;
+	opacity: 1;
+}
+.jv-ob-provseg.is-single .jv-ob-provseg-opt:hover {
+	opacity: 1;
 }
 .jv-ob-provseg-opt:focus-visible {
 	outline: 2px solid #3395ff;
