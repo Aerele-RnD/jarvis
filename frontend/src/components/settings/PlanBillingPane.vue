@@ -67,6 +67,27 @@
 					</ul>
 				</template>
 
+				<!-- A downgrade already scheduled: state it plainly. Undoing an
+					 Annual one is a plain flag we clear, so it happens inline. A
+					 Monthly one already moved the mandate, so undoing needs a
+					 Checkout to re-arm the current price - and this pane has no
+					 Razorpay, so it deep-links to the Desk flow like upgrade/renew. -->
+				<div v-if="scheduledDowngrade" class="jv-acct-notice jv-acct-notice--row">
+					<span>{{ scheduledDowngradeNotice }}</span>
+					<button
+						v-if="account.scheduled_downgrade_revocable"
+						type="button"
+						class="jv-btn jv-btn--sm jv-btn--ghost"
+						:disabled="busy"
+						@click="doCancelDowngrade"
+					>
+						Keep current plan
+					</button>
+					<a v-else :href="billingUrl" class="jv-btn jv-btn--sm jv-btn--ghost">
+						Keep current plan
+					</a>
+				</div>
+
 				<!-- Upgrade / Renew — deep-links to the existing Desk billing flow
 					 (Razorpay checkout). No new payment logic in this phase; the
 					 wizard-driven upgrade UI is a Phase-2 item. -->
@@ -85,6 +106,34 @@
 							</div>
 							<div class="jv-acct-upgrade-act">
 								<a :href="billingUrl" class="jv-acct-btn-sm">Upgrade</a>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Downgrade options — deep-link to the Desk billing flow like
+					 upgrade. Applies at the NEXT cycle (the customer keeps this
+					 plan until then), so it's presented quieter than upgrade.
+					 Hidden while cancelling or when one is already scheduled. -->
+				<div
+					v-if="downgradePlans.length && !cancelling && !scheduledDowngrade"
+					class="jv-acct-upgrades"
+				>
+					<div class="jv-acct-upgrades-label">Switch to a smaller plan</div>
+					<div class="jv-acct-upgrade-grid">
+						<div
+							v-for="p in downgradePlans"
+							:key="p.name"
+							class="jv-acct-upgrade-card"
+						>
+							<div class="jv-acct-upgrade-head">
+								<div class="jv-acct-upgrade-name">{{ p.plan_name || p.name }}</div>
+								<div class="jv-acct-upgrade-price">
+									{{ planPriceLabel(p.price_inr, p.billing_cycle) }}
+								</div>
+							</div>
+							<div class="jv-acct-upgrade-act">
+								<a :href="billingUrl" class="jv-acct-btn-sm">Downgrade</a>
 							</div>
 						</div>
 					</div>
@@ -147,7 +196,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
-import { getAccount, cancelPlanAtPeriodEnd, resumePlan } from "@/api";
+import { getAccount, cancelPlanAtPeriodEnd, resumePlan, cancelScheduledDowngrade } from "@/api";
 import {
 	statusLabel,
 	pillTone,
@@ -183,6 +232,16 @@ const planFeatures = computed(() => {
 	return [];
 });
 const upgradePlans = computed(() => account.value.upgrade_plans || []);
+const downgradePlans = computed(() => account.value.downgrade_plans || []);
+const scheduledDowngrade = computed(() => !!account.value.scheduled_plan);
+const scheduledDowngradeNotice = computed(() => {
+	const name =
+		account.value.scheduled_plan_name || account.value.scheduled_plan || "a smaller plan";
+	const on = (account.value.scheduled_plan_on || "").split(" ")[0];
+	return on
+		? `Switching to ${name} on ${on}. You keep your current plan until then.`
+		: `Switching to ${name} at your next billing cycle.`;
+});
 // A plan scheduled to end. Server keeps status "Active" through the paid
 // period, so this flag - not the status - drives the cancelling UI.
 const cancelling = computed(() => !!account.value.cancel_at_period_end);
@@ -257,6 +316,21 @@ async function doResume() {
 				? `Auto-renewal is off. Set up payment again before ${endsOn} to stay subscribed.`
 				: "Auto-renewal is off. Set up payment again before your period ends.";
 		}
+		await loadAccount();
+	} catch (e) {
+		accountErr.value = errMsg(e);
+	} finally {
+		busy.value = false;
+	}
+}
+
+async function doCancelDowngrade() {
+	// Constructive - no danger confirm. Only offered when the server says the
+	// scheduled downgrade is revocable (no committed mandate migration).
+	busy.value = true;
+	accountErr.value = "";
+	try {
+		await cancelScheduledDowngrade();
 		await loadAccount();
 	} catch (e) {
 		accountErr.value = errMsg(e);

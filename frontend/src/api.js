@@ -262,6 +262,11 @@ export const getAccount = () => call("jarvis.account.get_account");
 export const cancelPlanAtPeriodEnd = () => call("jarvis.account.cancel_plan_at_period_end");
 export const resumePlan = () => call("jarvis.account.resume_plan");
 export const reauthorizeAutopay = () => call("jarvis.account.reauthorize_autopay");
+export const previewDowngrade = (targetPlan) =>
+	call("jarvis.account.preview_downgrade", { target_plan: targetPlan });
+export const startDowngrade = (targetPlan) =>
+	call("jarvis.account.start_downgrade", { target_plan: targetPlan });
+export const cancelScheduledDowngrade = () => call("jarvis.account.cancel_scheduled_downgrade");
 
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {

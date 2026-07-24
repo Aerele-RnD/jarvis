@@ -2069,9 +2069,34 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 						? `<button class="ja-btn ja-btn-ghost" id="ja-cta-reauth" data-action="reauth">Set up auto-renewal</button>`
 						: ""
 				}
+				${
+					// A cheaper plan is available and none is scheduled yet. Applies
+					// at the next cycle, so it's a quiet ghost action, not a headline.
+					(account.downgrade_plans || []).length && !account.scheduled_plan
+						? `<button class="ja-btn ja-btn-ghost" id="ja-cta-downgrade" data-action="downgrade">Switch to a smaller plan</button>`
+						: ""
+				}
 			</div>
+			${renderScheduledSwitch()}
 			<div class="ja-err" id="ja-billing-err"></div>
 		</div>`;
+	}
+
+	// Both shapes are undoable, but they cost differently: an Annual switch is a
+	// plain flag we clear, while a Monthly one already moved the mandate to the
+	// cheaper plan (the old mandate is released and terminal at Razorpay), so
+	// keeping the current plan means authorising a replacement at its price.
+	// Say which one they're in rather than springing the Checkout on them.
+	function renderScheduledSwitch() {
+		if (!account.scheduled_plan) return "";
+		const name = esc(account.scheduled_plan_name || account.scheduled_plan);
+		const on = account.scheduled_plan_on
+			? " on " + esc(String(account.scheduled_plan_on).split(" ")[0])
+			: "";
+		const cost = account.scheduled_downgrade_revocable
+			? ""
+			: " Keeping it means setting up auto-renewal again at your current price.";
+		return `<p class="ja-sub" style="margin-top:8px">Switching to ${name}${on}. You keep your current plan until then.${cost}</p><button class="ja-btn ja-btn-ghost" id="ja-cta-keep" data-action="keep-plan">Keep current plan</button>`;
 	}
 
 	// Only suppress renewal when the server explicitly refuses it. An older
@@ -2081,34 +2106,44 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		return account.can_renew !== false;
 	}
 
+	// The autopay wording names the actual renewal date, which the customer
+	// otherwise has to hunt for in the plan card above.
+	function autoRenewNote() {
+		const end = account.current_period_end
+			? String(frappe.datetime.str_to_user(account.current_period_end)).split(" ")[0]
+			: "";
+		return end
+			? `Your plan renews automatically on ${end} using your saved payment method. There's nothing to pay now.`
+			: "Your plan renews automatically using your saved payment method. There's nothing to pay now.";
+	}
+
 	function primaryCta(sub) {
 		const upgrade = (account.upgrade_plans || []).length > 0;
 		switch (sub) {
 			case "Active":
-				return upgrade
-					? {
-							action: "upgrade",
-							label: "Upgrade plan",
-							heading: "Want more capacity?",
-							subtitle:
-								"Move to a higher plan - you only pay the prorated difference for the remaining period.",
-					  }
-					: canRenew()
-					? {
-							action: "renew",
-							label: "Renew now",
-							heading: "Renew early",
-							subtitle: "Add another billing cycle to your current plan.",
-					  }
-					: {
-							// renew() refuses a manual order alongside a live mandate
-							// (double charge). Nothing to sell here.
-							action: "",
-							label: "",
-							heading: "Auto-renewal is on",
-							subtitle:
-								"Your plan renews automatically - there is nothing to pay right now.",
-					  };
+				if (upgrade)
+					return {
+						action: "upgrade",
+						label: "Upgrade plan",
+						heading: "Want more capacity?",
+						subtitle:
+							"Move to a higher plan - you only pay the prorated difference for the remaining period.",
+					};
+				if (canRenew())
+					return {
+						action: "renew",
+						label: "Renew now",
+						heading: "Renew early",
+						subtitle: "Add another billing cycle to your current plan.",
+					};
+				// renew() refuses a manual order alongside a live mandate (double
+				// charge). Nothing to sell here - say when it renews instead.
+				return {
+					action: "",
+					label: "",
+					heading: "Auto-renewal is on",
+					subtitle: autoRenewNote(),
+				};
 			case "Cancelled":
 				return {
 					action: "renew",
@@ -2117,6 +2152,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					subtitle: "Pay now to keep service running past the current period end.",
 				};
 			case "Past Due":
+				if (!canRenew())
+					// The mandate is live and Razorpay retries on its own schedule;
+					// a manual payment here would stack on top of that retry.
+					return {
+						action: "",
+						heading: "Payment retrying",
+						subtitle:
+							"We'll charge your saved payment method again automatically. No manual payment is needed.",
+					};
+			// falls through - a dead mandate means this is a normal reactivation
 			case "Expired":
 				return {
 					action: "renew",
@@ -2137,6 +2182,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function secondaryCta(sub, hasUpgrade) {
+		// Same rule as the primary: never offer a renewal the server refuses.
 		if (sub === "Active" && hasUpgrade && canRenew())
 			return { action: "renew", label: "Renew now" };
 		if (sub === "Cancelled" && hasUpgrade) return { action: "upgrade", label: "Upgrade plan" };
@@ -2144,12 +2190,139 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function bindBilling() {
-		$body.find("#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth").on("click", function () {
-			const action = $(this).data("action");
-			if (action === "upgrade") return openUpgradeModal();
-			if (action === "renew") return startRenew();
-			if (action === "reauth") return startReauthorize();
+		$body
+			.find(
+				"#ja-cta-primary, #ja-cta-secondary, #ja-cta-reauth, #ja-cta-downgrade, #ja-cta-keep"
+			)
+			.on("click", function () {
+				const action = $(this).data("action");
+				if (action === "upgrade") return openUpgradeModal();
+				if (action === "renew") return startRenew();
+				if (action === "reauth") return startReauthorize();
+				if (action === "downgrade") return openDowngradeModal();
+				if (action === "keep-plan") return cancelScheduledSwitch();
+			});
+	}
+
+	function cancelScheduledSwitch() {
+		setBusy("#ja-cta-keep", true);
+		frappe
+			.call({ method: "jarvis.account.cancel_scheduled_downgrade" })
+			.then((r) => {
+				setBusy("#ja-cta-keep", false);
+				const data = (r.message && r.message.data) || r.message || {};
+				if (data.razorpay_subscription_id) {
+					// Monthly: the cheaper mandate is already dropped, so re-arm the
+					// current plan in the same step (mandate-only, nothing charged).
+					return openCheckout(data, /*upgrade=*/ false);
+				}
+				// loadInitial() re-renders the card, which drops the busy button.
+				frappe.show_alert({
+					message: __("Plan switch cancelled - you're staying on your current plan."),
+					indicator: "green",
+				});
+				loadInitial();
+			})
+			.catch((e) => {
+				setBusy("#ja-cta-keep", false);
+				$body
+					.find("#ja-billing-err")
+					.text(e.message || "Couldn't cancel the plan switch.");
+			});
+	}
+
+	// What the plan actually provisions - the real trade-off in a downgrade.
+	// A plan stores 0/NULL when a limit was never configured (the fleet agent
+	// rejects cpu_limit <= 0, so 0 is "unset", never "unlimited"), so say
+	// nothing rather than advertise "0 vCPU".
+	function planCapacity(p) {
+		const parts = [];
+		const cpu = parseFloat(p.cpu_limit);
+		if (cpu > 0) parts.push(`${+cpu.toFixed(2)} vCPU`);
+		const mb = Number(p.memory_limit_mb);
+		if (mb > 0) parts.push(mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB RAM` : `${mb} MB RAM`);
+		return parts.join(" · ");
+	}
+
+	// ---- downgrade (applies next cycle) -----------------------------------
+	function openDowngradeModal() {
+		const plans = account.downgrade_plans || [];
+		const cards = plans
+			.map((p) => {
+				const cap = planCapacity(p);
+				const capLine = cap ? `<div class="ja-dn-cap">${esc(cap)}</div>` : "";
+				return `
+			<div class="ja-dn-row" data-plan="${esc(p.name)}">
+				<div class="ja-dn-info">
+					<div class="ja-dn-name">${esc(p.plan_name || p.name)}</div>
+					${capLine}
+				</div>
+				<div class="ja-dn-price">${inr(p.price_inr)}<span class="jo-plan-cycle">${cycleLabel(
+					p.billing_cycle
+				)}</span></div>
+				<button class="ja-btn ja-btn-ghost ja-dn-pick" data-plan="${esc(p.name)}">Switch</button>
+			</div>`;
+			})
+			.join("");
+		// The cutover date is shared by every option, so state it once here
+		// rather than repeating it on each row.
+		const endNice = account.current_period_end
+			? String(frappe.datetime.str_to_user(account.current_period_end)).split(" ")[0]
+			: "";
+		const until = endNice ? `<b>${esc(endNice)}</b>` : "your next billing cycle";
+		// Monthly switches open a Checkout to authorise auto-renewal at the new
+		// price, so say that up front rather than springing a payment sheet.
+		const monthly =
+			String((account.plan || {}).billing_cycle || "").toLowerCase() === "monthly";
+		const intro = monthly
+			? `You keep your current plan until ${until}. Switching sets up auto-renewal at the new price - nothing is charged today.`
+			: `You keep your current plan until ${until}, then move to the one you pick. Nothing is charged now.`;
+		const html = `<div class="ja-modal-bg">
+			<div class="ja-modal">
+				<div class="ja-modal-head">
+					<h2 class="ja-h">Switch to a smaller plan</h2>
+					<button class="ja-modal-close" id="ja-modal-close">✕</button>
+				</div>
+				<p class="ja-sub">${intro}</p>
+				<div class="ja-up-list">${cards || `<div class="ja-empty">No smaller plans available.</div>`}</div>
+				<div class="ja-err" id="ja-dn-err"></div>
+			</div>
+		</div>`;
+		const $m = $(html).appendTo(document.body);
+		$m.find("#ja-modal-close, .ja-modal-bg").on("click", function (e) {
+			if (e.target === this) $m.remove();
 		});
+		$m.find(".ja-dn-pick").on("click", function () {
+			startDowngrade($(this).data("plan"), $m);
+		});
+	}
+
+	function startDowngrade(target_plan, $modal) {
+		const $btn = $modal.find(`.ja-dn-pick[data-plan="${target_plan}"]`);
+		setBusy($btn, true);
+		frappe
+			.call({ method: "jarvis.account.start_downgrade", args: { target_plan } })
+			.then((r) => {
+				setBusy($btn, false);
+				const data = (r.message && r.message.data) || r.message || {};
+				$modal.remove();
+				if (data.razorpay_subscription_id) {
+					// Monthly autopay: a ₹0 mandate-auth Checkout for the cheaper
+					// plan (openCheckout takes the subscription_id branch, no amount).
+					openCheckout(data, /*upgrade=*/ false);
+				} else {
+					// Annual / no mandate: scheduled server-side, nothing to pay.
+					frappe.show_alert({
+						message: __("Downgrade scheduled for your next billing cycle."),
+						indicator: "green",
+					});
+					loadInitial();
+				}
+			})
+			.catch((e) => {
+				setBusy($btn, false);
+				$modal.find("#ja-dn-err").text(e.message || "Couldn't schedule the downgrade.");
+			});
 	}
 
 	// ---- re-authorize autopay ---------------------------------------------
@@ -2491,6 +2664,18 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-up-card-name{font-size:14px;font-weight:600;color:var(--text-color)}
 		.ja-up-card-price{font-size:16px;font-weight:700;color:var(--text-color)}
 		.ja-up-card-prorate{font-size:13px;color:var(--text-muted);margin-bottom:10px}
+		/* Downgrade rows: compact, one line per plan. Name + the capacity it
+		   provisions on the left, price and a quiet Switch button on the right —
+		   no dead vertical space, and the primary colour stays for upgrade/renew. */
+		.ja-dn-row{display:flex;align-items:center;gap:14px;border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;transition:border-color .15s}
+		.ja-dn-row:hover{border-color:var(--jarvis-primary-faint)}
+		.ja-dn-info{flex:1 1 auto;min-width:0}
+		.ja-dn-name{font-size:14.5px;font-weight:600;color:var(--text-color)}
+		.ja-dn-cap{font-size:12.5px;color:var(--text-muted);margin-top:2px;font-variant-numeric:tabular-nums}
+		.ja-dn-price{font-size:15px;font-weight:700;color:var(--text-color);white-space:nowrap;font-variant-numeric:tabular-nums}
+		.ja-dn-price .jo-plan-cycle{font-size:12px;font-weight:500;color:var(--text-muted);margin-left:1px}
+		.ja-dn-pick{flex:0 0 auto;padding:7px 16px}
+		.ja-btn-ghost .ja-spin{border-color:var(--jarvis-primary-faint);border-top-color:var(--jarvis-primary)}
 		.ja-overlay{position:fixed;inset:0;z-index:2000;background:rgba(20,20,40,.45);display:flex;align-items:center;justify-content:center}
 		.ja-overlay-card{background:var(--card-bg);padding:18px 22px;border-radius:10px;font-size:14px;color:var(--text-color);box-shadow:0 12px 40px -12px rgba(0,0,0,.4)}
 		.ja-overlay .ja-spin{border-color:var(--jarvis-primary-faint);border-top-color:var(--jarvis-primary)}

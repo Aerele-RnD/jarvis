@@ -954,6 +954,24 @@ def reauthorize_autopay() -> dict:
 	return _post(path=_m("api.account.reauthorize_autopay"), body={})
 
 
+def preview_downgrade(target_plan: str) -> dict:
+	"""Describe a downgrade before starting it. Returns {target_plan,
+	target_price_inr, effective_on, requires_checkout}. No Razorpay object."""
+	return _post(path=_m("api.account.preview_downgrade"), body={"target_plan": target_plan})
+
+
+def start_downgrade(target_plan: str) -> dict:
+	"""Schedule a downgrade for the next cycle. Monthly autopay returns a
+	razorpay_subscription_id for a (₹0) mandate-auth Checkout; Annual/manual
+	returns {scheduled: 1} with no checkout."""
+	return _post(path=_m("api.account.start_downgrade"), body={"target_plan": target_plan})
+
+
+def cancel_scheduled_downgrade() -> dict:
+	"""Revoke a scheduled (revocable) downgrade - stay on the current plan."""
+	return _post(path=_m("api.account.cancel_scheduled_downgrade"), body={})
+
+
 def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 	"""POST a form-encoded grant to admin's OAuth token endpoint. Returns the
 	token dict ({access_token, refresh_token, expires_in, ...}) on success, or
