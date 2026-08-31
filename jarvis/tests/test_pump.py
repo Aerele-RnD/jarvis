@@ -2192,6 +2192,24 @@ class TestWorkerStatus(FrappeTestCase):  # reuse module base
 		):
 			self.assertEqual(pump._probe_worker_count("long"), 1)
 
+	def test_total_live_workers_counts_all_queues(self):
+		fake_workers = [MagicMock(), MagicMock(), MagicMock()]
+		with patch("frappe.utils.background_jobs.get_workers", return_value=fake_workers):
+			self.assertEqual(pump._total_live_workers(), 3)
+
+	def test_total_live_workers_none_on_probe_error(self):
+		with patch("frappe.utils.background_jobs.get_workers", side_effect=RuntimeError):
+			self.assertIsNone(pump._total_live_workers())
+
+	def test_total_live_workers_falls_back_to_heartbeats_when_the_registry_is_empty(self):
+		# A queue-Redis restart empties `rq:workers` while the workers keep running
+		# and heartbeating; their hashes are still there to count.
+		with (
+			patch("frappe.utils.background_jobs.get_workers", return_value=[]),
+			patch.object(pump, "_fresh_heartbeat_count", return_value=2),
+		):
+			self.assertEqual(pump._total_live_workers(), 2)
+
 	def test_fresh_heartbeat_count_reads_recent_worker_hashes(self):
 		from datetime import datetime, timedelta, timezone
 
@@ -2261,16 +2279,24 @@ class TestWorkerStatus(FrappeTestCase):  # reuse module base
 			self.assertFalse(pump._registry_is_stale())
 
 	def test_healthy_is_not_degraded(self):
-		with patch.object(pump, "_pump_shape_starves", return_value=False):
+		with patch.object(pump, "_total_live_workers", return_value=4):
 			s = pump.chat_worker_status()
 			self.assertFalse(s["degraded"])
 			self.assertNotIn("blocked", s)
 
-	def test_starved_shape_is_degraded(self):
-		with patch.object(pump, "_pump_shape_starves", return_value=True):
+	def test_one_total_worker_is_degraded(self):
+		with patch.object(pump, "_total_live_workers", return_value=1):
 			self.assertTrue(pump.chat_worker_status()["degraded"])
 
-	def test_shape_probe_error_not_degraded(self):
-		# Fail-safe: a probe error must never be read as a real shortage.
-		with patch.object(pump, "_pump_shape_starves", side_effect=RuntimeError):
+	def test_two_total_workers_not_degraded(self):
+		# The discriminating case: exactly 2 total workers must NOT warn (this is
+		# the F1 "1 long + 1 to run rerouted control jobs" shape that no longer
+		# strands, per `_control_queue`). Fails if the threshold were `<= 2`.
+		with patch.object(pump, "_total_live_workers", return_value=2):
+			self.assertFalse(pump.chat_worker_status()["degraded"])
+
+	def test_total_worker_probe_error_not_degraded(self):
+		# Fail-safe: a probe error (_total_live_workers -> None) must never be
+		# read as a real shortage.
+		with patch.object(pump, "_total_live_workers", return_value=None):
 			self.assertFalse(pump.chat_worker_status()["degraded"])
