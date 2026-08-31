@@ -859,14 +859,20 @@ def _warn_provisioning_if_starved() -> None:
 		pass
 
 
-# --- Chat worker health (drives the onboarding warning) ----------------------
+# --- Chat worker health (drives onboarding warning + chat send block) ---------
 #
 # Two conditions, deliberately split so the fail-CLOSED chat block is flap-proof
 # on the managed fleet (a rolling worker restart must never block a paying
 # customer):
-#   * DEGRADED  -> warn only. The F1 self-starvation shape (_pump_shape_starves):
-#     turns run but strand for minutes. Surfaced as a non-blocking onboarding
-#     banner; chat still works.
+#   * DEGRADED  -> warn only. Fires when TOTAL live RQ workers (any queue) < 2,
+#     not the stricter F1 "< 2 `long` workers" shape (_pump_shape_starves) used
+#     by the ops provisioning warning. Rationale: the pump already reroutes
+#     prepare/finalize (control) jobs to `short` when `long` has < 2 workers
+#     (`_control_queue`), so 1 `long` worker plus a second worker to run those
+#     control jobs does NOT strand - the stricter "< 2 `long`" rule over-warned
+#     that case. The strand only truly happens with a single worker doing
+#     everything, so this warns on total headcount instead. Surfaced as a
+#     non-blocking onboarding banner; chat still works.
 #   * No hard block. RQ's registry can read zero workers while every worker is
 #     alive: a worker hash that expired during a heartbeat gap comes back with
 #     only `last_heartbeat` (no `queues`), and a queue-Redis restart empties
@@ -920,6 +926,21 @@ def _registry_is_stale(workers=None) -> bool:
 		return True
 
 
+def _total_live_workers() -> "int | None":
+	"""Count of ALL live RQ workers on this bench, across every queue - not just
+	the pump's hop/control lanes. Falls back to heartbeat hashes when the registry
+	lists nobody (a queue-Redis restart empties ``rq:workers`` while the workers
+	keep running). Returns ``None`` (not 0) on any probe trouble so the caller
+	fails SAFE (not degraded) rather than reading a broken probe as a real
+	shortage."""
+	try:
+		from frappe.utils.background_jobs import get_workers
+
+		return len(get_workers()) or _fresh_heartbeat_count()
+	except Exception:
+		return None
+
+
 def _fresh_heartbeat_count() -> "int | None":
 	"""Workers whose registry hash carries a recent ``last_heartbeat``, found by
 	scanning ``rq:worker:*`` directly. Survives both registry failures: a hash
@@ -958,11 +979,12 @@ def chat_worker_status() -> dict:
 	"""Worker health for the onboarding warning. Fails SAFE: on any trouble
 	reports not degraded.
 
-	``degraded`` is the F1 self-starvation shape (``_pump_shape_starves``). It is
-	a banner, never a send block: the registry it reads can misreport zero
-	(``_registry_is_stale``)."""
+	``degraded`` fires on fewer than 2 TOTAL live RQ workers (any queue) - see
+	the block comment above. It is a banner, never a send block: the registry it
+	reads can misreport zero (``_registry_is_stale``)."""
 	try:
-		degraded = _pump_shape_starves()
+		n = _total_live_workers()
+		degraded = n is not None and n < 2
 	except Exception:
 		degraded = False
 	return {"degraded": bool(degraded)}
