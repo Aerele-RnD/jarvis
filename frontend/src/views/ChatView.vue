@@ -1930,6 +1930,11 @@
 										</button>
 									</div>
 								</div>
+								<FeedbackBar
+									v-if="feedbackFor === m.name"
+									@rate="onFeedbackRate"
+									@close="onFeedbackClose"
+								/>
 							</template>
 						</Message>
 					</template>
@@ -4355,6 +4360,8 @@ import { myUsage, loadMyUsage, takeUsage } from "@/stores/usage";
 import CompactDialog from "@/components/chat/CompactDialog.vue";
 import { parseCompactCommand, compactFailureCopy } from "@/lib/compact";
 import * as api from "@/api";
+import FeedbackBar from "@/components/chat/FeedbackBar.vue";
+import { shouldOfferFeedback, markRated, markIgnored } from "@/lib/feedbackGate";
 import * as voice from "@/api/voice";
 import { agentName, isWhitelabeled } from "@/branding";
 import { useAudioRecorder } from "@/composables/useAudioRecorder";
@@ -4531,6 +4538,36 @@ const promptHistory = ref([]);
 const histIdx = ref(null);
 const histDraft = ref("");
 const sending = ref(false);
+
+// ---- post-reply feedback line (lib/feedbackGate decides IF/when it appears) ----
+const feedbackFor = ref(null); // message name currently showing the feedback bar
+const feedbackRated = ref(false); // did the user rate the current bar?
+const feedbackEvaluated = new Set(); // message names already run through the gate
+function maybeOfferFeedback(m) {
+	if (!m || m.role !== "assistant" || m.error || m.stopped) return;
+	if (feedbackEvaluated.has(m.name)) return;
+	feedbackEvaluated.add(m.name); // gate each reply exactly once
+	const secs = parseFloat(elapsedOf(m)) || 0;
+	if (shouldOfferFeedback(secs * 1000)) {
+		feedbackFor.value = m.name;
+		feedbackRated.value = false;
+	}
+}
+function onFeedbackRate({ rating, note }) {
+	feedbackRated.value = true;
+	markRated(); // any rating stops further asks this session
+	const target = feedbackFor.value;
+	if (target) api.submitFeedback(target, rating, note || "").catch(() => {}); // best-effort
+}
+function onFeedbackClose() {
+	feedbackFor.value = null;
+}
+function dismissFeedback() {
+	// Starting the next query clears a still-unanswered bar (counts as an ignore).
+	if (!feedbackFor.value) return;
+	if (!feedbackRated.value) markIgnored();
+	feedbackFor.value = null;
+}
 const waiting = ref(false);
 // Phase-0 admission (chat concurrency): when a send is accepted but QUEUED
 // (all in-flight slots taken), the reply hasn't started - we show a "~N ahead"
@@ -8984,6 +9021,7 @@ async function send(textArg, resendAck) {
 	// send() directly (AskCard/answer/resend/prefill), not just the disabled composer. On the FIRST
 	// mid-session send holdActive is still false, so the detection branch below is preserved.
 	if (holdActive.value) return;
+	dismissFeedback(); // sending the next turn clears any pending feedback line
 	// Don't race a dictation that hasn't landed: sending now would drop the spoken words (the
 	// transcript would arrive AFTER the message left the composer). Block on the real busy
 	// signal — recording, or a recording still being transcribed — NOT hasUnfinished(), which
@@ -9709,6 +9747,9 @@ function onEvent(p) {
 			compactedChip.value = false;
 			compacting.value = false;
 			loadContext();
+			// Post-reply feedback line: offer it (throttled) now the reply is
+			// finalized and its duration is stamped. Only here - never on history load.
+			if (m) maybeOfferFeedback(m);
 			waiting.value = false;
 			sending.value = false;
 			statusPhase.value = null;
@@ -10933,6 +10974,7 @@ function openUserFile(a) {
 // ---- mentions (@ user, / doctype·tool) ----
 let _mentionSeq = 0;
 function onInput() {
+	dismissFeedback(); // starting the next query clears any pending feedback line
 	histIdx.value = null; // typing exits prompt-history navigation
 	const el = composerRef.value?.el;
 	if (!el) return;
