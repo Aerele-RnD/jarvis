@@ -809,6 +809,23 @@ def _reconcile_polled_run(row, state: dict, now) -> bool:
 		# concerned. Leave it alone — an unknown state is never a verdict.
 		return False
 
+	# The host can report a clean ``done`` while its OWN result says the turn never
+	# really finished - a gateway timeout/abort still writes a "done" run-state (the
+	# process exited), with the honest verdict buried in ``result`` instead. Read
+	# there BEFORE the writeback grace: waiting it out just delays the same "delegate
+	# finished without recording results" non-answer by five more minutes, discarding
+	# the real reason (``result.reply``) the gateway already handed us.
+	result = state.get("result")
+	if isinstance(result, dict):
+		gateway_status = result.get("gateway_status")
+		aborted = gateway_status not in ("ok", "completed", "", None) or result.get("summary") == "aborted"
+		if aborted:
+			return _terminalize_stuck_run(
+				row.name,
+				error=_gateway_abort_error_message(result, gateway_status),
+				detail=f"polled: gateway reported {gateway_status}",
+			)
+
 	# Finished on the host, still ``running`` on the bench: the writeback is either in
 	# flight or it is never coming. Wait out the grace before deciding, measured from the
 	# host's own finish time (see WRITEBACK_GRACE_SECONDS).
@@ -822,6 +839,19 @@ def _reconcile_polled_run(row, state: dict, now) -> bool:
 		error="delegate finished without recording results",
 		detail="polled: delegate finished without recording results",
 	)
+
+
+def _gateway_abort_error_message(result: dict, gateway_status) -> str:
+	"""The delegate's real abort sentence out of the fleet result's ``reply`` - its
+	first line, trimmed to the same 140-char budget every polled error uses - falling
+	back to a generic-but-honest sentence naming the gateway status when there is no
+	reply to read."""
+	reply = result.get("reply")
+	if isinstance(reply, str) and reply.strip():
+		first_line = reply.strip().splitlines()[0].strip()
+		if first_line:
+			return first_line[:140]
+	return f"the agent turn was aborted by the gateway ({gateway_status})"
 
 
 def _fleet_error_message(state: dict) -> str:
@@ -985,10 +1015,10 @@ def _launch_audit(
 	# run-as guard above, and ORDERED AFTER the authorization check for the same
 	# reason it precedes the bundle-configuration check below.
 	if (listing.status or "") != "Published":
+		# #1062 polish: one sentence, one action.
 		frappe.throw(
 			_(
-				"This agent is no longer published ({0}), so it is not deployed to run. "
-				"Uninstall it, or ask an admin to publish it again — nothing was started."
+				"This agent is no longer published ({0}); uninstall it or ask an admin to republish it."
 			).format(listing.status or "unknown")
 		)
 
@@ -1008,7 +1038,7 @@ def _launch_audit(
 			_(
 				"This agent's bundle declares no tools, so the run would be refused at "
 				"every step and could never finish. Reinstall or update the agent, or "
-				"contact support — nothing was started."
+				"contact support: nothing was started."
 			)
 		)
 
@@ -1167,20 +1197,54 @@ def _launch_audit(
 		)
 		frappe.db.commit()
 		raise
-	except Exception:
+	except Exception as e:
 		# The dispatch call itself failed, and CONFIRMEDLY: nothing was sent (a clean
 		# refusal / connect timeout), a 4xx rejection, or an auth denial. Mark THIS
 		# Run failed (mirror _record_failed's writeback onto the already-created
 		# "running" row so it is never orphaned), then re-raise so the caller's
 		# retry/notify path runs (scheduler: no next_run_at advance -> retry next
 		# hour; run_agent_now: surfaces the error to the UI).
+		#
+		# One confirmed failure has a self-service fix, so translate it rather than
+		# leaving a raw fleet 502: the fleet-agent's "agent_id '<x>' is not an
+		# installed delegate on <container>" means the agent is ENABLED on the bench
+		# but its skill was never pushed to the container. Enabling only flags the
+		# catalog dirty; the skill reaches the container on APPLY. So the operator
+		# skipped (or has a pending) "Apply catalog changes" -- tell them that
+		# instead of a stack trace.
+		#
+		# jarvis#1062: "them" is not always someone who CAN apply it. The catalog
+		# push needs a reviewer role (Jarvis Skill Reviewer / Jarvis Admin / System
+		# Manager — is_skill_reviewer). Branch on the INSTALLATION OWNER, never
+		# ``frappe.session.user``: by this point the session is impersonated as the
+		# run-as user (Phase 1 identity, see above), which is deliberately decoupled
+		# from the owner (R1-F3) and is not even always a human. The OWNER is who
+		# actually reads this message back on the Runs board (the Run row's owner is
+		# always the installation owner, never the run-as user), on both the manual
+		# and the cron path (run_due_agent_audits sweeps by owner too).
+		not_applied = "not an installed delegate" in str(e)
+		if not_applied:
+			from jarvis.permissions import is_skill_reviewer
+
+			if is_skill_reviewer(owner):
+				error_msg = _(
+					"This agent is not loaded on your container yet. Open the Agents page, "
+					'click "Apply catalog changes" to push it, then run it again.'
+				)
+			else:
+				error_msg = _(
+					"This agent is not ready on your workspace yet. Ask your administrator "
+					"to apply catalog changes."
+				)
+		else:
+			error_msg = "agent-run dispatch failed; see Error Log"
 		frappe.db.set_value(
 			RUN,
 			run.name,
 			{
 				"status": "failed",
 				"finished_at": frappe.utils.now(),
-				"error": "agent-run dispatch failed; see Error Log",
+				"error": error_msg,
 			},
 			update_modified=False,
 		)
@@ -1193,7 +1257,29 @@ def _launch_audit(
 			title=f"jarvis agent-run dispatch failed: {run.name}",
 			message=frappe.get_traceback(),
 		)
+		if not_applied:
+			# Surface the actionable message straight to the SPA (a clean user error),
+			# not the raw AdminUnreachableError 502/500 the fleet verb produced. The
+			# failed Run + session teardown above are already committed, so this only
+			# swaps which exception the caller re-raises.
+			frappe.throw(error_msg, title=_("Agent not applied"))
 		raise
+
+	# STEP TIMELINE (#1062): the run's first step, and the only one the bench
+	# writes before the delegate says anything. It is recorded only after the 202
+	# above - both failure branches raise before reaching here - so "Dispatched to
+	# the agent" on screen means the fleet really accepted the turn. Owner-pinned
+	# like every other row of this launch (the session is the run-as user by now).
+	from jarvis.chat.agent_run_steps import record_step
+
+	record_step(
+		run.name,
+		kind="dispatched",
+		label="Dispatched to the agent",
+		detail=f"trigger: {trigger}",
+		owner=owner,
+	)
+	frappe.db.commit()
 	return {"run": run.name, "conversation": conv.name, "session_key": session_key}
 
 
@@ -1558,7 +1644,7 @@ def _notify_owner(owner: str, row, reason: str | None = None) -> None:
 				),
 				"email_content": (
 					(
-						f"A scheduled agent run was skipped — {reason}. Runs resume next "
+						f"A scheduled agent run was skipped: {reason}. Runs resume next "
 						"month, or ask an admin to raise the monthly agent-run budget in "
 						"Jarvis Settings."
 					)
