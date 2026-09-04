@@ -11,6 +11,7 @@ _FIELDS = (
 	"release_notice_active",
 	"latest_jarvis_version",
 	"release_notice_message",
+	"release_notice_tier",
 )
 
 
@@ -112,3 +113,58 @@ class TestBootPayload(FrappeTestCase):
 		self.assertFalse(p["active"])
 		self.assertEqual(p["version"], "")
 		self.assertEqual(p["message"], "")
+<<<<<<< HEAD
+=======
+
+	# -- tier (Slice 2) -------------------------------------------------------
+
+	def test_persist_and_boot_carry_tier(self):
+		release_notice.persist({"active": 0, "tier": "soft", "version": NEWER, "message": "m"})
+		p = release_notice.boot_payload()
+		self.assertEqual(p["tier"], "soft")
+		self.assertFalse(p["active"])
+
+	def test_hard_tier_sets_active(self):
+		release_notice.persist({"active": 1, "tier": "hard", "version": NEWER, "message": "m"})
+		p = release_notice.boot_payload()
+		self.assertEqual(p["tier"], "hard")
+		self.assertTrue(p["active"])
+
+	def test_missing_tier_derives_from_active(self):
+		# Old CP omits the tier key -> derive it from active (a hard gate reads hard).
+		release_notice.persist({"active": 1, "version": NEWER, "message": "m"})
+		self.assertEqual(release_notice.boot_payload()["tier"], "hard")
+
+	def test_self_clear_zeroes_both_tiers(self):
+		# Bench already at target -> both active and tier clear, even a stored hard.
+		release_notice.persist({"active": 1, "tier": "hard", "version": __version__, "message": "m"})
+		p = release_notice.boot_payload()
+		self.assertFalse(p["active"])
+		self.assertEqual(p["tier"], "none")
+
+	def test_empty_notice_clears_tier(self):
+		release_notice.persist({"active": 1, "tier": "hard", "version": NEWER, "message": "m"})
+		release_notice.persist({})
+		self.assertEqual(release_notice.boot_payload()["tier"], "none")
+
+
+class TestVersionParse(FrappeTestCase):
+	"""_version is the parser both sides of the self-clear compare go through,
+	so pin its edge cases directly rather than through the notice tests."""
+
+	def test_dotted_ints(self):
+		self.assertEqual(release_notice._version("16.2.0"), (16, 2, 0))
+
+	def test_short_and_long_forms_pad_or_truncate(self):
+		self.assertEqual(release_notice._version("16.2"), (16, 2, 0))
+		self.assertEqual(release_notice._version("16.2.0.7"), (16, 2, 0))
+
+	def test_unparseable_is_zero(self):
+		for raw in ("", None, "abc", "16.2.0rc1", "v16.2.0"):
+			self.assertEqual(release_notice._version(raw), (0, 0, 0), raw)
+
+	def test_unparseable_never_lifts_the_notice(self):
+		with patch.object(release_notice, "__version__", "16.2.0rc1"):
+			self.assertFalse(release_notice._already_current("16.2.0"))
+		self.assertFalse(release_notice._already_current("garbage"))
+>>>>>>> a4c131f (feat(release): Slice 2 — bench mirrors + exposes the update tier)
