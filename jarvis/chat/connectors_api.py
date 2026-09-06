@@ -775,7 +775,10 @@ def _setup_mcp_oauth_client(doc) -> None:
 			_seed_static_client_from_catalog(doc, provider)
 		except Exception as exc:
 			# ANY seed failure (not just an OAuthError) must not orphan the row: a
-			# broken client insert is as much a dead end as a failed discovery.
+			# broken client insert is as much a dead end as a failed discovery. The
+			# cause is logged (never the row's credentials) so a schema/DB fault is
+			# not hidden behind the friendly message.
+			frappe.logger("jarvis.connectors").warning("catalog seeding failed after insert", exc_info=True)
 			_discard_connector(doc)
 			frappe.throw(_oauth_error_message(getattr(exc, "code", "")))
 		return
@@ -844,6 +847,22 @@ def _ensure_mcp_oauth_client(doc) -> None:
 	    runs, against the row's already-resolved address."""
 	existing = mcp_oauth_store.client_for(doc.name)
 	if existing is not None:
+		# Relink ONLY while the client still describes this row's address. The
+		# controller pins every ORM link write to the row's canonical resource; a
+		# db.set_value relink must not be the one path around that pin (a raw write
+		# can null the link and re-point base_url in a single save).
+		from jarvis.connectors.mcp_oauth import canonical_resource
+
+		try:
+			same = canonical_resource(existing.get("resource") or "") == canonical_resource(
+				doc.base_url or ""
+			)
+		except ValueError:
+			same = False
+		if not same:
+			raise mcp_oauth.OAuthDiscoveryError(
+				"client_address_mismatch", "This connector's address changed. Remove it and add it again."
+			)
 		frappe.db.set_value(CONNECTOR, doc.name, "mcp_oauth_client", existing.name, update_modified=False)
 		doc.mcp_oauth_client = existing.name
 		return
@@ -1249,7 +1268,14 @@ def connect_oauth(name: str) -> dict:
 		# A row that never got a client (a raw insert, or a create whose seed did not
 		# run) is not a dead end: seed it from the catalog or discover it now, then
 		# proceed. Non-fatal - a discovery failure keeps the row the user already owns
-		# and returns a friendly error rather than deleting it.
+		# and returns a friendly error rather than deleting it. The heal WRITES (a
+		# client, a link, maybe a remote registration), so a reader of a Shared row
+		# does not get to trigger it, and a Custom URL row honours the workspace
+		# policy exactly as add_connector does.
+		if not doc.has_permission("write"):
+			return _error("oauth_not_configured", "Ask your admin to finish setup.")
+		if (doc.get("preset") or "") == catalog.CUSTOM_URL and not connector_flags()["allow_custom_urls"]:
+			return _error("oauth_not_configured", "Custom addresses are turned off. Ask an administrator.")
 		try:
 			_ensure_mcp_oauth_client(doc)
 		except mcp_oauth.OAuthError as exc:
@@ -1425,7 +1451,12 @@ def set_oauth_client_credentials(name: str, client_id: str, client_secret: str =
 		# The same self-heal connect_oauth does: an OAuth row that never got a client
 		# is still configurable here rather than a dead end waiting on an admin. A
 		# key row is gated out by is_oauth, so this never discovers for one. A
-		# discovery failure keeps the row and surfaces a friendly error.
+		# discovery failure keeps the row and surfaces a friendly error. Metered and
+		# policy-checked like every other path that can reach out to a host.
+		if _over_test_rate_limit(frappe.session.user):
+			frappe.throw(_("Too many attempts. Please wait a moment and try again."))
+		if doc.preset == catalog.CUSTOM_URL and not connector_flags()["allow_custom_urls"]:
+			frappe.throw(_("Custom addresses are turned off. Ask an administrator."))
 		try:
 			_ensure_mcp_oauth_client(doc)
 		except mcp_oauth.OAuthError as exc:

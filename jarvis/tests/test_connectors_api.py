@@ -2135,3 +2135,68 @@ class TestStaticCatalogSeeding(_McpOauthTestCase):
 		with patch.object(oauth, "MCP_OAUTH_TRANSPORT", resolve_transport):
 			self.assertEqual(broker._credential(self._reload_doc(name)), "gho_x")
 		self.assertEqual(resolve_transport.calls, [], "resolution makes no outbound call")
+
+
+class TestSelfHealGuards(_McpOauthTestCase):
+	"""The self-heal added for no-client rows must not become an unmetered,
+	policy-free egress path, must not let a reader write a Shared row, and must
+	not relink a client that no longer describes the row's address."""
+
+	def _raw_oauth_row(self, key, *, preset, scope="Personal", user=PLAIN_A, base_url=None):
+		prev = frappe.session.user
+		frappe.set_user(user)
+		try:
+			fields = {
+				"doctype": CONNECTOR,
+				"key": key,
+				"label": key,
+				"scope": scope,
+				"preset": preset,
+				"auth_method": "OAuth",
+				"base_url": base_url or "https://api.githubcopilot.com/mcp/",
+			}
+			doc = frappe.get_doc(fields).insert()
+			self._connectors.append(doc.name)
+			return doc.name
+		finally:
+			frappe.set_user(prev)
+
+	def test_plain_user_cannot_raw_insert_a_custom_url_when_policy_is_off(self):
+		self._set_single("allow_custom_urls", 0)
+		with self.assertRaises(frappe.PermissionError):
+			self._raw_oauth_row("byoa-raw-custom", preset="Custom URL", base_url="https://evil.invalid/mcp")
+
+	def test_credentials_heal_is_rate_limited(self):
+		name = self._raw_oauth_row("byoa-rl", preset="GitHub")
+		frappe.set_user(PLAIN_A)
+		with (
+			patch.object(connectors_api, "_over_test_rate_limit", return_value=True),
+			self.assertRaises(frappe.ValidationError),
+		):
+			connectors_api.set_oauth_client_credentials(name, "cid", "sec")
+		self.assertFalse(frappe.db.exists(CLIENT_DT, name), "no client is seeded past the meter")
+
+	def test_a_reader_cannot_heal_a_shared_row(self):
+		name = self._raw_oauth_row("byoa-shared", preset="GitHub", scope="Shared", user="Administrator")
+		frappe.set_user(PLAIN_A)  # can read the Shared row, cannot write it
+		out = connectors_api.connect_oauth(name)
+		self.assertFalse(out.get("ok"))
+		self.assertEqual(out["error"]["code"], "oauth_not_configured")
+		self.assertFalse(frappe.db.exists(CLIENT_DT, name), "a reader's Connect writes nothing")
+
+	def test_relink_is_refused_when_the_client_describes_another_address(self):
+		name = self._mk_mcp_connector("byoa-relink")
+		# A raw write nulls the link and re-points the row in one save (the guard
+		# returns early on an empty link); the surviving client still describes the
+		# OLD address and must not be relinked to the new one.
+		frappe.db.set_value(
+			CONNECTOR, name, {"mcp_oauth_client": "", "base_url": "https://elsewhere.invalid/mcp"}
+		)
+		frappe.clear_document_cache(CONNECTOR, name)
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.connect_oauth(name)
+		self.assertFalse(out.get("ok"))
+		self.assertEqual(out["error"]["code"], "oauth_not_configured")
+		self.assertFalse(
+			frappe.db.get_value(CONNECTOR, name, "mcp_oauth_client"), "stale client not relinked"
+		)
