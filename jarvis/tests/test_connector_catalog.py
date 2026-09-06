@@ -40,8 +40,11 @@ _LEGACY_KEYS = {
 	"Linear": "linear",
 	"Stripe": "stripe",
 }
+# GitHub is deliberately absent: it moved onto the sign-in engine as a
+# bring-your-own-app static provider, so its help_url now points at GitHub's
+# app-creation page, not the old personal-access-token page. Its new copy is
+# asserted in TestCatalogEndpointFields instead. The other three are unchanged.
 _LEGACY_HELP_URLS = {
-	"GitHub": "https://github.com/settings/personal-access-tokens/new",
 	"Atlassian": "https://id.atlassian.com/manage-profile/security/api-tokens",
 	"Linear": "https://linear.app/settings/account/security",
 	"Stripe": "https://dashboard.stripe.com/apikeys",
@@ -54,10 +57,6 @@ _STRIPE_HINT = (
 # instead" fallback is exactly the case where a user needs to be told WHICH
 # token, so losing these strings would leave that path unexplained.
 _LEGACY_HINTS = {
-	"GitHub": (
-		"Needs a fine-grained token scoped to the repos you want connected, with "
-		"Contents (read) and Pull requests (read and write) permissions."
-	),
 	"Atlassian": (
 		"Needs an Atlassian API token for your account. Your organization admin may "
 		"need to enable API tokens for Jira and Confluence first."
@@ -95,8 +94,7 @@ class TestCatalogShape(unittest.TestCase):
 			counts,
 			{
 				catalog.AUTH_DCR: 18,
-				catalog.AUTH_CONNECTED_APP: 1,
-				catalog.AUTH_STATIC: 4,
+				catalog.AUTH_STATIC: 5,
 				catalog.AUTH_TOKEN: 5,
 				catalog.AUTH_OPEN: 3,
 			},
@@ -125,8 +123,10 @@ class TestLegacyPresetsUnchanged(unittest.TestCase):
 		for name, help_url in _LEGACY_HELP_URLS.items():
 			self.assertEqual(catalog.by_name(name).help_url, help_url, name)
 
-	def test_github_is_connected_app(self):
-		self.assertEqual(catalog.by_name("GitHub").auth, catalog.AUTH_CONNECTED_APP)
+	def test_github_is_static_byoa(self):
+		# GitHub moved onto the sign-in engine as a bring-your-own-app static
+		# provider; the legacy per-app sign-in path it used to take was removed.
+		self.assertEqual(catalog.by_name("GitHub").auth, catalog.AUTH_STATIC)
 
 	def test_atlassian_and_linear_are_dcr(self):
 		self.assertEqual(catalog.by_name("Atlassian").auth, catalog.AUTH_DCR)
@@ -312,6 +312,83 @@ class TestApplyOverlay(unittest.TestCase):
 				"category": "data",
 			}
 		]
+		with self.assertRaises(ValueError):
+			catalog.apply_overlay(overlay)
+
+
+class TestCatalogEndpointFields(unittest.TestCase):
+	"""The metadata-less-static seam: a static provider whose sign-in service
+	publishes no discovery document may pin its own sign-in endpoints so its
+	client can be seeded without discovery."""
+
+	def test_github_declares_its_pinned_endpoints_and_scopes(self):
+		github = catalog.by_name("GitHub")
+		self.assertEqual(github.auth, catalog.AUTH_STATIC)
+		self.assertEqual(github.issuer, "https://github.com/login/oauth")
+		self.assertEqual(github.authorization_endpoint, "https://github.com/login/oauth/authorize")
+		self.assertEqual(github.token_endpoint, "https://github.com/login/oauth/access_token")
+		self.assertEqual(github.scopes, "repo read:org")
+
+	def test_github_ships_bring_your_own_app_help_and_hint(self):
+		github = catalog.by_name("GitHub")
+		self.assertEqual(github.help_url, "https://github.com/settings/applications/new")
+		self.assertEqual(github.hint, "Register your own GitHub app, then paste its details here.")
+
+	def test_every_static_provider_guides_the_customer_to_register_its_own_app(self):
+		# Every static provider is bring-your-own-app: the customer registers their
+		# own vendor app, so each must ship a help link and a one-line hint.
+		for provider in catalog.PROVIDERS:
+			if provider.auth == catalog.AUTH_STATIC:
+				self.assertTrue(provider.help_url, provider.name)
+				self.assertTrue(provider.hint, provider.name)
+
+	def test_only_github_seeds_from_pinned_endpoints(self):
+		# The other static providers (Slack, Box, ...) publish metadata and keep
+		# the discovery path, so they declare no endpoints.
+		for provider in catalog.PROVIDERS:
+			if provider.name != "GitHub":
+				self.assertIsNone(provider.issuer, provider.name)
+				self.assertIsNone(provider.authorization_endpoint, provider.name)
+				self.assertIsNone(provider.token_endpoint, provider.name)
+
+	def test_endpoints_rejected_on_a_dcr_provider(self):
+		# A self-registering provider gets its endpoints from discovery, never from
+		# the catalog: declaring them here is a category error the allowlist blocks.
+		bad = replace(catalog.by_name("Linear"), issuer="https://as.linear.example")
+		with self.assertRaises(ValueError):
+			catalog.validate((bad,))
+
+	def test_non_https_endpoint_rejected(self):
+		bad = replace(catalog.by_name("GitHub"), token_endpoint="http://insecure.example/token")
+		with self.assertRaises(ValueError):
+			catalog.validate((bad,))
+
+	def test_overlay_adds_a_metadata_less_static_provider(self):
+		overlay = [
+			{
+				"name": "Acme SSO",
+				"key": "acme_sso",
+				"base_url": "https://mcp.acme.example/mcp",
+				"auth": catalog.AUTH_STATIC,
+				"category": "data",
+				"issuer": "https://auth.acme.example",
+				"authorization_endpoint": "https://auth.acme.example/authorize",
+				"token_endpoint": "https://auth.acme.example/token",
+				"scopes": "read write",
+			}
+		]
+		result = catalog.apply_overlay(overlay)
+		added = catalog.by_name("Acme SSO", providers=result)
+		self.assertIsNotNone(added)
+		self.assertEqual(added.issuer, "https://auth.acme.example")
+		self.assertEqual(added.authorization_endpoint, "https://auth.acme.example/authorize")
+		self.assertEqual(added.token_endpoint, "https://auth.acme.example/token")
+		self.assertEqual(added.scopes, "read write")
+		# Not leaked into the unmodified base catalog.
+		self.assertIsNone(catalog.by_name("Acme SSO"))
+
+	def test_overlay_rejects_changing_an_endpoint_on_an_existing_entry(self):
+		overlay = [{"name": "GitHub", "issuer": "https://evil.example/login/oauth"}]
 		with self.assertRaises(ValueError):
 			catalog.apply_overlay(overlay)
 

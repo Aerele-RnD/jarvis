@@ -47,25 +47,16 @@
 				     instead" - shown only before a row exists this session (rowName),
 				     so switching mid-flow never has to migrate an already-saved row's
 				     auth method. "Sign-in option" means whatever the catalog marks
-				     connected_app/dcr/static (jarvis/connectors/catalog.py) - token and
-				     open presets never reach this branch. Custom URL only earns it once
-				     Check finds a sign-in requirement (customUrlOauth.active) - a plain
-				     token-only server never leaves the FormControl-only path below. -->
+				     dcr/static (jarvis/connectors/catalog.py) - token and open presets
+				     never reach this branch. Custom URL only earns it once Check finds a
+				     sign-in requirement (customUrlOauth.active) - a plain token-only
+				     server never leaves the FormControl-only path below. -->
 				<template v-if="presetHasOauth && form.auth_method === 'OAuth'">
 					<div
 						v-if="!rowOauthConnected"
 						class="flex flex-col gap-2 rounded-lg border p-3"
 					>
-						<p
-							v-if="presetAuthClass === 'connected_app'"
-							class="text-xs text-ink-gray-5"
-						>
-							Sign in with your {{ form.preset }} account to connect.
-						</p>
-						<p
-							v-else-if="form.preset !== 'Custom URL'"
-							class="text-xs text-ink-gray-5"
-						>
+						<p v-if="form.preset !== 'Custom URL'" class="text-xs text-ink-gray-5">
 							Sign in to {{ form.preset }} to connect.
 						</p>
 						<p v-else-if="customUrlOauth.signinHost" class="text-xs text-ink-gray-5">
@@ -81,6 +72,21 @@
 						     had. -->
 						<template v-if="rowNeedsStaticClient">
 							<template v-if="canSetStaticClient">
+								<p
+									v-if="staticHint || staticHelpUrl"
+									class="text-xs text-ink-gray-5"
+								>
+									{{ staticHint }}
+									<a
+										v-if="staticHelpUrl"
+										:href="staticHelpUrl"
+										target="_blank"
+										rel="noopener"
+										class="text-ink-blue-link hover:underline"
+									>
+										How to register this app
+									</a>
+								</p>
 								<FormControl
 									type="text"
 									label="Client ID"
@@ -159,7 +165,10 @@
 						:modelValue="form.credential"
 						@update:modelValue="(v) => onCredentialChange(v)"
 					/>
-					<p v-if="tokenHint || tokenDocsUrl" class="text-xs text-ink-gray-5">
+					<p
+						v-if="(tokenHint || tokenDocsUrl) && presetAuthClass !== 'static'"
+						class="text-xs text-ink-gray-5"
+					>
 						{{ tokenHint }}
 						<a
 							v-if="tokenDocsUrl"
@@ -403,8 +412,8 @@ const form = reactive({ preset: "", base_url: "", credential: "", auth_method: "
 // resetForCreate/resetForEdit always set preset+auth_method before the dialog
 // is shown, so these are just safe empty defaults, not a real first preset.
 
-// name -> catalog auth class ("dcr"/"static"/"token"/"open"/"connected_app"),
-// or null for Custom URL (not a catalog entry) or an unknown/not-yet-loaded name.
+// name -> catalog auth class ("dcr"/"static"/"token"/"open"), or null for
+// Custom URL (not a catalog entry) or an unknown/not-yet-loaded name.
 function catalogAuthOf(name) {
 	if (name === "Custom URL") return null;
 	const entry = props.catalog.find((c) => c.name === name);
@@ -422,10 +431,10 @@ const presetAuthClass = computed(() => {
 	if (isEdit.value) return props.connector.auth_class;
 	return form.preset === "Custom URL" ? "custom" : catalogAuthOf(form.preset);
 });
-// connected_app/dcr/static all default to a sign-in flow (OAUTH_CONNECTORS_DESIGN.md
-// §3, extended to every catalog auth class that supports it); token/open never do.
+// dcr/static both default to a sign-in flow (OAUTH_CONNECTORS_DESIGN.md §3,
+// extended to every catalog auth class that supports it); token/open never do.
 function presetDefaultsToOauth(auth) {
-	return auth === "connected_app" || auth === "dcr" || auth === "static";
+	return auth === "dcr" || auth === "static";
 }
 // Whether the selected preset offers a sign-in option at all - gates every
 // OAuth-mode template branch below. Custom URL only joins this once Check
@@ -435,13 +444,12 @@ const presetHasOauth = computed(() => {
 	if (form.preset === "Custom URL") return customUrlOauth.active;
 	return presetDefaultsToOauth(presetAuthClass.value);
 });
-// The sign-in box's own button label: a Connected App keeps its named "Sign
-// in to X" (today's GitHub copy); every discovered flow (dcr/static/Custom
-// URL) gets the generic "Connect" (design §8 copy - nothing to brand it with
-// beyond the preset name already shown in the line above the button).
+// The sign-in box's own button label: every sign-in flow (dcr/static/Custom URL)
+// gets the generic "Connect" (design §8 copy - nothing to brand it with beyond
+// the preset name already shown in the line above the button).
 const oauthConnectLabel = computed(() => {
 	if (connecting.value) return "Connecting…";
-	return presetAuthClass.value === "connected_app" ? `Sign in to ${form.preset}` : "Connect";
+	return "Connect";
 });
 // Step 2's "Choose what {agent} may do with X" line. There's no user-typed
 // Name field any more (the backend derives the saved label - preset display
@@ -465,6 +473,20 @@ const tokenHint = computed(() => {
 	return entry?.hint || "";
 });
 const tokenDocsUrl = computed(() => {
+	if (form.preset === "Custom URL") return "";
+	const entry = props.catalog.find((c) => c.name === form.preset);
+	return entry?.help_url || "";
+});
+// The bring-your-own-app copy shown in the static-client block: the catalog's
+// own one-line hint plus a link to the vendor's app-creation page (catalog
+// help_url). Custom URL has no catalog entry, so it renders neither - it already
+// shows its own "signs you in at HOST" line above.
+const staticHint = computed(() => {
+	if (form.preset === "Custom URL") return "";
+	const entry = props.catalog.find((c) => c.name === form.preset);
+	return entry?.hint || "";
+});
+const staticHelpUrl = computed(() => {
 	if (form.preset === "Custom URL") return "";
 	const entry = props.catalog.find((c) => c.name === form.preset);
 	return entry?.help_url || "";

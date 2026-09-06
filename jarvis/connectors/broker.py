@@ -203,12 +203,11 @@ def resolve_for_status(connector_key: str):
 def _credential(row) -> str:
 	"""Resolve the connector's bearer credential. An OAuth row (see
 	``oauth.is_oauth``) resolves a live access token for the CURRENT
-	impersonated user - from its linked Connected App, or from the discovery
-	engine's own token store, whichever backs the row; no ``credential`` field
-	is ever read for it - and raises ``connector_not_ready`` when the user has
+	impersonated user from the sign-in engine's own token store; no ``credential``
+	field is ever read for it - and raises ``connector_not_ready`` when the user has
 	not connected (or the token could not be refreshed), rather than handing
 	the MCP call a blank/broken bearer. ``oauth.resolve_connector_token`` owns
-	that branch so this module never has to know which engine a row uses.
+	that resolution so this module never has to know how a row signs in.
 
 	A refresh, when one happens, happens HERE: before the concurrency slot below,
 	inside the time budget, and never feeding the circuit breaker.

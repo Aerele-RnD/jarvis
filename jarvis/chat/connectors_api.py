@@ -42,12 +42,10 @@ Endpoints:
     deny everything as ``action_unknown``, which is confusing, not safer).
   * ``delete_connector``.
   * ``connect_oauth``         - OAuth tier: returns the provider's authorize
-    URL for an OAuth-auth-method row. A ``connected_app``-class row returns
-    through Frappe's native Connected App callback; every discovery-engine row
-    (a catalog ``dcr``/``static`` preset, or a Custom URL) returns through
+    URL for an OAuth-auth-method row. Every OAuth row returns through
     ``mcp_oauth_callback`` below.
   * ``disconnect_oauth``      - deletes the CURRENT user's stored sign-in for an
-    OAuth row (per-user, idempotent), from whichever engine backs it.
+    OAuth row (per-user, idempotent).
   * ``probe_connector_auth``  - Custom URL sign-in discovery, WITHOUT creating
     anything: "does this address need a sign-in, and where?".
   * ``set_oauth_client_credentials`` - admin-only, static-mode only: the
@@ -55,23 +53,25 @@ Endpoints:
   * ``mcp_oauth_callback``    - the ONE redirect URI the discovery engine
     registers and returns to. Login-required (never allow_guest).
 
-TWO OAUTH ENGINES (MCP_OAUTH_CLIENT_DESIGN.md), and the CATALOG picks between
-them. ``jarvis.connectors.catalog`` gives every preset an ``auth`` class, and
-that class is the whole routing rule for ``auth_method="OAuth"``:
+ONE SIGN-IN ENGINE (MCP_OAUTH_CLIENT_DESIGN.md), and the CATALOG decides whether
+a preset may use it. ``jarvis.connectors.catalog`` gives every preset an ``auth``
+class, and that class is the whole routing rule for ``auth_method="OAuth"``:
 
-  * ``connected_app`` (GitHub) - Frappe's Connected App, exactly as it shipped
-    and untouched here.
   * ``dcr`` / ``static`` - the spec-compliant discovery engine in
-    ``jarvis.connectors.mcp_oauth`` (+ ``mcp_oauth_store``), the SAME code path
-    a ``Custom URL`` row takes, except that the address discovery runs against
-    is the catalog's pinned one rather than the caller's.
+    ``jarvis.connectors.mcp_oauth`` (+ ``mcp_oauth_store``), the SAME code path a
+    ``Custom URL`` row takes, except that the address discovery runs against is
+    the catalog's pinned one rather than the caller's. A ``static`` preset that
+    pins its own endpoints in the catalog (GitHub) is a bring-your-own-app
+    provider: its client is SEEDED from those endpoints with no discovery, and an
+    administrator (or a Personal row's owner) pastes the client id/secret they
+    registered at the vendor. A ``static`` preset that publishes discovery
+    metadata (Slack, Box, ...) still runs discovery.
   * ``token`` / ``open`` - no sign-in exists, so asking for OAuth is refused
     (here AND in the connector controller, so a raw DocType write cannot take
     the shortcut the API refuses).
 
-The engines are told apart by WHICH link the row carries (``connected_app`` vs
-``mcp_oauth_client``), never by ``auth_method``, and the connector controller
-guarantees a row never carries both.
+Every OAuth row carries a ``mcp_oauth_client`` link, never anything else, and the
+connector controller guarantees a key-only row carries no link.
 
 ``set_custom_url_policy`` is deliberately NOT here — MCP_CONNECTORS_PLAN.md's
 UI/UX decision #2 puts that admin control on the Jarvis Settings Desk form.
@@ -113,9 +113,8 @@ MCP_OAUTH_TRANSPORT = mcp_oauth.open_pinned
 #: :func:`oauth_redirect_uri` rather than building it again.
 _CALLBACK_METHOD = "jarvis.chat.connectors_api.mcp_oauth_callback"
 
-#: Where the browser lands after a sign-in attempt, success or failure. Same
-#: return the shipped Connected App path already uses, so the SPA has one
-#: place to handle both.
+#: Where the browser lands after a sign-in attempt, success or failure. The SPA
+#: has one place to handle the return.
 _SPA_CONNECTORS_PATH = "/jarvis?settings=connectors"
 
 # Per-user rate limit on the outbound Test-connection probe (calendar-minute
@@ -140,13 +139,8 @@ _PRESETS = (*catalog.preset_names(), catalog.CUSTOM_URL)
 _SCOPES = ("Shared", "Personal")
 _AUTH_METHODS = ("API Key", "OAuth")
 
-# Preset -> the Connected App's own ``provider_name`` (an operator-set System
-# Manager-only field, never client input). Only a ``connected_app``-class preset
-# belongs here; every other sign-in preset goes through the discovery engine.
-_PRESET_PROVIDER = {"GitHub": "GitHub"}
-
-#: The catalog auth classes the discovery engine serves. A preset outside this
-#: set either uses a Connected App or has no sign-in at all.
+#: The catalog auth classes the sign-in engine serves. A preset outside this set
+#: has no sign-in at all.
 _DISCOVERY_AUTH = (catalog.AUTH_DCR, catalog.AUTH_STATIC)
 
 #: ``auth_class`` for a row whose preset the catalog does not carry: a Custom URL
@@ -270,31 +264,18 @@ def _action_summaries(parent_names: list[str]) -> dict[str, dict]:
 
 def _auth_class(preset: str) -> str:
 	"""The catalog's connection class for ``preset`` (``dcr``/``static``/``token``/
-	``open``/``connected_app``), or ``"custom"`` for a Custom URL row and for any
-	preset the catalog no longer carries. Shipped on every list row so the SPA
-	reads a row's flow off the row instead of re-deriving it from the catalog."""
+	``open``), or ``"custom"`` for a Custom URL row and for any preset the catalog
+	no longer carries. Shipped on every list row so the SPA reads a row's flow off
+	the row instead of re-deriving it from the catalog."""
 	return catalog.auth_of(preset) or _AUTH_CLASS_CUSTOM
 
 
 def _uses_discovery_engine(preset: str) -> bool:
-	"""True when an OAuth row for ``preset`` is backed by the discovery engine
-	rather than a Connected App: a Custom URL, or a catalog preset whose class is
-	``dcr``/``static``. The connector controller re-derives the same rule from the
-	same catalog, so the API and the last-line guard cannot drift."""
+	"""True when an OAuth row for ``preset`` is backed by the sign-in engine: a
+	Custom URL, or a catalog preset whose class is ``dcr``/``static``. The connector
+	controller re-derives the same rule from the same catalog, so the API and the
+	last-line guard cannot drift."""
 	return preset == catalog.CUSTOM_URL or catalog.auth_of(preset) in _DISCOVERY_AUTH
-
-
-def _resolve_connected_app_for_preset(preset: str) -> str | None:
-	"""The site's Connected App for ``preset``'s OAuth provider, or ``None`` when
-	none is configured yet. Matched on ``provider_name`` - an operator-set,
-	System-Manager-only field on Connected App - NEVER on anything the caller
-	supplies, so a client can ask for OAuth but can never name or steer which
-	Connected App backs it (OAUTH_CONNECTORS_DESIGN.md §6b)."""
-	provider = _PRESET_PROVIDER.get(preset)
-	if not provider:
-		return None
-	found = frappe.get_all("Connected App", filters={"provider_name": provider}, pluck="name", limit=1)
-	return found[0] if found else None
 
 
 def oauth_redirect_uri() -> str:
@@ -361,14 +342,15 @@ def _oauth_error_message(code: str) -> str:
 
 
 def _mcp_oauth_status(doc) -> dict:
-	"""The discovery engine's twin of :func:`_oauth_status`'s Connected App
-	branch. ``oauth_configured`` means we hold a client_id to sign in WITH;
+	"""The sign-in state for a row backed by an ``MCP OAuth Client``.
+	``oauth_configured`` means we hold a client_id to sign in WITH;
 	``needs_static_client`` means the sign-in service does not self-register, so
-	an administrator has to register Jarvis there and paste the result in.
+	an administrator (or a Personal row's owner) has to register their own app
+	there and paste the result in.
 
-	Presence-only, exactly like the shipped branch: a stale or expired token
-	still reads as connected for display, and nothing here ever triggers a
-	refresh. The broker is what enforces liveness on an actual call."""
+	Presence-only: a stale or expired token still reads as connected for display,
+	and nothing here ever triggers a refresh. The broker is what enforces liveness
+	on an actual call."""
 	connector = doc.get("name")
 	client = mcp_oauth_store.client_for(connector)
 	if client is None:
@@ -396,38 +378,18 @@ def _mcp_oauth_status(doc) -> dict:
 
 def _oauth_status(doc) -> dict:
 	"""``{oauth_configured, oauth_connected, signin_host}`` for an
-	OAuth-auth-method row, from whichever engine backs it.
+	OAuth-auth-method row.
 
-	``signin_host`` is on both branches on purpose: the confused-deputy defense
-	(design section 6) is showing the user WHERE they are about to sign in, and
-	that line should read the same whether the row is a preset or a Custom URL.
+	``signin_host`` is the confused-deputy defense (design section 6): it shows
+	the user WHERE they are about to sign in, and reads the same whether the row is
+	a preset or a Custom URL.
 
-	Below is the shipped Connected App branch. ``oauth_configured`` is true when a
-	Connected App still resolves for the preset (an admin could remove it after
-	the row was created).
-
-	``oauth_connected`` is PRESENCE of a real access token on the current
-	user's Token Cache - NOT mere presence of the Token Cache doc. Frappe's own
-	``initiate_web_application_flow`` creates that doc up front to hold ``state``
-	before the user ever reaches the provider's consent screen, so a bare
-	``get_token_cache`` truthy check would read "connected" for a user who
-	clicked Connect and never finished (or bounced off consent). Mirrors
-	Frappe's own ``connected_app.has_token``; this must never trigger a refresh
-	(a stale/expired token still counts as "connected" for display - the broker
-	is what enforces liveness on an actual call)."""
+	Every OAuth row is backed by the sign-in engine's ``MCP OAuth Client``; a row
+	whose client has not been seeded yet has nothing to sign in with and reads as
+	not configured."""
 	if doc.get("mcp_oauth_client"):
 		return _mcp_oauth_status(doc)
-	connected_app = doc.get("connected_app")
-	if not connected_app or not frappe.db.exists("Connected App", connected_app):
-		return {"oauth_configured": False, "oauth_connected": False, "signin_host": ""}
-	app = frappe.get_doc("Connected App", connected_app)
-	token_cache = app.get_token_cache(frappe.session.user)
-	connected = bool(token_cache and token_cache.get_password("access_token", False))
-	return {
-		"oauth_configured": True,
-		"oauth_connected": connected,
-		"signin_host": _host(app.get("authorization_uri")),
-	}
+	return {"oauth_configured": False, "oauth_connected": False, "signin_host": ""}
 
 
 def _connector_summary(doc) -> dict:
@@ -592,7 +554,6 @@ def list_connectors() -> dict:
 			"scope",
 			"enabled",
 			"auth_method",
-			"connected_app",
 			"mcp_oauth_client",
 			"last_test_status",
 			"last_test_at",
@@ -614,8 +575,7 @@ def list_connectors() -> dict:
 		row["auth_class"] = _auth_class(row.get("preset") or "")
 		if row["auth_method"] == oauth.OAUTH_AUTH_METHOD:
 			row.update(_oauth_status(row))
-		# Both engine links are internals - never shipped to the SPA.
-		row.pop("connected_app", None)
+		# The engine link is an internal - never shipped to the SPA.
 		row.pop("mcp_oauth_client", None)
 		(shared if row["scope"] == "Shared" else mine).append(row)
 
@@ -659,20 +619,19 @@ def add_connector(
 	key by the controller (one per app for Shared, one per app per user for
 	Personal), so a user cannot connect the same app twice.
 
-	``auth_method`` picks the connection method (OAUTH_CONNECTORS_DESIGN.md §4,
-	§6b): "OAuth" IGNORES the ``credential`` argument entirely (nothing is ever
-	stored in the Password field for an OAuth row) and resolves the backing link
-	SERVER-SIDE - a caller can ask for OAuth but can never name or steer what
-	backs it. "API Key" is the shipped, unchanged behaviour, and an ``open``
-	preset needs no credential at all (the broker sends no Authorization header
-	when the credential is empty).
+	``auth_method`` picks the connection method: "OAuth" IGNORES the
+	``credential`` argument entirely (nothing is ever stored in the Password field
+	for an OAuth row) and sets the backing link up SERVER-SIDE - a caller can ask
+	for OAuth but can never name or steer what backs it. "API Key" is the shipped,
+	unchanged behaviour, and an ``open`` preset needs no credential at all (the
+	broker sends no Authorization header when the credential is empty).
 
-	The CATALOG routes an OAuth request (see the module docstring). A
-	``connected_app``-class preset gets the Connected App it maps to (shipped,
-	unchanged). A ``dcr``/``static`` preset and a Custom URL row both run
-	discovery and get an ``MCP OAuth Client`` - see
-	:func:`_setup_mcp_oauth_client` - the difference being only WHICH address
-	discovery runs against: the catalog's pinned one for a preset, the caller's
+	Every OAuth-capable preset uses the sign-in engine (see the module docstring):
+	a ``dcr``/``static`` preset and a Custom URL row get an ``MCP OAuth Client``
+	via :func:`_setup_mcp_oauth_client`. A bring-your-own-app static preset that
+	pins its endpoints (GitHub) is seeded straight from the catalog with no
+	discovery; every other row runs discovery, the only difference being WHICH
+	address it runs against: the catalog's pinned one for a preset, the caller's
 	for a Custom URL. A ``token``/``open`` preset has no sign-in and is refused
 	before anything is created."""
 	label = (label or "").strip()
@@ -687,9 +646,7 @@ def add_connector(
 		frappe.throw(_("Scope must be Shared or Personal."))
 	if auth_method not in _AUTH_METHODS:
 		frappe.throw(_("Choose a key or a sign-in for this connector."))
-	if auth_method == oauth.OAUTH_AUTH_METHOD and not (
-		_uses_discovery_engine(preset) or catalog.auth_of(preset) == catalog.AUTH_CONNECTED_APP
-	):
+	if auth_method == oauth.OAUTH_AUTH_METHOD and not _uses_discovery_engine(preset):
 		# A key-only or no-credential app has no sign-in to start, so there is
 		# nothing to route this to. Refused HERE, before anything is created or any
 		# request leaves, and refused again in the connector controller so a raw
@@ -729,19 +686,13 @@ def add_connector(
 	if engine_oauth:
 		# Discovery below is real egress, to a host the CALLER chose on the Custom
 		# URL path and to a vendor on the preset path, so it is rate limited exactly
-		# like the Test button either way. Without this the endpoint is an unmetered
-		# outbound-request amplifier for any Jarvis User.
+		# like the Test button either way. A bring-your-own-app static preset seeds
+		# from the catalog and makes no request, but sharing the gate keeps the rule
+		# simple. Without it the endpoint is an unmetered outbound-request amplifier
+		# for any Jarvis User.
 		if _over_test_rate_limit(frappe.session.user):
 			frappe.throw(_("Too many attempts. Please wait a moment and try again."))
 		doc_fields["credential"] = ""
-	elif auth_method == oauth.OAUTH_AUTH_METHOD:
-		# Never store a pasted secret for an OAuth row, and never trust a
-		# client-supplied Connected App - resolve it from the preset ourselves.
-		connected_app = _resolve_connected_app_for_preset(preset)
-		if not connected_app:
-			frappe.throw(_("This app isn't set up for sign-in yet. Ask your admin."))
-		doc_fields["credential"] = ""
-		doc_fields["connected_app"] = connected_app
 	else:
 		doc_fields["credential"] = credential
 
@@ -784,7 +735,19 @@ def _setup_mcp_oauth_client(doc) -> None:
 
 	The link is written with ``frappe.db.set_value`` because the client cannot
 	exist before the connector it points at: this is the second half of ONE
-	create, not a user-initiated edit, and must not re-run the row's validation."""
+	create, not a user-initiated edit, and must not re-run the row's validation.
+
+	BRING-YOUR-OWN-APP STATIC: a static preset whose sign-in service publishes no
+	discovery document declares its endpoints in the catalog (GitHub). For it,
+	discover() cannot run and MUST be skipped - the client is seeded straight from
+	the pinned, reviewed catalog values, making NO outbound request at all. Every
+	other row (a self-registering ``dcr`` preset, a static preset that publishes
+	metadata, or a Custom URL) keeps the discover() path below unchanged."""
+	preset = (doc.get("preset") or "").strip()
+	provider = catalog.by_name(preset) if preset else None
+	if catalog.auth_of(preset) == catalog.AUTH_STATIC and _provider_declares_endpoints(provider):
+		_seed_static_client_from_catalog(doc, provider)
+		return
 	try:
 		found = mcp_oauth.discover(
 			doc.base_url, transport=MCP_OAUTH_TRANSPORT, egress_allowed=broker._egress_allowed
@@ -820,6 +783,45 @@ def _requested_scope(found) -> str:
 	if found.challenge_scope:
 		return found.challenge_scope
 	return " ".join(found.scopes_supported or [])
+
+
+def _provider_declares_endpoints(provider) -> bool:
+	"""True when a catalog provider pins its own sign-in endpoints, so its client
+	can be seeded without discovery. All three are required together - a
+	half-declared provider is a catalog bug, not a seedable one."""
+	return bool(provider and provider.issuer and provider.authorization_endpoint and provider.token_endpoint)
+
+
+def _seed_static_client_from_catalog(doc, provider) -> None:
+	"""Seed ``doc``'s ``MCP OAuth Client`` from the catalog's pinned endpoints, for
+	a bring-your-own-app static provider. NO discover() runs and NO request leaves:
+	the endpoints are reviewed catalog constants, so the synthetic Discovery is
+	built from them directly (registration_endpoint None, ``iss`` param support
+	False via an empty metadata snapshot, resource = canonical base_url,
+	resource_declared = the base_url verbatim, scope = the catalog default).
+	``mcp_oauth_store.discovery_from_client`` rebuilds exactly this for connect,
+	exchange and refresh.
+
+	The client is seeded with an EMPTY client_id: the customer registers their own
+	app at the vendor and pastes the id/secret via ``set_oauth_client_credentials``,
+	which is why the row reads ``needs_static_client`` until they do."""
+	resource = mcp_oauth.canonical_resource(doc.base_url)
+	scope = (provider.scopes or "").strip()
+	discovery = mcp_oauth.Discovery(
+		resource=resource,
+		resource_declared=doc.base_url,
+		authorization_servers=[provider.issuer],
+		scopes_supported=[],
+		issuer=provider.issuer,
+		authorization_endpoint=provider.authorization_endpoint,
+		token_endpoint=provider.token_endpoint,
+		registration_endpoint=None,
+		raw_as_metadata={},
+		challenge_scope=scope or None,
+	)
+	client = mcp_oauth_store.save_client(doc.name, discovery, mcp_oauth.static_client(""), scope)
+	frappe.db.set_value(CONNECTOR, doc.name, "mcp_oauth_client", client.name, update_modified=False)
+	doc.mcp_oauth_client = client.name
 
 
 # --------------------------------------------------------------------------- #
@@ -1133,20 +1135,16 @@ def delete_connector(name: str) -> dict:
 @require_jarvis_user
 def connect_oauth(name: str) -> dict:
 	"""Start the sign-in flow for an OAuth connector: return the provider's own
-	authorize URL for the SPA to redirect the browser to. Frappe's native
-	Connected App callback (``connected_app.callback/{app}``) handles the
-	provider's redirect back and writes the Token Cache itself - there is no
-	custom callback here.
+	authorize URL for the SPA to redirect the browser to. The provider's redirect
+	back is handled by :func:`mcp_oauth_callback` below, which trades the code for
+	tokens and stores them for the current user.
 
-	``success_uri`` sends the browser back to the SPA's connectors settings
-	pane, carrying ``name`` so it can refresh that one row's status once the
-	user returns. Connect is PER USER (OAUTH_CONNECTORS_DESIGN.md §6a): each
-	user who wants to use a Shared OAuth connector runs their own sign-in.
+	Connect is PER USER (OAUTH_CONNECTORS_DESIGN.md §6a): each user who wants to use
+	a Shared OAuth connector runs their own sign-in.
 
 	Rate limited exactly like the probe and the Test button. Starting a sign-in
-	mints server-side state and, on the shipped Connected App path, hits the
-	provider - so an unmetered version is both a state-minting loop and an
-	outbound-request amplifier for any user who can see a Shared connector."""
+	mints server-side state, so an unmetered version is a state-minting loop for any
+	user who can see a Shared connector."""
 	doc = frappe.get_doc(CONNECTOR, name)
 	if not doc.has_permission("read"):
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
@@ -1160,26 +1158,7 @@ def connect_oauth(name: str) -> dict:
 	if doc.get("mcp_oauth_client"):
 		return _connect_mcp_oauth(doc)
 
-	connected_app = doc.get("connected_app")
-	if not connected_app or not frappe.db.exists("Connected App", connected_app):
-		return {
-			"ok": False,
-			"error": {
-				"code": "oauth_not_configured",
-				"message": "This app isn't set up for sign-in yet. Ask your admin.",
-			},
-		}
-
-	app = frappe.get_doc("Connected App", connected_app)
-	# A bare path, not an absolute URL built off frappe.utils.get_url(): Frappe's
-	# own sanitize_redirect (frappe.www.login) only trusts a redirect whose netloc
-	# matches the CURRENT request's host, and rewrites anything else to "/desk".
-	# get_url() reads site_config, which can legitimately differ from the host the
-	# browser actually used (e.g. an aliased/e2e host) - a bare path has no netloc,
-	# so sanitize_redirect always resolves it against the real request host instead.
-	success_uri = "/jarvis?settings=connectors&oauth=" + name
-	url = app.initiate_web_application_flow(user=frappe.session.user, success_uri=success_uri)
-	return {"ok": True, "url": url}
+	return _error("oauth_not_configured", "This app isn't set up for sign-in yet. Ask your admin.")
 
 
 def _connect_mcp_oauth(doc) -> dict:
@@ -1235,26 +1214,13 @@ def _connect_mcp_oauth(doc) -> dict:
 @require_jarvis_user
 def disconnect_oauth(name: str) -> dict:
 	"""End the CURRENT user's sign-in for an OAuth connector by deleting their
-	stored tokens, from whichever engine backs the row. Idempotent - never errors
-	when there was nothing to remove (nothing configured, or the user never
-	connected)."""
+	stored tokens. Idempotent - never errors when there was nothing to remove
+	(nothing configured, or the user never connected)."""
 	doc = frappe.get_doc(CONNECTOR, name)
 	if not doc.has_permission("read"):
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
 
-	if doc.get("mcp_oauth_client"):
-		if mcp_oauth_store.delete_token(doc.name, frappe.session.user):
-			frappe.db.commit()
-		return {"ok": True}
-
-	connected_app = doc.get("connected_app")
-	if not connected_app or not frappe.db.exists("Connected App", connected_app):
-		return {"ok": True}
-
-	app = frappe.get_doc("Connected App", connected_app)
-	token_cache = app.get_token_cache(frappe.session.user)
-	if token_cache:
-		frappe.delete_doc("Token Cache", token_cache.name, ignore_permissions=True, force=True)
+	if doc.get("mcp_oauth_client") and mcp_oauth_store.delete_token(doc.name, frappe.session.user):
 		frappe.db.commit()
 	return {"ok": True}
 

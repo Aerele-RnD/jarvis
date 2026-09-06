@@ -63,6 +63,18 @@ do CIMD, we fall back to static (admin-entered) or, last, DCR.
 
 ## 4. GitHub, grounded by a live probe (2026-09-05)
 
+> **Updated 2026-09-06:** GitHub is now a **static bring-your-own-app** provider on
+> this engine, not a Frappe Connected App. Its endpoints below are pinned in the
+> in-app catalog (`jarvis/connectors/catalog.py`: issuer
+> `https://github.com/login/oauth`, authorize `.../authorize`, token
+> `.../access_token`, scopes `repo read:org`), and its client is seeded from them
+> with no discovery hop (`connectors_api._seed_static_client_from_catalog`). The
+> customer registers their own GitHub app once and pastes its client id/secret
+> (`set_oauth_client_credentials`); the token endpoint answers JSON because the
+> transport sends an `application/json` accept header. The Connected App path was
+> removed. The probe findings below still hold and are where the pinned endpoints
+> come from.
+
 `POST https://api.githubcopilot.com/mcp/` unauth returns:
 ```
 401  WWW-Authenticate: Bearer error="invalid_request",
@@ -151,6 +163,12 @@ Paste a server URL → we probe (401 → discovery) → "This app needs sign-in 
 ConnectorsPane; one heading + one line per section.
 
 ## 9. Scope + the one decision
+
+> **Updated 2026-09-06:** the "v1 GitHub, untouched" bullet below no longer holds.
+> The Connected App path was removed and GitHub moved onto this engine as a static
+> bring-your-own-app provider, seeded from the catalog's pinned endpoints with no
+> discovery. Static plus DCR remain the two live registration modes; CIMD is still
+> a later phase.
 
 - **In scope:** the CIMD-first spec-compliant client (discovery, PKCE, resource, 9207,
   scope/step-up, refresh), the two DocTypes, the broker seam, the SSRF-wrapped transport,

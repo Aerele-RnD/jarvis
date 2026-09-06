@@ -133,13 +133,11 @@ const statusTip = computed(() => {
 	if (props.row.last_test_status === "Failed") return `Last test failed${when}.`;
 	return "Run a test to confirm it's reachable.";
 });
-// Every discovered sign-in (dcr/static/Custom URL) shows where it signs in
-// alongside the address (design §6's confused-deputy line, echoed here) -
-// only a Connected App (GitHub) skips it, since its sign-in host is implied
-// by the brand and showing it would just be noise. One line either way, no
-// new row.
+// Every sign-in (dcr/static/Custom URL, GitHub included) shows where it signs in
+// alongside the address (design §6's confused-deputy line, echoed here). One line
+// either way, no new row.
 const subtext = computed(() => {
-	if (isOauth.value && props.row.auth_class !== "connected_app" && props.row.signin_host) {
+	if (isOauth.value && props.row.signin_host) {
 		return props.row.base_url
 			? `${props.row.base_url} · Signs in at ${props.row.signin_host}`
 			: `Signs in at ${props.row.signin_host}`;

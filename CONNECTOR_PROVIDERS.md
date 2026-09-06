@@ -36,7 +36,7 @@ Several also advertise `plain` PKCE; the engine always sends S256 (spec-mandated
 
 | Provider | MCP endpoint | Auth server | Note |
 |---|---|---|---|
-| GitHub | `https://api.githubcopilot.com/mcp/` | github.com | v1 path (Connected App). No AS metadata doc. |
+| GitHub | `https://api.githubcopilot.com/mcp/` | github.com | static / bring-your-own-app; endpoints pinned in catalog, client seeded without discovery. No AS metadata doc. |
 | Slack | `https://mcp.slack.com/mcp` | mcp.slack.com | S256; has metadata, no registration endpoint |
 | Box | `https://mcp.box.com/mcp` | api.box.com | S256; no registration endpoint |
 | Airtable | `https://mcp.airtable.com/mcp` | airtable.com | no AS metadata doc |

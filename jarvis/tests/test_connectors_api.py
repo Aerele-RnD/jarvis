@@ -86,8 +86,6 @@ class _ConnectorApiTestCase(FrappeTestCase):
 		_ensure_user(PLAIN_B, [JARVIS_USER_ROLE])
 		self._orig_user = frappe.session.user
 		self._connectors: list[str] = []
-		self._connected_apps: list[str] = []
-		self._token_caches: list[str] = []
 		self._saved_singles: dict[str, object] = {}
 		# The feature flag defaults OFF on a fresh DB, and test_connector now refuses
 		# to probe when it is off. Every test here exercises an ENABLED workspace, so
@@ -102,12 +100,6 @@ class _ConnectorApiTestCase(FrappeTestCase):
 			mcp_oauth_store.purge_connector(name)
 			if frappe.db.exists(CONNECTOR, name):
 				frappe.delete_doc(CONNECTOR, name, ignore_permissions=True, force=True)
-		for name in self._token_caches:
-			if frappe.db.exists("Token Cache", name):
-				frappe.delete_doc("Token Cache", name, ignore_permissions=True, force=True)
-		for name in self._connected_apps:
-			if frappe.db.exists("Connected App", name):
-				frappe.delete_doc("Connected App", name, ignore_permissions=True, force=True)
 		for field, value in self._saved_singles.items():
 			frappe.db.sql("delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field))
 			if value is not None:
@@ -132,86 +124,6 @@ class _ConnectorApiTestCase(FrappeTestCase):
 			self._connectors.append(doc.name)
 			if owner:
 				frappe.db.set_value(CONNECTOR, doc.name, "owner", owner, update_modified=False)
-			frappe.db.commit()
-			return doc.name
-		finally:
-			frappe.set_user(prev)
-
-	def _mk_connected_app(self, provider_name: str = "GitHub") -> str:
-		"""A minimal Connected App fixture - never touches a real provider (no
-		network happens on insert; ``authorization_uri``/``token_uri`` are just
-		strings until a flow actually runs)."""
-		prev = frappe.session.user
-		frappe.set_user("Administrator")
-		try:
-			doc = frappe.get_doc(
-				{
-					"doctype": "Connected App",
-					"name": provider_name,
-					"provider_name": provider_name,
-					"client_id": "test-client-id",
-					"client_secret": "test-client-secret",
-					"authorization_uri": "https://example.invalid/authorize",
-					"token_uri": "https://example.invalid/token",
-				}
-			).insert(ignore_permissions=True)
-			self._connected_apps.append(doc.name)
-			frappe.db.commit()
-			return doc.name
-		finally:
-			frappe.set_user(prev)
-
-	def _mk_connected_app_named(self, name: str, provider_name: str) -> str:
-		"""A Connected App whose docname differs from its provider_name, so two apps
-		can share one provider_name (Frappe does not enforce uniqueness on it)."""
-		prev = frappe.session.user
-		frappe.set_user("Administrator")
-		try:
-			doc = frappe.get_doc(
-				{
-					"doctype": "Connected App",
-					"name": name,
-					"provider_name": provider_name,
-					"client_id": "test-client-id",
-					"client_secret": "test-client-secret",
-					"authorization_uri": "https://example.invalid/authorize",
-					"token_uri": "https://example.invalid/token",
-				}
-			).insert(ignore_permissions=True)
-			self._connected_apps.append(doc.name)
-			frappe.db.commit()
-			return doc.name
-		finally:
-			frappe.set_user(prev)
-
-	def _mk_token_cache(
-		self,
-		connected_app: str,
-		user: str,
-		access_token: str = "live-token",
-		expires_in: int = 3600,
-		refresh_token: str | None = None,
-	) -> str:
-		"""A Token Cache for ``user`` - bypasses the real authorize/exchange dance
-		entirely, which is exactly what ``get_active_token``/``get_token_cache``
-		read. ``expires_in=0`` + no ``refresh_token`` models a classic GitHub
-		OAuth-App token (long-lived, non-refreshable), which Frappe otherwise treats
-		as instantly expired."""
-		prev = frappe.session.user
-		frappe.set_user("Administrator")
-		try:
-			fields = {
-				"doctype": "Token Cache",
-				"connected_app": connected_app,
-				"user": user,
-				"access_token": access_token,
-				"token_type": "Bearer",
-				"expires_in": expires_in,
-			}
-			if refresh_token is not None:
-				fields["refresh_token"] = refresh_token
-			doc = frappe.get_doc(fields).insert(ignore_permissions=True)
-			self._token_caches.append(doc.name)
 			frappe.db.commit()
 			return doc.name
 		finally:
@@ -413,7 +325,7 @@ class TestListConnectorsCatalog(_ConnectorApiTestCase):
 		allowed = {"name", "key", "auth", "category", "logo", "help_url", "hint"}
 		for entry in entries:
 			self.assertEqual(set(entry), allowed, entry.get("name"))
-			self.assertIn(entry["auth"], {"dcr", "static", "token", "open", "connected_app"})
+			self.assertIn(entry["auth"], {"dcr", "static", "token", "open"})
 
 	def test_rows_carry_the_flow_the_spa_should_render(self):
 		github = self._mk("Personal", "gh-class", owner=PLAIN_A, preset="GitHub")
@@ -423,7 +335,7 @@ class TestListConnectorsCatalog(_ConnectorApiTestCase):
 
 		frappe.set_user(PLAIN_A)
 		rows = {r["name"]: r for r in connectors_api.list_connectors()["mine"]}
-		self.assertEqual(rows[github]["auth_class"], "connected_app")
+		self.assertEqual(rows[github]["auth_class"], "static")
 		self.assertEqual(rows[custom]["auth_class"], "custom")
 		self.assertEqual(rows[razorpay]["auth_class"], "dcr")
 		self.assertEqual(rows[open_row]["auth_class"], "open")
@@ -648,106 +560,25 @@ class TestDeleteConnector(_ConnectorApiTestCase):
 
 
 # --------------------------------------------------------------------------- #
-# OAuth tier v1 (OAUTH_CONNECTORS_DESIGN.md) - GitHub flagship.
-#
-# The real authorize/token-exchange dance is never exercised here - only
-# ``jarvis.connectors.oauth`` (this module's seam into Connected App) and the
-# API surface built around it. A Connected App/Token Cache fixture is real
-# (both are plain Frappe doctypes, no provider is ever contacted for it), so
-# ``get_active_token``/``get_token_cache`` run for real against them.
+# OAuth surface, engine-agnostic. The sign-in engine itself (discovery, seeding,
+# connect/callback, refresh) is exercised in the ``_McpOauthTestCase`` section
+# below; these cover only the bits that hold for any OAuth row: the ``is_oauth``
+# predicate, that an OAuth create ignores a pasted credential, and that the
+# controller refuses to route a key-only app into a sign-in.
 # --------------------------------------------------------------------------- #
 class TestOauthModule(_ConnectorApiTestCase):
 	def test_is_oauth_true_for_oauth_auth_method(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-oauth", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		doc = frappe.get_doc(CONNECTOR, name)
-		self.assertTrue(oauth.is_oauth(doc))
+		self.assertTrue(oauth.is_oauth({"auth_method": "OAuth"}))
 
 	def test_is_oauth_false_for_api_key_and_unset(self):
 		name = self._mk("Personal", "gh-key", owner=PLAIN_A, preset="GitHub")
 		doc = frappe.get_doc(CONNECTOR, name)
 		self.assertFalse(oauth.is_oauth(doc))
+		self.assertFalse(oauth.is_oauth({"auth_method": "API Key"}))
 		self.assertFalse(oauth.is_oauth({}))
-
-	def test_resolve_access_token_returns_none_without_connected_app(self):
-		# A bare dict-like row is enough here - Jarvis Connector's own
-		# mandatory_depends_on already forbids saving auth_method=OAuth with no
-		# connected_app, so this exercises resolve_access_token's OWN "unset"
-		# guard rather than a state the DocType itself would ever persist.
-		self.assertIsNone(oauth.resolve_access_token({"auth_method": "OAuth"}))
-
-	def test_resolve_access_token_returns_none_without_a_token_cache(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-no-cache", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.set_user(PLAIN_A)
-		doc = frappe.get_doc(CONNECTOR, name)
-		self.assertIsNone(oauth.resolve_access_token(doc))
-
-	def test_resolve_access_token_returns_the_live_token(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-live", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		self._mk_token_cache(app, PLAIN_A, access_token="secret-token")
-		frappe.set_user(PLAIN_A)
-		doc = frappe.get_doc(CONNECTOR, name)
-		self.assertEqual(oauth.resolve_access_token(doc), "secret-token")
-
-	def test_nonrefreshable_token_is_used_as_is_never_refreshed(self):
-		"""A classic GitHub OAuth-App token has expires_in=0 and no refresh token,
-		so Frappe reports it expired one second in. resolve_access_token must return
-		the stored token directly, NOT route it through get_active_token (whose
-		doomed refresh returns None and leaks the client secret). We assert this by
-		making get_active_token blow up: it must never be reached."""
-		app_name = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal",
-			"gh-noref",
-			owner=PLAIN_A,
-			preset="GitHub",
-			auth_method="OAuth",
-			connected_app=app_name,
-		)
-		self._mk_token_cache(app_name, PLAIN_A, access_token="long-lived", expires_in=0, refresh_token=None)
-		frappe.set_user(PLAIN_A)
-		doc = frappe.get_doc(CONNECTOR, name)
-
-		def _boom(*a, **k):
-			raise AssertionError("get_active_token must not be called for a non-refreshable token")
-
-		with patch(
-			"frappe.integrations.doctype.connected_app.connected_app.ConnectedApp.get_active_token",
-			_boom,
-		):
-			self.assertEqual(oauth.resolve_access_token(doc), "long-lived")
 
 
 class TestBrokerCredentialOauth(_ConnectorApiTestCase):
-	def test_credential_raises_connector_not_ready_without_a_token(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-broker", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.set_user(PLAIN_A)
-		doc = frappe.get_doc(CONNECTOR, name)
-		with self.assertRaises(broker._BrokerError) as ctx:
-			broker._credential(doc)
-		self.assertEqual(ctx.exception.code, "connector_not_ready")
-
-	def test_credential_returns_the_live_token(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-broker-ok", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		self._mk_token_cache(app, PLAIN_A, access_token="secret-token")
-		frappe.set_user(PLAIN_A)
-		doc = frappe.get_doc(CONNECTOR, name)
-		self.assertEqual(broker._credential(doc), "secret-token")
-
 	def test_credential_unchanged_for_api_key_row(self):
 		name = self._mk("Personal", "gh-apikey", owner=PLAIN_A, preset="GitHub", credential="my-pat")
 		frappe.set_user(PLAIN_A)
@@ -756,47 +587,6 @@ class TestBrokerCredentialOauth(_ConnectorApiTestCase):
 
 
 class TestAddConnectorOauth(_ConnectorApiTestCase):
-	def test_oauth_ignores_credential_and_sets_connected_app_server_side(self):
-		app = self._mk_connected_app("GitHub")
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.add_connector(
-			preset="GitHub",
-			base_url="https://attacker.invalid/steal",
-			scope="Personal",
-			credential="a-pasted-secret",
-			auth_method="OAuth",
-		)
-		self._connectors.append(out["name"])
-		self.assertEqual(out["auth_method"], "OAuth")
-		self.assertNotIn("credential", out)
-		reloaded = frappe.get_doc(CONNECTOR, out["name"])
-		self.assertEqual(reloaded.connected_app, app)
-		self.assertFalse(reloaded.get_password("credential", raise_exception=False))
-
-	def test_oauth_create_succeeds_without_base_url_or_credential(self):
-		"""The SPA's Connect flow posts only preset + scope + auth_method (no
-		base_url, no credential). add_connector must accept that - base_url and
-		credential are defaulted - or the only OAuth create path 500s before the
-		body runs."""
-		app = self._mk_connected_app("GitHub")
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.add_connector(preset="GitHub", scope="Personal", auth_method="OAuth")
-		self._connectors.append(out["name"])
-		self.assertEqual(out["auth_method"], "OAuth")
-		reloaded = frappe.get_doc(CONNECTOR, out["name"])
-		self.assertEqual(reloaded.connected_app, app)
-
-	def test_oauth_without_a_configured_connected_app_is_rejected(self):
-		frappe.set_user(PLAIN_A)
-		with self.assertRaises(frappe.ValidationError):
-			connectors_api.add_connector(
-				preset="GitHub",
-				base_url="",
-				scope="Personal",
-				credential="",
-				auth_method="OAuth",
-			)
-
 	def test_invalid_auth_method_rejected(self):
 		frappe.set_user(PLAIN_A)
 		with self.assertRaises(frappe.ValidationError):
@@ -811,9 +601,9 @@ class TestAddConnectorOauth(_ConnectorApiTestCase):
 
 class TestConnectorOauthFieldGuard(_ConnectorApiTestCase):
 	"""The controller must stop a raw DocType write (a Jarvis User has create/write)
-	from steering an OAuth row at an arbitrary Connected App, and must strip a
-	Connected App off a non-OAuth row - the API's server-side pinning is not the
-	only write path."""
+	from aiming a preset row at any host but its own pinned one - the API's
+	server-side pinning is not the only write path. (The sign-in link guards live
+	in ``TestConnectorTwoEngineGuard``.)"""
 
 	def _insert_as(self, user, **fields):
 		prev = frappe.session.user
@@ -834,34 +624,6 @@ class TestConnectorOauthFieldGuard(_ConnectorApiTestCase):
 		finally:
 			frappe.set_user(prev)
 
-	def test_oauth_row_cannot_point_at_an_arbitrary_connected_app(self):
-		self._mk_connected_app("GitHub")  # the preset's real app
-		other = self._mk_connected_app("Other")  # a stranger app the user should not reach
-		with self.assertRaises(frappe.PermissionError):
-			self._insert_as(PLAIN_A, key="gh-evil", auth_method="OAuth", connected_app=other)
-
-	def test_key_row_never_keeps_a_connected_app_link(self):
-		app = self._mk_connected_app("GitHub")
-		doc = self._insert_as(PLAIN_A, key="gh-key", auth_method="API Key", connected_app=app)
-		self.assertFalse(doc.connected_app)
-
-	def test_legit_oauth_row_resaves_even_if_preset_now_resolves_elsewhere(self):
-		"""A row created against app A must not lock when a second same-provider app
-		later wins the resolver (provider_name is not unique). Resave with the link
-		unchanged must NOT re-derive-and-403, or the row can never be disabled."""
-		app_a = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-resave", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app_a
-		)
-		# A second Connected App with the same provider_name now exists; the resolver
-		# (get_all limit=1) may return it instead of app_a.
-		self._mk_connected_app_named("GitHub-2", provider_name="GitHub")
-		frappe.set_user(PLAIN_A)
-		doc = frappe.get_doc(CONNECTOR, name)
-		doc.label = "renamed by owner"
-		doc.save()  # no ignore_permissions - the guard runs; must not throw
-		self.assertEqual(frappe.get_doc(CONNECTOR, name).connected_app, app_a)
-
 	def test_raw_write_cannot_repoint_a_catalog_preset(self):
 		"""The API ignores a caller's base_url for a preset; the controller must too,
 		or a raw DocType write could aim a preset row at any public host and have
@@ -881,38 +643,6 @@ class TestConnectorOauthFieldGuard(_ConnectorApiTestCase):
 
 
 class TestListConnectorsOauth(_ConnectorApiTestCase):
-	def test_annotates_oauth_configured_and_connected(self):
-		"""Sign-in state is per (app, USER), not per row (design 6a): a Shared row
-		reads Connected for the user who signed in and Not connected for a
-		coworker who has not. Two rows for the same user on the same app would
-		necessarily agree, so the negative case has to be a different user."""
-		app = self._mk_connected_app("GitHub")
-		personal = self._mk(
-			"Personal", "gh-connected", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		shared = self._mk("Shared", "gh-shared", preset="GitHub", auth_method="OAuth", connected_app=app)
-		self._mk_token_cache(app, PLAIN_A)  # only A has signed in
-
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.list_connectors()
-		mine = {r["name"]: r for r in out["mine"]}
-		shared_rows = {r["name"]: r for r in out["shared"]}
-		self.assertTrue(mine[personal]["oauth_configured"])
-		self.assertTrue(mine[personal]["oauth_connected"])
-		self.assertTrue(shared_rows[shared]["oauth_configured"])
-		self.assertTrue(
-			shared_rows[shared]["oauth_connected"], "A signed in, so the shared row is connected for A"
-		)
-		self.assertNotIn("connected_app", mine[personal])
-
-		frappe.set_user(PLAIN_B)
-		out = connectors_api.list_connectors()
-		shared_rows = {r["name"]: r for r in out["shared"]}
-		self.assertTrue(shared_rows[shared]["oauth_configured"])
-		self.assertFalse(
-			shared_rows[shared]["oauth_connected"], "B never signed in: same row, not connected for B"
-		)
-
 	def test_api_key_rows_are_not_annotated_with_oauth_fields(self):
 		name = self._mk("Personal", "gh-plain", owner=PLAIN_A, preset="GitHub")
 		frappe.set_user(PLAIN_A)
@@ -922,137 +652,13 @@ class TestListConnectorsOauth(_ConnectorApiTestCase):
 		self.assertNotIn("oauth_connected", row)
 
 
-class TestTestConnectorOauth(_ConnectorApiTestCase):
-	def test_no_token_returns_connector_not_ready_without_probing(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-test", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.set_user(PLAIN_A)
-		with patch.object(broker, "test_connector") as probe:
-			out = connectors_api.test_connector(name)
-		self.assertFalse(out["ok"])
-		self.assertEqual(out["error"]["code"], "connector_not_ready")
-		probe.assert_not_called()
-
-	def test_live_token_reaches_the_broker_probe(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-test-ok", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		self._mk_token_cache(app, PLAIN_A, access_token="secret-token")
-		frappe.set_user(PLAIN_A)
-		with patch.object(broker, "test_connector", return_value={"ok": True, "tools": _TOOLS}) as probe:
-			out = connectors_api.test_connector(name)
-		self.assertTrue(out["ok"])
-		probe.assert_called_once()
-
-
 class TestConnectOauth(_ConnectorApiTestCase):
-	def test_returns_authorize_url_for_oauth_row(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-connect", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.connect_oauth(name)
-		self.assertTrue(out["ok"])
-		self.assertIn("https://example.invalid/authorize", out["url"])
-		# initiate_web_application_flow creates the user's Token Cache to hold state.
-		self._token_caches.append(f"{app}-{PLAIN_A}")
-
-	def test_started_but_unfinished_flow_is_not_reported_as_connected(self):
-		# initiate_web_application_flow creates the Token Cache up front to hold
-		# `state`, before the user ever reaches the provider's consent screen - it
-		# must NOT read as "connected" (a bare get_token_cache truthy check would
-		# say the opposite; see _oauth_status).
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal",
-			"gh-unfinished",
-			owner=PLAIN_A,
-			preset="GitHub",
-			auth_method="OAuth",
-			connected_app=app,
-		)
-		frappe.set_user(PLAIN_A)
-		connectors_api.connect_oauth(name)
-		self._token_caches.append(f"{app}-{PLAIN_A}")
-
-		out = connectors_api.list_connectors()
-		row = next(r for r in out["mine"] if r["name"] == name)
-		self.assertTrue(row["oauth_configured"])
-		self.assertFalse(row["oauth_connected"], "a state-only Token Cache is not a completed sign-in")
-
 	def test_not_oauth_row_returns_not_oauth_error(self):
 		name = self._mk("Personal", "gh-notoauth", owner=PLAIN_A, preset="GitHub")
 		frappe.set_user(PLAIN_A)
 		out = connectors_api.connect_oauth(name)
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "not_oauth")
-
-	def test_unconfigured_connected_app_returns_friendly_error(self):
-		# auth_method OAuth with no connected_app can only happen on a row whose
-		# Connected App was removed (or edited out-of-band) after creation - the
-		# endpoint must still fail cleanly, not raise. Create with a real Connected
-		# App (the DocType's own mandatory_depends_on forbids saving without one),
-		# then blank it via a raw write to simulate that later state.
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-unconf", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.db.set_value(CONNECTOR, name, "connected_app", None, update_modified=False)
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.connect_oauth(name)
-		self.assertFalse(out["ok"])
-		self.assertEqual(out["error"]["code"], "oauth_not_configured")
-
-	def test_stranger_cannot_connect_someone_elses_personal_connector(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-private", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.set_user(PLAIN_B)
-		with self.assertRaises(frappe.PermissionError):
-			connectors_api.connect_oauth(name)
-
-
-class TestDisconnectOauth(_ConnectorApiTestCase):
-	def test_deletes_the_current_users_token_cache(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal",
-			"gh-disconnect",
-			owner=PLAIN_A,
-			preset="GitHub",
-			auth_method="OAuth",
-			connected_app=app,
-		)
-		tc_name = self._mk_token_cache(app, PLAIN_A)
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.disconnect_oauth(name)
-		self.assertEqual(out, {"ok": True})
-		self.assertFalse(frappe.db.exists("Token Cache", tc_name))
-		self._token_caches.remove(tc_name)
-
-	def test_idempotent_when_never_connected(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-never", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.disconnect_oauth(name)
-		self.assertEqual(out, {"ok": True})
-
-	def test_idempotent_when_connected_app_missing(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "gh-noapp", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
-		frappe.db.set_value(CONNECTOR, name, "connected_app", None, update_modified=False)
-		frappe.set_user(PLAIN_A)
-		out = connectors_api.disconnect_oauth(name)
-		self.assertEqual(out, {"ok": True})
 
 
 # --------------------------------------------------------------------------- #
@@ -1402,7 +1008,6 @@ class TestAddConnectorMcpOauth(_McpOauthTestCase):
 
 		row = frappe.get_doc(CONNECTOR, out["name"])
 		self.assertEqual(row.mcp_oauth_client, out["name"], "the client is named after its connector")
-		self.assertFalse(row.connected_app, "the Custom URL path must never take the preset link")
 
 		client = frappe.get_doc(CLIENT_DT, out["name"])
 		self.assertEqual(client.registration_mode, "dcr")
@@ -1573,7 +1178,6 @@ class TestCatalogPresetFlows(_McpOauthTestCase):
 		row = frappe.get_doc(CONNECTOR, out["name"])
 		self.assertEqual(row.base_url, RAZORPAY_BASE_URL)
 		self.assertEqual(row.mcp_oauth_client, out["name"])
-		self.assertFalse(row.connected_app, "a catalog dcr preset never takes the Connected App link")
 		self.assertEqual(row.key, "razorpay")
 
 		client = frappe.get_doc(CLIENT_DT, out["name"])
@@ -1666,7 +1270,6 @@ class TestCatalogPresetFlows(_McpOauthTestCase):
 		self.assertEqual(transport.calls, [])
 		row = frappe.get_doc(CONNECTOR, out["name"])
 		self.assertFalse(row.mcp_oauth_client)
-		self.assertFalse(row.connected_app)
 		self.assertEqual(row.get_password("credential", raise_exception=False), "tok")
 
 
@@ -1735,9 +1338,9 @@ class TestSetOauthClientCredentials(_McpOauthTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			connectors_api.set_oauth_client_credentials(name, "override", "")
 
-	def test_rejected_for_a_preset_row(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk("Shared", "gh-static", preset="GitHub", auth_method="OAuth", connected_app=app)
+	def test_rejected_for_a_row_without_a_signin_client(self):
+		# A row with no MCP OAuth Client (here a key row) has nothing to configure.
+		name = self._mk("Shared", "gh-nosignin", preset="GitHub", auth_method="API Key")
 		frappe.set_user(ADMIN_USER)
 		with self.assertRaises(frappe.ValidationError):
 			connectors_api.set_oauth_client_credentials(name, "override", "")
@@ -2158,20 +1761,22 @@ class TestListConnectorsMcpOauth(_McpOauthTestCase):
 		self.assertFalse(rows[connected]["needs_static_client"])
 		self.assertEqual(rows[connected]["signin_host"], "as.example.invalid")
 		self.assertNotIn("mcp_oauth_client", rows[connected])
-		self.assertNotIn("connected_app", rows[connected])
 
 		self.assertFalse(rows[pending]["oauth_configured"])
 		self.assertTrue(rows[pending]["needs_static_client"])
 		self.assertEqual(rows[pending]["oauth_redirect_uri"], connectors_api.oauth_redirect_uri())
 
 	def test_preset_rows_report_a_signin_host_too(self):
-		app = self._mk_connected_app("GitHub")
-		name = self._mk(
-			"Personal", "list-gh", owner=PLAIN_A, preset="GitHub", auth_method="OAuth", connected_app=app
-		)
+		# A bring-your-own-app static preset (GitHub) is seeded from the catalog with
+		# no network, and reports the vendor's sign-in host from the pinned issuer.
 		frappe.set_user(PLAIN_A)
-		row = next(r for r in connectors_api.list_connectors()["mine"] if r["name"] == name)
-		self.assertEqual(row["signin_host"], "example.invalid")
+		transport = _ScriptedTransport({})  # any hop would be an AssertionError
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
+			out = connectors_api.add_connector(preset="GitHub", scope="Personal", auth_method="OAuth")
+		self._connectors.append(out["name"])
+		self.assertEqual(transport.calls, [])
+		row = next(r for r in connectors_api.list_connectors()["mine"] if r["name"] == out["name"])
+		self.assertEqual(row["signin_host"], "github.com")
 
 
 class TestUpdateConnectorMcpOauth(_McpOauthTestCase):
@@ -2191,7 +1796,7 @@ class TestUpdateConnectorMcpOauth(_McpOauthTestCase):
 
 class TestConnectorTwoEngineGuard(_McpOauthTestCase):
 	"""The controller is the last line: a Jarvis User has raw create/write on
-	Jarvis Connector, so neither engine's link may be steerable from a direct
+	Jarvis Connector, so the sign-in link may not be steerable from a direct
 	DocType write."""
 
 	def _insert_as(self, user, **fields):
@@ -2218,30 +1823,9 @@ class TestConnectorTwoEngineGuard(_McpOauthTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			self._insert_as(PLAIN_A, key="guard-thief", auth_method="OAuth", mcp_oauth_client=victim)
 
-	def test_row_cannot_carry_both_engines(self):
-		app = self._mk_connected_app("GitHub")
-		victim = self._mk_mcp_connector("guard-both-src")
-		with self.assertRaises(frappe.PermissionError):
-			self._insert_as(
-				PLAIN_A,
-				key="guard-both",
-				auth_method="OAuth",
-				connected_app=app,
-				mcp_oauth_client=victim,
-			)
-
-	def test_custom_url_oauth_row_may_not_take_the_preset_link(self):
-		app = self._mk_connected_app("GitHub")
-		with self.assertRaises(frappe.PermissionError):
-			self._insert_as(PLAIN_A, key="guard-preset", auth_method="OAuth", connected_app=app)
-
-	def test_key_row_keeps_neither_link(self):
-		app = self._mk_connected_app("GitHub")
+	def test_key_row_keeps_no_link(self):
 		victim = self._mk_mcp_connector("guard-key-src")
-		doc = self._insert_as(
-			PLAIN_A, key="guard-key", auth_method="API Key", connected_app=app, mcp_oauth_client=victim
-		)
-		self.assertFalse(doc.connected_app)
+		doc = self._insert_as(PLAIN_A, key="guard-key", auth_method="API Key", mcp_oauth_client=victim)
 		self.assertFalse(doc.mcp_oauth_client)
 
 	def test_unchanged_resave_does_not_lock_the_row(self):
@@ -2264,20 +1848,6 @@ class TestConnectorTwoEngineGuard(_McpOauthTestCase):
 			doc.save()
 		self.assertEqual(self._reload_doc(name).preset, "Custom URL")
 
-	def test_catalog_signin_preset_may_not_take_the_preset_link(self):
-		# Razorpay is a dcr preset: the discovery engine backs it, so the Connected
-		# App link is not its to claim even though it is not a Custom URL row.
-		app = self._mk_connected_app("GitHub")
-		with self.assertRaises(frappe.PermissionError):
-			self._insert_as(
-				PLAIN_A,
-				key="guard-rzp-app",
-				preset="Razorpay",
-				base_url=RAZORPAY_BASE_URL,
-				auth_method="OAuth",
-				connected_app=app,
-			)
-
 	def test_catalog_signin_preset_cannot_borrow_another_connectors_client(self):
 		victim = self._mk_mcp_connector("guard-rzp-victim")
 		with self.assertRaises(frappe.PermissionError):
@@ -2290,7 +1860,10 @@ class TestConnectorTwoEngineGuard(_McpOauthTestCase):
 				mcp_oauth_client=victim,
 			)
 
-	def test_connected_app_preset_may_not_take_the_discovery_link(self):
+	def test_static_preset_cannot_borrow_another_connectors_client(self):
+		# GitHub is a bring-your-own-app static preset: it seeds its OWN client, so
+		# a raw write that points it at another connector's client is refused, the
+		# same as the Razorpay case above.
 		victim = self._mk_mcp_connector("guard-gh-victim")
 		with self.assertRaises(frappe.PermissionError):
 			self._insert_as(
@@ -2331,3 +1904,71 @@ class TestConnectorTwoEngineGuard(_McpOauthTestCase):
 		self.assertFalse(frappe.db.exists(CONNECTOR, name))
 		self.assertFalse(frappe.db.exists(CLIENT_DT, name), "the client must not outlive its connector")
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_A}"), "tokens must not be orphaned")
+
+
+class TestStaticCatalogSeeding(_McpOauthTestCase):
+	"""A bring-your-own-app static preset (GitHub) seeds its client straight from
+	the catalog's pinned endpoints, with NO discovery and NO outbound request. The
+	customer then pastes their own app's id/secret, and connect builds an authorize
+	URL against those endpoints."""
+
+	GH_BASE_URL = "https://api.githubcopilot.com/mcp/"
+	GH_ISSUER = "https://github.com/login/oauth"
+	GH_AUTHORIZE = "https://github.com/login/oauth/authorize"
+	GH_TOKEN = "https://github.com/login/oauth/access_token"
+
+	def _add_github_oauth(self):
+		"""Create a GitHub OAuth connector through the real add_connector path,
+		asserting the seed made no network call, and return its name."""
+		transport = _ScriptedTransport({})  # any hop is an AssertionError
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
+			out = connectors_api.add_connector(preset="GitHub", scope="Personal", auth_method="OAuth")
+		self._connectors.append(out["name"])
+		self.assertEqual(transport.calls, [], "pinned endpoints mean discovery never runs")
+		# The client link was written with frappe.db.set_value after the connector's
+		# own insert, so drop the cached pre-link doc before anyone re-reads the row.
+		frappe.clear_document_cache(CONNECTOR, out["name"])
+		return out["name"]
+
+	def test_add_seeds_a_static_client_from_the_catalog_endpoints(self):
+		frappe.set_user(PLAIN_A)
+		name = self._add_github_oauth()
+
+		row = frappe.get_doc(CONNECTOR, name)
+		self.assertEqual(row.auth_method, "OAuth")
+		self.assertEqual(row.mcp_oauth_client, name, "the client is named after its connector")
+
+		client = frappe.get_doc(CLIENT_DT, name)
+		self.assertEqual(client.registration_mode, "static")
+		self.assertEqual(client.issuer, self.GH_ISSUER)
+		self.assertEqual(client.authorization_endpoint, self.GH_AUTHORIZE)
+		self.assertEqual(client.token_endpoint, self.GH_TOKEN)
+		self.assertEqual(client.registration_endpoint, "")
+		self.assertFalse(client.client_id, "the customer pastes their own id/secret later")
+		self.assertFalse(client.iss_param_supported)
+		self.assertEqual(client.scope, "repo read:org")
+		self.assertEqual(client.resource, canonical_resource(self.GH_BASE_URL))
+		self.assertEqual(client.resource_indicator, self.GH_BASE_URL)
+
+	def test_row_reads_as_needing_a_static_client_until_creds_are_pasted(self):
+		frappe.set_user(PLAIN_A)
+		name = self._add_github_oauth()
+		row = next(r for r in connectors_api.list_connectors()["mine"] if r["name"] == name)
+		self.assertFalse(row["oauth_configured"])
+		self.assertTrue(row["needs_static_client"])
+		self.assertEqual(row["signin_host"], "github.com")
+
+	def test_seeded_client_builds_an_authorize_url_on_github(self):
+		frappe.set_user(PLAIN_A)
+		name = self._add_github_oauth()
+		# The customer registered their own app at GitHub and pasted its id/secret.
+		connectors_api.set_oauth_client_credentials(name, "byoa-client", "byoa-secret")
+		url, _state = self._connect(name)
+
+		self.assertTrue(url.startswith(self.GH_AUTHORIZE))
+		query = parse_qs(urlparse(url).query)
+		self.assertEqual(query["client_id"], ["byoa-client"])
+		self.assertEqual(query["redirect_uri"], [connectors_api.oauth_redirect_uri()])
+		self.assertEqual(query["scope"], ["repo read:org"])
+		self.assertEqual(query["code_challenge_method"], ["S256"])
+		self.assertIn("code_challenge", query)

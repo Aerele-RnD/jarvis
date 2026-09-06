@@ -1,5 +1,11 @@
 # Connector OAuth tier — design (v1)
 
+> **SUPERSEDED (2026-09-06):** the Connected App path described here was removed.
+> GitHub is now a static bring-your-own-app provider on the sign-in engine (its
+> endpoints are pinned in the catalog and its client is seeded without discovery;
+> the customer registers their own app and pastes its client id/secret). See
+> `MCP_OAUTH_CLIENT_DESIGN.md` for the engine of record.
+
 Status: **design, awaiting one decision + one credential handover** (see §8).
 Scope: adds a browser "Connect" flow to the connectors feature that already ships in
 this branch (paste-a-token). This doc folds in the **OAuth-first, key-fallback**

@@ -9,12 +9,12 @@ Design:
     it is also an ALLOWLIST: it decides which endpoint a saved connector's
     credential is ever allowed to be sent to. That is why it belongs behind
     code review rather than a database row an admin edits unsupervised.
-  * A `base_url` is a fixed vendor endpoint, `auth` picks one of the five
+  * A `base_url` is a fixed vendor endpoint, `auth` picks one of the four
     connection flows the discovery engine supports, and `logo` / `help_url` /
     `hint` are display copy. None of that is secret. What IS secret, a static
     preset's registered client id/secret, or a user's own bearer token, never
     lives in this module or its overlay; those are stored per tenant on the
-    Connected App or the connector row's own credential field.
+    connector's own sign-in client or the connector row's own credential field.
   * `apply_overlay` is the seam for a later admin-pushed extension of this
     list. An overlay may only disable a shipped entry or add a brand-new one;
     it can never change what an existing name already means (its key,
@@ -38,9 +38,18 @@ AUTH_DCR = "dcr"
 AUTH_STATIC = "static"
 AUTH_TOKEN = "token"
 AUTH_OPEN = "open"
-AUTH_CONNECTED_APP = "connected_app"
 
-_ALLOWED_AUTH = frozenset({AUTH_DCR, AUTH_STATIC, AUTH_TOKEN, AUTH_OPEN, AUTH_CONNECTED_APP})
+_ALLOWED_AUTH = frozenset({AUTH_DCR, AUTH_STATIC, AUTH_TOKEN, AUTH_OPEN})
+
+#: The pinned sign-in endpoints a metadata-less static provider declares: a
+#: provider whose sign-in service publishes no discovery document names its own
+#: issuer / authorization_endpoint / token_endpoint here so a client can be
+#: seeded from the reviewed catalog instead of running discovery. Only a
+#: `static` provider may carry them, and each must be https - a preset that could
+#: redirect a sign-in anywhere is exactly what the catalog allowlist exists to
+#: prevent.
+_ENDPOINT_FIELDS = ("issuer", "authorization_endpoint", "token_endpoint")
+_ENDPOINT_AUTHS = frozenset({AUTH_STATIC})
 
 _ALLOWED_CATEGORIES = frozenset(
 	{
@@ -69,7 +78,16 @@ CUSTOM_URL = "Custom URL"
 class Provider:
 	"""One connector preset. `name` is the display name and IS the `preset`
 	value a saved `Jarvis Connector` row stores; `key` is the short slug the
-	agent addresses it by."""
+	agent addresses it by.
+
+	The four trailing fields are the metadata-less-static seam: a provider whose
+	sign-in service publishes no discovery document declares its `issuer` /
+	`authorization_endpoint` / `token_endpoint` (and a default `scopes`) here, so
+	`_setup_mcp_oauth_client` can seed the client from the catalog instead of
+	running discovery. They are OPTIONAL and only ever set on a `static` provider
+	(`validate` enforces that), so every self-registering (`dcr`) preset and every
+	`static` preset that DOES publish metadata (Slack, Box, ...) leaves them None
+	and keeps the discovery path unchanged."""
 
 	name: str
 	key: str
@@ -80,6 +98,10 @@ class Provider:
 	help_url: str | None
 	hint: str | None
 	enabled: bool = True
+	issuer: str | None = None
+	authorization_endpoint: str | None = None
+	token_endpoint: str | None = None
+	scopes: str | None = None
 
 
 def validate(providers: tuple[Provider, ...]) -> None:
@@ -111,6 +133,17 @@ def validate(providers: tuple[Provider, ...]) -> None:
 		if provider.category not in _ALLOWED_CATEGORIES:
 			raise ValueError(f"invalid category for {provider.name!r}: {provider.category!r}")
 
+		declared_endpoints = [f for f in _ENDPOINT_FIELDS if getattr(provider, f)]
+		if declared_endpoints and provider.auth not in _ENDPOINT_AUTHS:
+			raise ValueError(
+				f"sign-in endpoints are only allowed on a static provider for "
+				f"{provider.name!r}: {provider.auth!r}"
+			)
+		for field in _ENDPOINT_FIELDS:
+			value = getattr(provider, field)
+			if value and not value.startswith("https://"):
+				raise ValueError(f"{field} must be https for {provider.name!r}: {value!r}")
+
 
 PROVIDERS: tuple[Provider, ...] = (
 	# --- already shipping (order preserved) --------------------------------
@@ -118,11 +151,19 @@ PROVIDERS: tuple[Provider, ...] = (
 		name="GitHub",
 		key="github",
 		base_url="https://api.githubcopilot.com/mcp/",
-		auth=AUTH_CONNECTED_APP,
+		auth=AUTH_STATIC,
 		category="dev",
 		logo="github",
-		help_url="https://github.com/settings/personal-access-tokens/new",
-		hint="Needs a fine-grained token scoped to the repos you want connected, with Contents (read) and Pull requests (read and write) permissions.",
+		help_url="https://github.com/settings/applications/new",
+		hint="Register your own GitHub app, then paste its details here.",
+		# GitHub's sign-in service publishes no discovery document, so its
+		# endpoints are pinned here for the metadata-less static seam:
+		# `_setup_mcp_oauth_client` seeds the client straight from these reviewed
+		# constants and makes no outbound request.
+		issuer="https://github.com/login/oauth",
+		authorization_endpoint="https://github.com/login/oauth/authorize",
+		token_endpoint="https://github.com/login/oauth/access_token",
+		scopes="repo read:org",
 	),
 	Provider(
 		name="Atlassian",
@@ -213,8 +254,8 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="work",
 		logo=None,
-		help_url=None,
-		hint=None,
+		help_url="https://developer.monday.com/apps/docs/oauth",
+		hint="Register your own Monday.com app, then paste its details here.",
 	),
 	Provider(
 		name="Slack",
@@ -223,8 +264,8 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="work",
 		logo="slack",
-		help_url=None,
-		hint=None,
+		help_url="https://api.slack.com/apps",
+		hint="Register your own Slack app, then paste its details here.",
 	),
 	# --- files ------------------------------------------------------------
 	Provider(
@@ -244,8 +285,8 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="files",
 		logo="box",
-		help_url=None,
-		hint=None,
+		help_url="https://app.box.com/developers/console",
+		hint="Register your own Box app, then paste its details here.",
 	),
 	# --- design ------------------------------------------------------------
 	Provider(
@@ -317,8 +358,8 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="data",
 		logo="airtable",
-		help_url=None,
-		hint=None,
+		help_url="https://airtable.com/create/oauth",
+		hint="Register your own Airtable app, then paste its details here.",
 	),
 	Provider(
 		name="Sentry",
@@ -538,7 +579,19 @@ def apply_overlay(
 	an admin-editable Settings row."""
 	by_existing = {provider.name: provider for provider in providers}
 	result = list(providers)
-	fixed_fields = ("key", "base_url", "auth", "category", "logo", "help_url", "hint")
+	fixed_fields = (
+		"key",
+		"base_url",
+		"auth",
+		"category",
+		"logo",
+		"help_url",
+		"hint",
+		"issuer",
+		"authorization_endpoint",
+		"token_endpoint",
+		"scopes",
+	)
 
 	for entry in overlay:
 		name = entry.get("name")
@@ -564,6 +617,10 @@ def apply_overlay(
 				help_url=entry.get("help_url"),
 				hint=entry.get("hint"),
 				enabled=entry.get("enabled", True),
+				issuer=entry.get("issuer"),
+				authorization_endpoint=entry.get("authorization_endpoint"),
+				token_endpoint=entry.get("token_endpoint"),
+				scopes=entry.get("scopes"),
 			)
 			result.append(provider)
 			by_existing[name] = provider

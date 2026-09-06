@@ -119,80 +119,67 @@ class JarvisConnector(Document):
 			)
 
 	def _guard_oauth_fields(self) -> None:
-		"""Two OAuth engines back this DocType, a row may belong to exactly one of
-		them, and the in-app provider catalog decides which. ``connected_app`` is
-		allowed ONLY on a ``connected_app``-class preset (Frappe's Connected App,
-		the shipped GitHub tier); ``mcp_oauth_client`` is allowed ONLY on a Custom
-		URL row or a ``dcr``/``static`` preset (the discovery-driven engine). A
-		``token``/``open`` preset has no sign-in at all, so ``auth_method="OAuth"``
-		on one is refused outright, as it is in ``connectors_api.add_connector`` -
-		this is the defense-in-depth copy of that rule. A key row carries neither
-		link.
+		"""One sign-in engine backs this DocType, and the in-app provider catalog
+		decides whether a preset may use it. ``mcp_oauth_client`` is allowed ONLY on
+		a Custom URL row or a ``dcr``/``static`` preset. A ``token``/``open`` preset
+		has no sign-in at all, so ``auth_method="OAuth"`` on one is refused outright,
+		as it is in ``connectors_api.add_connector`` - this is the defense-in-depth
+		copy of that rule. A key row carries no link.
 
 		A Jarvis User has raw write/create on this DocType, so without this guard
-		they could aim either link wherever they liked, or route a key-only app
-		into the sign-in engine - the API's server-side pinning lives only in
+		they could aim the link wherever they liked, or route a key-only app into the
+		sign-in engine - the API's server-side pinning lives only in
 		``connectors_api``. Server writes under ``ignore_permissions`` (the API
 		already resolved the link itself) skip the check.
 
-		The pin is enforced ONLY when a link (or ``auth_method``) is being set or
-		changed - never on an unchanged resave. Re-deriving every save would 403 a
-		legitimately created row the moment the preset resolves elsewhere (e.g. a
-		second Connected App with the same ``provider_name`` later wins the
-		``get_all(limit=1)`` lookup), locking the row against even a disable or
-		relabel. Steering still cannot slip through: aiming a row at another app
-		requires setting or changing the field, which this catches.
+		The pin is enforced ONLY when the link (or ``auth_method``, or ``preset``) is
+		being set or changed - never on an unchanged resave, so a legitimately
+		created row is never locked against a later disable or relabel. Steering
+		still cannot slip through: aiming a row at another app requires setting or
+		changing the field, which this catches.
 
-		WHY A NEW DISCOVERY-ENGINE ROW MAY CARRY NEITHER LINK: an ``MCP OAuth
-		Client`` links back to its connector, so it cannot exist until the connector
-		does. ``add_connector`` therefore inserts the row first and writes the link
-		immediately after. That window is safe because a client naming THIS
-		connector cannot exist yet, so any ``mcp_oauth_client`` present on a new row
-		is by definition foreign - which the ownership check below rejects.
+		WHY A NEW OAUTH ROW MAY CARRY NO LINK: an ``MCP OAuth Client`` links back to
+		its connector, so it cannot exist until the connector does. ``add_connector``
+		therefore inserts the row first and writes the link immediately after. That
+		window is safe because a client naming THIS connector cannot exist yet, so
+		any ``mcp_oauth_client`` present on a new row is by definition foreign - which
+		the ownership check below rejects.
 
-		``catalog`` is frappe-free and safe to import lazily here; the Connected App
-		resolver is imported lazily too, to avoid a load-time cycle between this
-		controller and ``connectors_api``."""
+		``catalog`` is frappe-free and safe to import lazily here."""
 		from jarvis.connectors import catalog
 
 		if self.flags.ignore_permissions:
 			return
 		if (self.auth_method or "") != "OAuth":
-			# A non-OAuth (key) connector must never carry either engine's link.
-			self.connected_app = None
+			# A non-OAuth (key) connector must never carry the engine's link.
 			self.mcp_oauth_client = None
 			return
 		if not (
 			self.is_new()
-			or self.has_value_changed("connected_app")
 			or self.has_value_changed("mcp_oauth_client")
 			or self.has_value_changed("auth_method")
-			# A preset change re-decides WHICH engine and WHICH app this row is for,
-			# so it has to be re-checked even when both links sit still: without it a
-			# raw write could move a row onto another preset while keeping the first
-			# one's client (and its registered credentials).
+			# A preset change re-decides WHICH app this row is for, so it has to be
+			# re-checked even when the link sits still: without it a raw write could
+			# move a row onto another preset while keeping the first one's client (and
+			# its registered credentials).
 			or self.has_value_changed("preset")
 		):
 			return
-		if self.connected_app and self.mcp_oauth_client:
-			frappe.throw(_("This app cannot use two sign-in methods at once."), frappe.PermissionError)
 		preset = self.preset or ""
 		auth_class = catalog.auth_of(preset)
 		if preset == catalog.CUSTOM_URL or auth_class in (catalog.AUTH_DCR, catalog.AUTH_STATIC):
 			self._guard_discovery_oauth()
-		elif auth_class == catalog.AUTH_CONNECTED_APP:
-			self._guard_preset_oauth()
 		else:
 			# A key-only or no-credential app, or a preset the catalog does not carry
 			# at all. Neither has a sign-in, so neither may claim one.
 			frappe.throw(_("This app connects with a key, not a sign-in."), frappe.PermissionError)
 
 	def _guard_discovery_oauth(self) -> None:
-		"""Discovery engine only (a Custom URL row, or a ``dcr``/``static`` catalog
-		preset): never the Connected App link. The client must be the one created
-		FOR this connector - checked by reading the client's own ``connector`` field
-		rather than trusting the link's direction, so a user cannot borrow another
-		connector's client (and with it another tenant's discovered endpoints).
+		"""Sign-in engine only (a Custom URL row, or a ``dcr``/``static`` catalog
+		preset). The client must be the one created FOR this connector - checked by
+		reading the client's own ``connector`` field rather than trusting the link's
+		direction, so a user cannot borrow another connector's client (and with it
+		another tenant's discovered endpoints).
 
 		Changing the PRESET of a row that already has a client is refused outright.
 		The ownership check below would pass (the client does name this connector),
@@ -200,8 +187,6 @@ class JarvisConnector(Document):
 		and the preset change has already re-pinned this row at a different one -
 		so the row would present another provider's registration, exactly the
 		re-point ``update_connector`` refuses for a Custom URL address."""
-		if self.connected_app:
-			frappe.throw(_("This app is not set up for sign-in."), frappe.PermissionError)
 		if not self.mcp_oauth_client:
 			return
 		if not self.is_new() and self.has_value_changed("preset"):
@@ -224,17 +209,6 @@ class JarvisConnector(Document):
 		except ValueError:
 			same_address = False
 		if not same_address:
-			frappe.throw(_("This app is not set up for sign-in."), frappe.PermissionError)
-
-	def _guard_preset_oauth(self) -> None:
-		"""A ``connected_app``-class preset + OAuth: the Connected App path only,
-		pinned to the app the preset resolves to server-side."""
-		from jarvis.chat.connectors_api import _resolve_connected_app_for_preset
-
-		if self.mcp_oauth_client:
-			frappe.throw(_("This app is not set up for sign-in."), frappe.PermissionError)
-		expected = _resolve_connected_app_for_preset(self.preset)
-		if not self.connected_app or self.connected_app != expected:
 			frappe.throw(_("This app is not set up for sign-in."), frappe.PermissionError)
 
 	def on_trash(self) -> None:

@@ -804,8 +804,7 @@ export const setConnectorAllowedActions = (name, actions) =>
 export const updateConnector = (name, p) => call(CN + "update_connector", { name, ...(p || {}) });
 export const deleteConnector = (name) => call(CN + "delete_connector", { name });
 // OAuth tier: {ok, url} to redirect the browser to, or {ok:false, error}.
-// The return trip is handled by Frappe's Connected App callback on the preset
-// path, and by connectors_api.mcp_oauth_callback on the Custom URL path.
+// The return trip is handled by connectors_api.mcp_oauth_callback for every row.
 export const connectOauth = (name) => call(CN + "connect_oauth", { name });
 // Deletes the CURRENT user's sign-in for this connector. Idempotent.
 export const disconnectOauth = (name) => call(CN + "disconnect_oauth", { name });
