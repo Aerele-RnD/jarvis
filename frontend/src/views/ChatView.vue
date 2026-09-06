@@ -4687,21 +4687,21 @@ function dismissBillingAlert() {
 // The version pill (header) exposes { getEl, pulse }; the soft banner reaches
 // for it to minimise-into-pill on dismiss.
 const versionPillRef = ref(null);
-// Any composer-region billing/readiness alert that is live. The soft update
-// banner yields to all of them (never stacks, never competes with something the
-// customer must act on) - it is the least urgent surface here.
+// Composer-region alerts that make the chat genuinely UNUSABLE or paused - a
+// "please update" nudge on top of one of these is noise, so the soft banner
+// yields to them. It does NOT yield to the soft, chat-still-works heads-ups
+// (workersWarnNotice, llmApplying, llmApplyStuck): those render above the
+// composer, don't visually conflict with the top-of-chat banner, and are common
+// (a bench low on workers would otherwise NEVER show the update banner).
 const hasUrgentAlert = computed(
 	() =>
 		!!(
 			replacedAlert.value ||
 			billingAlert.value ||
 			suspendedNotice.value ||
-			workersWarnNotice.value ||
 			noAiConnected.value ||
 			containerUnavailable.value ||
-			notReadyNotice.value ||
-			llmApplying.value ||
-			llmApplyStuck.value
+			notReadyNotice.value
 		)
 );
 // The soft banner shows whenever it's a not-snoozed soft/severe notice AND the
