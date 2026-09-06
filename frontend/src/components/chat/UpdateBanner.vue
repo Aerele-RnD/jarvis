@@ -3,7 +3,7 @@
 	     the billing/readiness alerts use). The wrapper is the FLIP target that
 	     minimises into the version pill on dismiss. -->
 	<div ref="bannerEl" class="jv-updatebanner" :style="flipStyle">
-		<Banner type="info" :message="message">
+		<Banner type="info" :message="message" align="center">
 			<template #action>
 				<button class="jv-ub-btn" type="button" @click="onWhatsNew">What's new</button>
 				<button class="jv-ub-btn jv-ub-btn--ghost" type="button" @click="dismiss">
