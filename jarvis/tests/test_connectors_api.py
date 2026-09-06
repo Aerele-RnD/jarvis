@@ -1778,6 +1778,30 @@ class TestListConnectorsMcpOauth(_McpOauthTestCase):
 		row = next(r for r in connectors_api.list_connectors()["mine"] if r["name"] == out["name"])
 		self.assertEqual(row["signin_host"], "github.com")
 
+	def test_a_shared_static_rows_connection_state_is_per_user(self):
+		# Design 6a on the engine path: a Shared connector's sign-in is PER USER, so
+		# the SAME row reads connected for the user who signed in and not for anyone
+		# else. Mirrors the old test_annotates_oauth_configured_and_connected, using
+		# the engine's own token store.
+		frappe.set_user(ADMIN_USER)
+		transport = _ScriptedTransport({})  # GitHub seeds with no network
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
+			out = connectors_api.add_connector(preset="GitHub", scope="Shared", auth_method="OAuth")
+		name = out["name"]
+		self._connectors.append(name)
+		connectors_api.set_oauth_client_credentials(name, "shared-client", "shared-secret")
+		self._mk_mcp_token(name, PLAIN_A)  # only PLAIN_A has signed in
+
+		frappe.set_user(PLAIN_A)
+		row_a = next(r for r in connectors_api.list_connectors()["shared"] if r["name"] == name)
+		self.assertTrue(row_a["oauth_configured"])
+		self.assertTrue(row_a["oauth_connected"])
+
+		frappe.set_user(PLAIN_B)
+		row_b = next(r for r in connectors_api.list_connectors()["shared"] if r["name"] == name)
+		self.assertTrue(row_b["oauth_configured"], "the shared client is configured for everyone")
+		self.assertFalse(row_b["oauth_connected"], "but PLAIN_B has not signed in")
+
 
 class TestUpdateConnectorMcpOauth(_McpOauthTestCase):
 	def test_a_signed_in_row_cannot_be_re_pointed(self):
@@ -1972,3 +1996,142 @@ class TestStaticCatalogSeeding(_McpOauthTestCase):
 		self.assertEqual(query["scope"], ["repo read:org"])
 		self.assertEqual(query["code_challenge_method"], ["S256"])
 		self.assertIn("code_challenge", query)
+
+	# --- self-heal: a GitHub OAuth row that never got a client is not a dead end - #
+	def _raw_github_oauth_no_client(self, key: str, *, owner: str = PLAIN_A, scope: str = "Personal"):
+		"""A GitHub OAuth row inserted with NO client (the controller allows it: a
+		client cannot exist before its connector). base_url is pinned to GitHub's by
+		the controller, so this is exactly the half-created shape a lost seed leaves."""
+		name = self._mk(scope, key, owner=owner, preset="GitHub", auth_method="OAuth")
+		self.assertFalse(frappe.db.exists(CLIENT_DT, name), "starts with no client")
+		return name
+
+	def test_set_creds_seeds_a_client_for_a_row_that_never_got_one(self):
+		name = self._raw_github_oauth_no_client("gh-heal-creds")
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.set_oauth_client_credentials(name, "byoa-client", "byoa-secret")
+		self.assertTrue(out["oauth_configured"])
+		self.assertFalse(out["needs_static_client"])
+		client = frappe.get_doc(CLIENT_DT, name)
+		self.assertEqual(client.registration_mode, "static")
+		self.assertEqual(client.client_id, "byoa-client")
+		self.assertEqual(client.issuer, self.GH_ISSUER)
+		self.assertEqual(client.token_endpoint, self.GH_TOKEN)
+
+	def test_connect_seeds_a_missing_client_then_asks_for_credentials(self):
+		# connect_oauth on a no-client row seeds it IN PLACE (never deleting the row),
+		# then reports it still needs the customer's credentials.
+		name = self._raw_github_oauth_no_client("gh-heal-connect-noc")
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.connect_oauth(name)
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "oauth_not_configured")
+		self.assertTrue(frappe.db.exists(CLIENT_DT, name), "the client was seeded, not left absent")
+		self.assertEqual(frappe.db.get_value(CLIENT_DT, name, "registration_mode"), "static")
+
+	def test_connect_returns_a_github_authorize_url_after_self_heal(self):
+		name = self._raw_github_oauth_no_client("gh-heal-connect")
+		frappe.set_user(PLAIN_A)
+		# Pasting the credentials self-heals the missing client, then connect works.
+		connectors_api.set_oauth_client_credentials(name, "byoa-client", "byoa-secret")
+		url, _state = self._connect(name)
+		self.assertTrue(url.startswith(self.GH_AUTHORIZE))
+		self.assertEqual(urlparse(url).hostname, "github.com")
+		self.assertEqual(parse_qs(urlparse(url).query)["client_id"], ["byoa-client"])
+
+	def test_a_no_client_static_row_lists_as_needing_a_static_client(self):
+		# _oauth_status for a no-client static row must report needs_static_client so
+		# the SPA shows the credentials block, not a dead "Setup needed".
+		name = self._raw_github_oauth_no_client("gh-noclient-list")
+		frappe.set_user(PLAIN_A)
+		row = next(r for r in connectors_api.list_connectors()["mine"] if r["name"] == name)
+		self.assertFalse(row["oauth_configured"])
+		self.assertTrue(row["needs_static_client"])
+		self.assertEqual(row["signin_host"], "github.com")
+		self.assertEqual(row["oauth_redirect_uri"], connectors_api.oauth_redirect_uri())
+
+	def test_a_seeding_failure_after_insert_deletes_the_row(self):
+		frappe.set_user(PLAIN_A)
+		transport = _ScriptedTransport({})
+		with (
+			patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport),
+			patch.object(
+				connectors_api, "_seed_static_client_from_catalog", side_effect=RuntimeError("boom")
+			),
+			self.assertRaises(frappe.ValidationError),
+		):
+			connectors_api.add_connector(preset="GitHub", scope="Personal", auth_method="OAuth")
+		self.assertFalse(
+			frappe.db.exists(CONNECTOR, {"key": "github", "owner": PLAIN_A}),
+			"a failed seed must not leave a half-created row behind",
+		)
+		self.assertEqual(transport.calls, [], "seeding never touches the network")
+
+	# --- fix 4: seeding must not spend the outbound rate-limit slot -------------- #
+	def test_seeding_never_spends_the_outbound_rate_limit(self):
+		frappe.set_user(PLAIN_A)
+		transport = _ScriptedTransport({})
+		rate_calls: list[str] = []
+
+		def _rate(user):
+			rate_calls.append(user)
+			return True  # pretend the bucket is already full
+
+		with (
+			patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport),
+			patch.object(connectors_api, "_over_test_rate_limit", side_effect=_rate),
+		):
+			for i in range(3):
+				out = connectors_api.add_connector(
+					preset="GitHub", key=f"gh-seed-{i}", scope="Personal", auth_method="OAuth"
+				)
+				self._connectors.append(out["name"])
+				self.assertTrue(out["needs_static_client"])
+		self.assertEqual(rate_calls, [], "a catalog seed must not consult the outbound rate limit")
+		self.assertEqual(transport.calls, [], "and it makes no outbound request")
+
+	def test_discovery_still_spends_the_outbound_rate_limit(self):
+		# The companion: a discovery preset (Razorpay) DOES meter, so a tripped limit
+		# refuses it before any request leaves and before any row is created.
+		frappe.set_user(PLAIN_A)
+		transport = _ScriptedTransport({})
+		with (
+			patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport),
+			patch.object(connectors_api, "_over_test_rate_limit", return_value=True),
+			self.assertRaises(frappe.ValidationError),
+		):
+			connectors_api.add_connector(preset="Razorpay", scope="Personal", auth_method="OAuth")
+		self.assertEqual(transport.calls, [], "refused by the rate limit before any request leaves")
+		self.assertFalse(frappe.db.exists(CONNECTOR, {"key": "razorpay", "owner": PLAIN_A}))
+
+	# --- fix 5a: a GitHub token with no expiry is used without a refresh --------- #
+	def test_github_token_is_used_end_to_end_without_a_refresh(self):
+		frappe.set_user(PLAIN_A)
+		name = self._add_github_oauth()
+		connectors_api.set_oauth_client_credentials(name, "byoa-client", "byoa-secret")
+		_url, state = self._connect(name)
+
+		# GitHub hands back a long-lived token: NO expires_in, NO refresh_token.
+		token_resp = _json_result({"access_token": "gho_x", "scope": "repo,read:org", "token_type": "bearer"})
+		callback_transport = _ScriptedTransport({self.GH_TOKEN: token_resp})
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", callback_transport):
+			# GitHub's seeded client reports iss_param_supported False, so no iss rides
+			# back; passing one would trip validate_iss's "not supported + present" row.
+			response = self._callback(code="the-code", state=state)
+
+		self.assertEqual(response["location"], f"/jarvis?settings=connectors&oauth={name}")
+		self.assertEqual(callback_transport.urls(), [self.GH_TOKEN], "only the token endpoint")
+
+		token = frappe.get_doc(TOKEN_DT, f"{name}-{PLAIN_A}")
+		self.assertEqual(token.get_password("access_token", raise_exception=False), "gho_x")
+		self.assertFalse(token.expires_at, "no expiry was returned, so none is stored")
+		self.assertFalse(
+			token.get_password("refresh_token", raise_exception=False), "no refresh token was returned"
+		)
+
+		# Resolving the credential hands the stored token over with ZERO transport
+		# calls: a token with no expiry is never routed through a refresh.
+		resolve_transport = _ScriptedTransport({})  # any call is an AssertionError
+		with patch.object(oauth, "MCP_OAUTH_TRANSPORT", resolve_transport):
+			self.assertEqual(broker._credential(self._reload_doc(name)), "gho_x")
+		self.assertEqual(resolve_transport.calls, [], "resolution makes no outbound call")

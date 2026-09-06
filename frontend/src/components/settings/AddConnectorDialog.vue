@@ -165,10 +165,7 @@
 						:modelValue="form.credential"
 						@update:modelValue="(v) => onCredentialChange(v)"
 					/>
-					<p
-						v-if="(tokenHint || tokenDocsUrl) && presetAuthClass !== 'static'"
-						class="text-xs text-ink-gray-5"
-					>
+					<p v-if="tokenHint || tokenDocsUrl" class="text-xs text-ink-gray-5">
 						{{ tokenHint }}
 						<a
 							v-if="tokenDocsUrl"
@@ -377,8 +374,10 @@ const props = defineProps({
 	// The row being edited, or null for a fresh Add.
 	connector: { type: Object, default: null },
 	// listConnectors()'s catalog: [{ name, key, auth, category, logo, help_url,
-	// hint }], enabled providers in catalog order. Drives the preset picker and
-	// every auth-class branch below instead of a hardcoded list.
+	// hint, token_hint, token_help_url }], enabled providers in catalog order.
+	// Drives the preset picker and every auth-class branch below instead of a
+	// hardcoded list. token_hint/token_help_url carry paste-a-token guidance for
+	// the "use a token instead" fallback (help_url/hint guide app registration).
 	catalog: { type: Array, default: () => [] },
 });
 const emit = defineEmits(["update:modelValue", "saved"]);
@@ -461,21 +460,29 @@ const connectorDisplayName = computed(() => {
 	if (form.preset && form.preset !== "Custom URL") return form.preset;
 	return "this connector";
 });
-// Per-preset token guidance shown under the Access token field now comes
-// straight from the catalog entry (jarvis/connectors/catalog.py): its own
-// hint text plus a link to help_url when the vendor has one. Custom URL has
-// no catalog entry, so it gets the one generic hint below instead - a named
-// preset with neither a hint nor a help_url renders no guidance line at all
-// (see the template's v-if on this).
+// Per-preset token guidance shown under the Access token field. A sign-in
+// preset's own hint/help_url now guide REGISTERING an app, not pasting a token,
+// so the paste-a-token copy lives on dedicated token_hint/token_help_url fields
+// (jarvis/connectors/catalog.py) shown here on ANY class when present. For a
+// token-class preset the plain hint IS token guidance, so it is the fallback;
+// a sign-in preset with no token_hint renders no line (its hint stays in the
+// register-your-own-app block instead). Custom URL has no catalog entry, so it
+// gets the one generic hint below.
 const tokenHint = computed(() => {
 	if (form.preset === "Custom URL") return CUSTOM_URL_TOKEN_HINT;
 	const entry = props.catalog.find((c) => c.name === form.preset);
-	return entry?.hint || "";
+	if (!entry) return "";
+	if (entry.token_hint) return entry.token_hint;
+	// A static provider's hint is its app-registration guide, not token advice;
+	// every other class (token, dcr) keeps its key guidance on this fallback.
+	return entry.auth !== "static" ? entry.hint || "" : "";
 });
 const tokenDocsUrl = computed(() => {
 	if (form.preset === "Custom URL") return "";
 	const entry = props.catalog.find((c) => c.name === form.preset);
-	return entry?.help_url || "";
+	if (!entry) return "";
+	if (entry.token_help_url) return entry.token_help_url;
+	return entry.auth !== "static" ? entry.help_url || "" : "";
 });
 // The bring-your-own-app copy shown in the static-client block: the catalog's
 // own one-line hint plus a link to the vendor's app-creation page (catalog

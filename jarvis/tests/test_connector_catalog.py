@@ -172,7 +172,17 @@ class TestAccessors(unittest.TestCase):
 
 class TestToPublic(unittest.TestCase):
 	def test_only_allowed_fields_exposed(self):
-		allowed = {"name", "key", "auth", "category", "logo", "help_url", "hint"}
+		allowed = {
+			"name",
+			"key",
+			"auth",
+			"category",
+			"logo",
+			"help_url",
+			"hint",
+			"token_hint",
+			"token_help_url",
+		}
 		for row in catalog.to_public():
 			self.assertEqual(set(row), allowed)
 			self.assertNotIn("base_url", row)
@@ -362,6 +372,62 @@ class TestCatalogEndpointFields(unittest.TestCase):
 		bad = replace(catalog.by_name("GitHub"), token_endpoint="http://insecure.example/token")
 		with self.assertRaises(ValueError):
 			catalog.validate((bad,))
+
+	def test_partial_endpoint_declaration_rejected(self):
+		# All three endpoints together or none: a client seeded from a
+		# half-declared provider would have a hole discovery would otherwise fill.
+		bad = replace(catalog.by_name("GitHub"), token_endpoint=None)
+		with self.assertRaises(ValueError):
+			catalog.validate((bad,))
+
+	def test_scopes_rejected_on_a_non_signin_provider(self):
+		# A token preset has no sign-in to scope, so a `scopes` on one is a mistake.
+		bad = replace(catalog.by_name("Stripe"), scopes="read")
+		with self.assertRaises(ValueError):
+			catalog.validate((bad,))
+
+	def test_scopes_allowed_on_a_dcr_provider(self):
+		# A self-registering preset passes its scope through to registration, so a
+		# scope on one is legitimate and must NOT be rejected.
+		ok = replace(catalog.by_name("Linear"), scopes="read")
+		catalog.validate((ok,))  # must not raise
+
+
+class TestTokenGuidanceFields(unittest.TestCase):
+	"""`token_hint` / `token_help_url` carry the paste-a-token guidance for the
+	"use a token instead" fallback, kept separate from `hint` / `help_url` because
+	those now guide registering your own app on a sign-in preset."""
+
+	def test_github_ships_paste_a_token_guidance_verbatim(self):
+		github = catalog.by_name("GitHub")
+		self.assertEqual(
+			github.token_hint,
+			"Needs a fine-grained token scoped to the repos you want connected, with "
+			"Contents (read) and Pull requests (read and write) permissions.",
+		)
+		self.assertEqual(github.token_help_url, "https://github.com/settings/personal-access-tokens/new")
+
+	def test_to_public_exposes_both_token_fields_for_github(self):
+		github_row = next(row for row in catalog.to_public() if row["name"] == "GitHub")
+		self.assertEqual(
+			github_row["token_hint"],
+			"Needs a fine-grained token scoped to the repos you want connected, with "
+			"Contents (read) and Pull requests (read and write) permissions.",
+		)
+		self.assertEqual(
+			github_row["token_help_url"], "https://github.com/settings/personal-access-tokens/new"
+		)
+
+	def test_token_help_url_must_be_https(self):
+		bad = replace(catalog.by_name("GitHub"), token_help_url="http://insecure.example/token")
+		with self.assertRaises(ValueError):
+			catalog.validate((bad,))
+
+	def test_token_hint_is_allowed_on_any_auth_class(self):
+		# A plain hint string carries no endpoint, so it is display copy allowed on a
+		# token / open preset the same as a static one.
+		ok = replace(catalog.by_name("Microsoft Learn"), token_hint="Paste a token.")
+		catalog.validate((ok,))  # must not raise
 
 	def test_overlay_adds_a_metadata_less_static_provider(self):
 		overlay = [

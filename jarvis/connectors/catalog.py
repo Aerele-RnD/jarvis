@@ -51,6 +51,12 @@ _ALLOWED_AUTH = frozenset({AUTH_DCR, AUTH_STATIC, AUTH_TOKEN, AUTH_OPEN})
 _ENDPOINT_FIELDS = ("issuer", "authorization_endpoint", "token_endpoint")
 _ENDPOINT_AUTHS = frozenset({AUTH_STATIC})
 
+#: `scopes` names the permissions a sign-in asks for, so it only means anything on
+#: a provider that HAS a sign-in: a `static` preset (its own default) or a `dcr`
+#: preset (passed through to registration). A `token` / `open` preset has no
+#: sign-in to scope, so a scope on one is a catalog mistake the allowlist rejects.
+_SCOPES_AUTHS = frozenset({AUTH_STATIC, AUTH_DCR})
+
 _ALLOWED_CATEGORIES = frozenset(
 	{
 		"payments",
@@ -80,14 +86,21 @@ class Provider:
 	value a saved `Jarvis Connector` row stores; `key` is the short slug the
 	agent addresses it by.
 
-	The four trailing fields are the metadata-less-static seam: a provider whose
-	sign-in service publishes no discovery document declares its `issuer` /
-	`authorization_endpoint` / `token_endpoint` (and a default `scopes`) here, so
+	The `issuer` / `authorization_endpoint` / `token_endpoint` / `scopes` fields are
+	the metadata-less-static seam: a provider whose sign-in service publishes no
+	discovery document declares its endpoints (and a default `scopes`) here, so
 	`_setup_mcp_oauth_client` can seed the client from the catalog instead of
 	running discovery. They are OPTIONAL and only ever set on a `static` provider
-	(`validate` enforces that), so every self-registering (`dcr`) preset and every
-	`static` preset that DOES publish metadata (Slack, Box, ...) leaves them None
-	and keeps the discovery path unchanged."""
+	(`validate` enforces that, all three endpoints together or none), so every
+	self-registering (`dcr`) preset and every `static` preset that DOES publish
+	metadata (Slack, Box, ...) leaves them None and keeps the discovery path
+	unchanged.
+
+	`token_hint` / `token_help_url` are the paste-a-token guidance shown when a user
+	picks "use a token instead" of a sign-in. They are display copy allowed on ANY
+	auth class (`validate` only requires `token_help_url` be https), kept separate
+	from `hint` / `help_url` because on a sign-in preset those now carry the
+	register-your-own-app guide, not token guidance."""
 
 	name: str
 	key: str
@@ -102,6 +115,8 @@ class Provider:
 	authorization_endpoint: str | None = None
 	token_endpoint: str | None = None
 	scopes: str | None = None
+	token_hint: str | None = None
+	token_help_url: str | None = None
 
 
 def validate(providers: tuple[Provider, ...]) -> None:
@@ -139,10 +154,27 @@ def validate(providers: tuple[Provider, ...]) -> None:
 				f"sign-in endpoints are only allowed on a static provider for "
 				f"{provider.name!r}: {provider.auth!r}"
 			)
+		if declared_endpoints and len(declared_endpoints) != len(_ENDPOINT_FIELDS):
+			# ALL three or NONE: a client seeded from a half-declared provider would
+			# have a hole where discovery would otherwise fill one, so a partial
+			# declaration is a catalog bug, not a seedable provider.
+			raise ValueError(
+				f"a static provider must declare all sign-in endpoints or none for {provider.name!r}"
+			)
 		for field in _ENDPOINT_FIELDS:
 			value = getattr(provider, field)
 			if value and not value.startswith("https://"):
 				raise ValueError(f"{field} must be https for {provider.name!r}: {value!r}")
+
+		if provider.scopes and provider.auth not in _SCOPES_AUTHS:
+			raise ValueError(
+				f"scopes are only allowed on a static or self-registering provider for "
+				f"{provider.name!r}: {provider.auth!r}"
+			)
+		if provider.token_help_url and not provider.token_help_url.startswith("https://"):
+			raise ValueError(
+				f"token_help_url must be https for {provider.name!r}: {provider.token_help_url!r}"
+			)
 
 
 PROVIDERS: tuple[Provider, ...] = (
@@ -164,6 +196,11 @@ PROVIDERS: tuple[Provider, ...] = (
 		authorization_endpoint="https://github.com/login/oauth/authorize",
 		token_endpoint="https://github.com/login/oauth/access_token",
 		scopes="repo read:org",
+		# `hint`/`help_url` above now guide registering your own GitHub app, so the
+		# older paste-a-token guidance lives on its own fields for the "use a token
+		# instead" fallback, restored verbatim from the pre-sign-in catalog.
+		token_hint="Needs a fine-grained token scoped to the repos you want connected, with Contents (read) and Pull requests (read and write) permissions.",
+		token_help_url="https://github.com/settings/personal-access-tokens/new",
 	),
 	Provider(
 		name="Atlassian",
@@ -538,9 +575,11 @@ def auth_of(name: str, *, providers: tuple[Provider, ...] = PROVIDERS) -> str | 
 
 def to_public(*, providers: tuple[Provider, ...] = PROVIDERS) -> list[dict]:
 	"""The fields the SPA may see, enabled entries only, catalog order: name,
-	key, auth, category, logo, help_url, hint. Never `base_url`, the endpoint
-	is server-pinned and never client input, and never `enabled` (a disabled
-	entry is simply absent instead)."""
+	key, auth, category, logo, help_url, hint, token_hint, token_help_url. Never
+	`base_url`, the endpoint is server-pinned and never client input, and never
+	`enabled` (a disabled entry is simply absent instead). `token_hint` /
+	`token_help_url` are public strings (paste-a-token guidance) the SPA shows on
+	the "use a token instead" fallback."""
 	return [
 		{
 			"name": provider.name,
@@ -550,6 +589,8 @@ def to_public(*, providers: tuple[Provider, ...] = PROVIDERS) -> list[dict]:
 			"logo": provider.logo,
 			"help_url": provider.help_url,
 			"hint": provider.hint,
+			"token_hint": provider.token_hint,
+			"token_help_url": provider.token_help_url,
 		}
 		for provider in providers
 		if provider.enabled
@@ -591,6 +632,8 @@ def apply_overlay(
 		"authorization_endpoint",
 		"token_endpoint",
 		"scopes",
+		"token_hint",
+		"token_help_url",
 	)
 
 	for entry in overlay:
@@ -621,6 +664,8 @@ def apply_overlay(
 				authorization_endpoint=entry.get("authorization_endpoint"),
 				token_endpoint=entry.get("token_endpoint"),
 				scopes=entry.get("scopes"),
+				token_hint=entry.get("token_hint"),
+				token_help_url=entry.get("token_help_url"),
 			)
 			result.append(provider)
 			by_existing[name] = provider

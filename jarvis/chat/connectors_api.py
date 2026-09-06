@@ -386,9 +386,25 @@ def _oauth_status(doc) -> dict:
 
 	Every OAuth row is backed by the sign-in engine's ``MCP OAuth Client``; a row
 	whose client has not been seeded yet has nothing to sign in with and reads as
-	not configured."""
+	not configured.
+
+	A row on a ``static`` preset that has not been seeded yet is NOT a dead end: it
+	reads as ``needs_static_client`` so the SPA shows the credentials block (with the
+	callback URL to register at the provider) rather than a dead "Setup needed", and
+	:func:`connect_oauth` / :func:`set_oauth_client_credentials` seed the client the
+	moment the user acts."""
 	if doc.get("mcp_oauth_client"):
 		return _mcp_oauth_status(doc)
+	preset = (doc.get("preset") or "").strip()
+	if catalog.auth_of(preset) == catalog.AUTH_STATIC:
+		provider = catalog.by_name(preset)
+		return {
+			"oauth_configured": False,
+			"oauth_connected": False,
+			"signin_host": _host(provider.issuer) if provider and provider.issuer else "",
+			"needs_static_client": True,
+			"oauth_redirect_uri": oauth_redirect_uri(),
+		}
 	return {"oauth_configured": False, "oauth_connected": False, "signin_host": ""}
 
 
@@ -683,14 +699,18 @@ def add_connector(
 		"enabled": 1,
 	}
 	engine_oauth = auth_method == oauth.OAUTH_AUTH_METHOD and _uses_discovery_engine(preset)
+	# A bring-your-own-app static preset (GitHub) seeds its client straight from the
+	# catalog and makes NO outbound request, so it must not spend the outbound slot.
+	seeds_from_catalog = engine_oauth and _catalog_seed_provider(preset) is not None
 	if engine_oauth:
 		# Discovery below is real egress, to a host the CALLER chose on the Custom
 		# URL path and to a vendor on the preset path, so it is rate limited exactly
-		# like the Test button either way. A bring-your-own-app static preset seeds
-		# from the catalog and makes no request, but sharing the gate keeps the rule
-		# simple. Without it the endpoint is an unmetered outbound-request amplifier
-		# for any Jarvis User.
-		if _over_test_rate_limit(frappe.session.user):
+		# like the Test button either way. Without the gate the discovery endpoint is
+		# an unmetered outbound-request amplifier for any Jarvis User. The seeding
+		# branch makes no request, so it is deliberately NOT metered - metering it
+		# would let a slow trickle of catalog-seeded creates lock a user out of the
+		# Test button and real sign-ins.
+		if not seeds_from_catalog and _over_test_rate_limit(frappe.session.user):
 			frappe.throw(_("Too many attempts. Please wait a moment and try again."))
 		doc_fields["credential"] = ""
 	else:
@@ -742,38 +762,96 @@ def _setup_mcp_oauth_client(doc) -> None:
 	discover() cannot run and MUST be skipped - the client is seeded straight from
 	the pinned, reviewed catalog values, making NO outbound request at all. Every
 	other row (a self-registering ``dcr`` preset, a static preset that publishes
-	metadata, or a Custom URL) keeps the discover() path below unchanged."""
-	preset = (doc.get("preset") or "").strip()
-	provider = catalog.by_name(preset) if preset else None
-	if catalog.auth_of(preset) == catalog.AUTH_STATIC and _provider_declares_endpoints(provider):
-		_seed_static_client_from_catalog(doc, provider)
+	metadata, or a Custom URL) keeps the discover() path unchanged.
+
+	ALL-OR-NOTHING: either half - the catalog seed or discovery/registration - is
+	wrapped, so a failure AFTER the row was inserted removes the row rather than
+	leaving a half-created, unusable connector behind. The seed half catches any
+	exception (a broken client insert is as much a dead end as a failed discovery);
+	the discovery half catches the engine's own ``OAuthError``."""
+	provider = _catalog_seed_provider((doc.get("preset") or "").strip())
+	if provider is not None:
+		try:
+			_seed_static_client_from_catalog(doc, provider)
+		except Exception as exc:
+			# ANY seed failure (not just an OAuthError) must not orphan the row: a
+			# broken client insert is as much a dead end as a failed discovery.
+			_discard_connector(doc)
+			frappe.throw(_oauth_error_message(getattr(exc, "code", "")))
 		return
 	try:
-		found = mcp_oauth.discover(
-			doc.base_url, transport=MCP_OAUTH_TRANSPORT, egress_allowed=broker._egress_allowed
-		)
-		scope = _requested_scope(found)
-		if found.registration_endpoint:
-			creds = mcp_oauth.register_dynamic(
-				found.registration_endpoint,
-				redirect_uri=oauth_redirect_uri(),
-				scope=scope,
-				transport=MCP_OAUTH_TRANSPORT,
-				egress_allowed=broker._egress_allowed,
-			)
-		else:
-			# No self-registration on offer: park a static client with no client_id
-			# until an administrator registers this workspace at the provider and
-			# fills it in via set_oauth_client_credentials.
-			creds = mcp_oauth.static_client("")
-		client = mcp_oauth_store.save_client(doc.name, found, creds, scope)
+		_discover_and_save_client(doc)
 	except mcp_oauth.OAuthError as exc:
-		frappe.delete_doc(CONNECTOR, doc.name, ignore_permissions=True, force=True)
-		frappe.db.commit()
+		_discard_connector(doc)
 		frappe.throw(_oauth_error_message(exc.code))
-		return
+
+
+def _discover_and_save_client(doc) -> None:
+	"""Discover ``doc``'s sign-in service, self-register with it when it supports
+	that, and store the result as the row's ``MCP OAuth Client``. Raises
+	``mcp_oauth.OAuthError`` on any discovery/registration failure and leaves the
+	row untouched - the CALLER decides whether a failure deletes the row (a fresh
+	create) or keeps it (a self-heal on an existing row).
+
+	The link is written with ``frappe.db.set_value`` because the client cannot exist
+	before the connector it points at: this is a second write on ONE create/heal,
+	not a user-initiated edit, and must not re-run the row's validation."""
+	found = mcp_oauth.discover(
+		doc.base_url, transport=MCP_OAUTH_TRANSPORT, egress_allowed=broker._egress_allowed
+	)
+	scope = _requested_scope(found)
+	if found.registration_endpoint:
+		creds = mcp_oauth.register_dynamic(
+			found.registration_endpoint,
+			redirect_uri=oauth_redirect_uri(),
+			scope=scope,
+			transport=MCP_OAUTH_TRANSPORT,
+			egress_allowed=broker._egress_allowed,
+		)
+	else:
+		# No self-registration on offer: park a static client with no client_id until
+		# an administrator registers this workspace at the provider and fills it in
+		# via set_oauth_client_credentials.
+		creds = mcp_oauth.static_client("")
+	client = mcp_oauth_store.save_client(doc.name, found, creds, scope)
 	frappe.db.set_value(CONNECTOR, doc.name, "mcp_oauth_client", client.name, update_modified=False)
 	doc.mcp_oauth_client = client.name
+
+
+def _discard_connector(doc) -> None:
+	"""Remove a just-created connector whose sign-in setup failed, so a failed setup
+	never leaves a half-created, unusable row behind. Only ever called from the
+	CREATE path (:func:`add_connector`), never from a self-heal on an existing row."""
+	frappe.delete_doc(CONNECTOR, doc.name, ignore_permissions=True, force=True)
+	frappe.db.commit()
+
+
+def _ensure_mcp_oauth_client(doc) -> None:
+	"""Make an existing OAuth row that carries no ``mcp_oauth_client`` usable again,
+	IN PLACE - never deleting the row. Raises ``mcp_oauth.OAuthError`` when discovery
+	cannot set one up; the caller keeps the row and surfaces a friendly error.
+
+	Three cases, in order:
+
+	  * the client doc already exists (only its link was lost) - rewrite the link and
+	    stop. This is what makes the heal IDEMPOTENT: ``mcp_oauth_store.save_client``
+	    overwrites ``client_id`` (it guards only the password fields), so re-seeding
+	    over a client whose admin already pasted an id/secret would wipe the id and
+	    strand the row. Never re-seed over an existing client.
+	  * a bring-your-own-app static preset with no client - SEED from the catalog,
+	    no network (the customer pastes their id/secret next).
+	  * every other discovery-engine preset - run the same discovery add_connector
+	    runs, against the row's already-resolved address."""
+	existing = mcp_oauth_store.client_for(doc.name)
+	if existing is not None:
+		frappe.db.set_value(CONNECTOR, doc.name, "mcp_oauth_client", existing.name, update_modified=False)
+		doc.mcp_oauth_client = existing.name
+		return
+	provider = _catalog_seed_provider((doc.get("preset") or "").strip())
+	if provider is not None:
+		_seed_static_client_from_catalog(doc, provider)
+		return
+	_discover_and_save_client(doc)
 
 
 def _requested_scope(found) -> str:
@@ -790,6 +868,18 @@ def _provider_declares_endpoints(provider) -> bool:
 	can be seeded without discovery. All three are required together - a
 	half-declared provider is a catalog bug, not a seedable one."""
 	return bool(provider and provider.issuer and provider.authorization_endpoint and provider.token_endpoint)
+
+
+def _catalog_seed_provider(preset: str):
+	"""The catalog provider for ``preset`` when it is a bring-your-own-app static
+	provider that pins its own sign-in endpoints (so its client is SEEDED from the
+	catalog with no discovery and no outbound request), else ``None``. The ONE
+	predicate the rate-limit gate, the create-time setup and the self-heal all
+	share, so they cannot drift on which presets skip discovery."""
+	provider = catalog.by_name(preset) if preset else None
+	if catalog.auth_of(preset) == catalog.AUTH_STATIC and _provider_declares_endpoints(provider):
+		return provider
+	return None
 
 
 def _seed_static_client_from_catalog(doc, provider) -> None:
@@ -1155,6 +1245,16 @@ def connect_oauth(name: str) -> dict:
 	if _over_test_rate_limit(frappe.session.user):
 		return _error("rate_limited", "Too many attempts. Please wait a moment and try again.")
 
+	if not doc.get("mcp_oauth_client") and _uses_discovery_engine(doc.get("preset") or ""):
+		# A row that never got a client (a raw insert, or a create whose seed did not
+		# run) is not a dead end: seed it from the catalog or discover it now, then
+		# proceed. Non-fatal - a discovery failure keeps the row the user already owns
+		# and returns a friendly error rather than deleting it.
+		try:
+			_ensure_mcp_oauth_client(doc)
+		except mcp_oauth.OAuthError as exc:
+			return _error("oauth_not_configured", _oauth_error_message(exc.code))
+
 	if doc.get("mcp_oauth_client"):
 		return _connect_mcp_oauth(doc)
 
@@ -1321,6 +1421,15 @@ def set_oauth_client_credentials(name: str, client_id: str, client_secret: str =
 		)
 	if not doc.has_permission("write"):
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	if not doc.get("mcp_oauth_client") and oauth.is_oauth(doc) and _uses_discovery_engine(doc.preset):
+		# The same self-heal connect_oauth does: an OAuth row that never got a client
+		# is still configurable here rather than a dead end waiting on an admin. A
+		# key row is gated out by is_oauth, so this never discovers for one. A
+		# discovery failure keeps the row and surfaces a friendly error.
+		try:
+			_ensure_mcp_oauth_client(doc)
+		except mcp_oauth.OAuthError as exc:
+			frappe.throw(_oauth_error_message(exc.code))
 	client = mcp_oauth_store.client_for(doc.name) if doc.get("mcp_oauth_client") else None
 	if client is None:
 		frappe.throw(_("This connector does not use this kind of sign-in."))
