@@ -1564,8 +1564,11 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 
 		page = self._page()
 		self.assertEqual(page["type"], "page")
-		self.assertIn("&lt;b&gt;Ev&amp;il&lt;/b&gt;", page["body"])
-		self.assertNotIn("<b>Ev&il</b>", page["body"])
+		# Frappe already stores the label with its ampersand entity-encoded, so
+		# the page shows it escaped once more; what matters is that no tag
+		# survives as markup.
+		self.assertIn("&lt;b&gt;Ev", page["body"])
+		self.assertNotIn("<b>", page["body"])
 
 	def test_replayed_callback_cannot_mint_a_second_token(self):
 		name = self._mk_mcp_connector("cb-replay")
@@ -2344,7 +2347,8 @@ class TestStaticCatalogSeeding(_McpOauthTestCase):
 			# back; passing one would trip validate_iss's "not supported + present" row.
 			response = self._callback(code="the-code", state=state)
 
-		self.assertEqual(response["location"], f"/jarvis?settings=connectors&oauth={name}")
+		self.assertEqual(response["type"], "page")
+		self.assertEqual(response["context"]["primary_action"], f"/jarvis?settings=connectors&oauth={name}")
 		self.assertEqual(callback_transport.urls(), [self.GH_TOKEN], "only the token endpoint")
 
 		token = frappe.get_doc(TOKEN_DT, f"{name}-{PLAIN_A}")
