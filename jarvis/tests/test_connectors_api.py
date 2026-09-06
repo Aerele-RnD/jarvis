@@ -1036,6 +1036,50 @@ class TestAddConnectorMcpOauth(_McpOauthTestCase):
 		)
 		self.assertEqual(posted["redirect_uris"], [connectors_api.oauth_redirect_uri()])
 
+	def test_registration_body_carries_client_name_and_uri(self):
+		# Atlassian's own registration endpoint 400s on a body with no
+		# client_name - it must always be sent, with the tenant's own brand and
+		# site host, not a bare "Jarvis" indistinguishable across every tenant.
+		self._set_single("agent_name", "Acme Bot")
+		script = _discovery_script()
+		script[MCP_REGISTER] = _json_result({"client_id": "dcr-client"}, status=201)
+		transport = _ScriptedTransport(script)
+		frappe.set_user(PLAIN_A)
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
+			out = connectors_api.add_connector(
+				preset="Custom URL", base_url=MCP_BASE_URL, scope="Personal", auth_method="OAuth"
+			)
+		self._connectors.append(out["name"])
+
+		redirect_uri = connectors_api.oauth_redirect_uri()
+		netloc = urlparse(redirect_uri).netloc
+		posted = json.loads(
+			next(c["body"] for c in transport.calls if c["url"] == MCP_REGISTER).decode("utf-8")
+		)
+		self.assertEqual(posted["client_name"], f"Acme Bot ({netloc})")
+		if urlparse(redirect_uri).scheme == "https":
+			self.assertEqual(posted["client_uri"], f"https://{netloc}")
+		else:
+			self.assertNotIn("client_uri", posted)
+
+	def test_registration_client_name_falls_back_to_jarvis(self):
+		self._set_single("agent_name", "")
+		script = _discovery_script()
+		script[MCP_REGISTER] = _json_result({"client_id": "dcr-client"}, status=201)
+		transport = _ScriptedTransport(script)
+		frappe.set_user(PLAIN_A)
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
+			out = connectors_api.add_connector(
+				preset="Custom URL", base_url=MCP_BASE_URL, scope="Personal", auth_method="OAuth"
+			)
+		self._connectors.append(out["name"])
+
+		netloc = urlparse(connectors_api.oauth_redirect_uri()).netloc
+		posted = json.loads(
+			next(c["body"] for c in transport.calls if c["url"] == MCP_REGISTER).decode("utf-8")
+		)
+		self.assertEqual(posted["client_name"], f"Jarvis ({netloc})")
+
 	def test_the_registered_client_auth_method_is_stored(self):
 		# We ASK for the secret in the body; a service that registers us for the
 		# header instead has its choice recorded and honoured from then on.
@@ -1139,6 +1183,30 @@ class TestAddConnectorMcpOauth(_McpOauthTestCase):
 			frappe.db.exists(CONNECTOR, {"key": "mcp_example_invalid", "owner": PLAIN_A}),
 			"a failed setup must not leave an unusable row behind",
 		)
+
+	def test_registration_failure_surfaces_the_providers_reason(self):
+		# Bug 2: the friendly sentence stays first, but the provider's own words
+		# (never ours) follow it, so the person hitting this is not stuck with
+		# a generic message that hides why the sign-in service refused.
+		script = _discovery_script()
+		script[MCP_REGISTER] = HttpResult(
+			status=400,
+			headers={"content-type": "application/json"},
+			json={"error": "invalid_redirect_uri", "error_description": "must use https"},
+			text="",
+		)
+		transport = _ScriptedTransport(script)
+		frappe.set_user(PLAIN_A)
+		with (
+			patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport),
+			self.assertRaises(frappe.ValidationError) as ctx,
+		):
+			connectors_api.add_connector(
+				preset="Custom URL", base_url=MCP_BASE_URL, scope="Personal", auth_method="OAuth"
+			)
+		message = str(ctx.exception)
+		self.assertIn("invalid_redirect_uri: must use https", message)
+		self.assertTrue(message.startswith("The sign-in service"), "the friendly sentence still comes first")
 
 	def test_permission_is_checked_before_any_outbound_request(self):
 		# A plain user asking for a Shared row is refused by the controller. That

@@ -140,6 +140,9 @@
 							class="self-start"
 							@click="startOauthConnect"
 						/>
+						<p v-if="connectError" class="text-xs text-ink-red-4">
+							{{ connectError }}
+						</p>
 					</div>
 					<Button
 						v-if="!rowName"
@@ -531,6 +534,11 @@ const savingClient = ref(false);
 // "Copied" flash on the callback-URL copy button, same idiom as
 // DirectSubscriptionCard's own copy button.
 const copied = ref(false);
+// Sign-in-box failure (startOauthConnect, saveStaticClient) shown inline under
+// whichever of the two buttons is on screen, same idiom as probeError above -
+// the user is looking at this box, not at a toast, when the provider says why
+// it refused.
+const connectError = ref("");
 
 // Shared by resetForCreate/resetForEdit/onPresetChange so the Check state
 // never survives a swap to a different preset or a fresh Add.
@@ -546,6 +554,7 @@ function resetCustomUrlOauthState() {
 	staticClient.secret = "";
 	savingClient.value = false;
 	copied.value = false;
+	connectError.value = "";
 }
 
 // The picker's opening preset: the catalog's own first entry (its order is
@@ -659,6 +668,7 @@ function switchAuthMethod(method) {
 	form.auth_method = method;
 	form.credential = "";
 	rowOauthConnected.value = false;
+	connectError.value = "";
 	testState.status = "idle";
 	testState.tools = [];
 	testState.message = "";
@@ -679,6 +689,7 @@ function applyOauthRowMeta(row) {
 async function startOauthConnect() {
 	if (connecting.value) return;
 	connecting.value = true;
+	connectError.value = "";
 	try {
 		if (!rowName.value) {
 			const row = await addConnector({
@@ -703,14 +714,15 @@ async function startOauthConnect() {
 			window.location.href = res.url;
 			return;
 		}
-		toast.error(
-			errHtml(
-				{ message: (res && res.error && res.error.message) || "" },
-				"Could not sign in."
-			)
-		);
+		// A plain assignment, not errMessage(): this dict is `_error()`'s raw
+		// JSON, never frappe-escaped, so decoding it as if it were escaped HTML
+		// (what errMessage does) would be the wrong transform for a provider
+		// that put markup in its own error text.
+		connectError.value = (res && res.error && res.error.message) || "Could not sign in.";
 	} catch (e) {
-		toast.error(errHtml(e));
+		// A thrown Frappe error IS escaped once server-side, so errMessage's
+		// decode is the correct (and only) transform here.
+		connectError.value = errMessage(e, "Could not sign in.");
 	} finally {
 		connecting.value = false;
 	}
@@ -722,13 +734,14 @@ async function saveStaticClient() {
 	const secret = staticClient.secret.trim();
 	if (!id || !secret) return;
 	savingClient.value = true;
+	connectError.value = "";
 	try {
 		const row = await setOauthClientCredentials(rowName.value, id, secret);
 		applyOauthRowMeta(row);
 		staticClient.id = "";
 		staticClient.secret = "";
 	} catch (e) {
-		toast.error(errHtml(e));
+		connectError.value = errMessage(e, "Could not save these details.");
 	} finally {
 		savingClient.value = false;
 	}

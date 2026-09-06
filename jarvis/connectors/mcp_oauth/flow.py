@@ -62,7 +62,11 @@ def build_authorize_url(
 
 def _parse_token_response(result) -> TokenSet:
 	if not (200 <= result.status < 300):
-		raise OAuthTokenError("token_request_failed", f"Token request returned HTTP {result.status}.")
+		detail = transport_module.provider_error_detail(result)
+		message = f"Token request returned HTTP {result.status}."
+		raise OAuthTokenError(
+			"token_request_failed", f"{message} ({detail})" if detail else message, detail=detail
+		)
 	doc = result.json if isinstance(result.json, dict) else {}
 	access_token = doc.get("access_token")
 	if not access_token or not isinstance(access_token, str):

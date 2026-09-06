@@ -610,6 +610,7 @@ class DiscoveryResourceIndicatorTests(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 class RegistrationTests(unittest.TestCase):
 	REGISTRATION_ENDPOINT = f"{AS_URL}/register"
+	CLIENT_NAME = "Jarvis (jarvis.example)"
 
 	def test_static_client_carries_mode(self):
 		creds = registration.static_client("gh-client-id", "gh-secret")
@@ -636,6 +637,7 @@ class RegistrationTests(unittest.TestCase):
 			self.REGISTRATION_ENDPOINT,
 			redirect_uri="https://jarvis.example/oauth/callback",
 			scope="repo read:org",
+			client_name=self.CLIENT_NAME,
 			transport=transport,
 		)
 
@@ -652,6 +654,25 @@ class RegistrationTests(unittest.TestCase):
 		# We are a confidential, server-side web client, and we say so.
 		self.assertEqual(sent["application_type"], "web")
 		self.assertEqual(sent["token_endpoint_auth_method"], "client_secret_post")
+		# Atlassian's own registration endpoint 400s on a body with no
+		# client_name - it must always be sent, never conditional.
+		self.assertEqual(sent["client_name"], self.CLIENT_NAME)
+		self.assertEqual(sent["client_uri"], "https://jarvis.example")
+
+	def test_client_uri_is_omitted_for_a_plain_http_redirect(self):
+		transport = _ScriptedTransport(
+			{self.REGISTRATION_ENDPOINT: _json_result({"client_id": "dcr-id"}, status=201)}
+		)
+		registration.register_dynamic(
+			self.REGISTRATION_ENDPOINT,
+			redirect_uri="http://localhost:8000/oauth/callback",
+			scope="repo",
+			client_name=self.CLIENT_NAME,
+			transport=transport,
+		)
+		sent = json.loads(transport.calls[0]["body"])
+		self.assertEqual(sent["client_name"], self.CLIENT_NAME, "client_name is sent regardless of scheme")
+		self.assertNotIn("client_uri", sent, "a plain-http origin is not a URI to hand a provider")
 
 	def test_registration_falls_back_to_the_requested_auth_method(self):
 		transport = _ScriptedTransport(
@@ -661,6 +682,7 @@ class RegistrationTests(unittest.TestCase):
 			self.REGISTRATION_ENDPOINT,
 			redirect_uri="https://jarvis.example/oauth/callback",
 			scope="repo",
+			client_name=self.CLIENT_NAME,
 			transport=transport,
 		)
 		self.assertEqual(creds.auth_method, registration.AUTH_POST)
@@ -682,6 +704,7 @@ class RegistrationTests(unittest.TestCase):
 			self.REGISTRATION_ENDPOINT,
 			redirect_uri="https://jarvis.example/oauth/callback",
 			scope="repo",
+			client_name=self.CLIENT_NAME,
 			transport=transport,
 		)
 		self.assertEqual(creds.auth_method, registration.AUTH_BASIC)
@@ -699,6 +722,7 @@ class RegistrationTests(unittest.TestCase):
 				self.REGISTRATION_ENDPOINT,
 				redirect_uri="https://jarvis.example/oauth/callback",
 				scope="repo",
+				client_name=self.CLIENT_NAME,
 				transport=transport,
 			)
 		self.assertEqual(ctx.exception.code, "no_client_id")
@@ -717,9 +741,67 @@ class RegistrationTests(unittest.TestCase):
 				self.REGISTRATION_ENDPOINT,
 				redirect_uri="https://jarvis.example/oauth/callback",
 				scope="repo",
+				client_name=self.CLIENT_NAME,
 				transport=transport,
 			)
 		self.assertEqual(ctx.exception.code, "registration_failed")
+
+	def test_register_dynamic_non_2xx_captures_the_providers_json_reason(self):
+		transport = _ScriptedTransport(
+			{
+				self.REGISTRATION_ENDPOINT: _json_result(
+					{"error": "invalid_redirect_uri", "error_description": "must use https"},
+					status=400,
+				)
+			}
+		)
+		with self.assertRaises(OAuthRegistrationError) as ctx:
+			registration.register_dynamic(
+				self.REGISTRATION_ENDPOINT,
+				redirect_uri="https://jarvis.example/oauth/callback",
+				scope="repo",
+				client_name=self.CLIENT_NAME,
+				transport=transport,
+			)
+		self.assertEqual(ctx.exception.detail, "invalid_redirect_uri: must use https")
+		self.assertIn("invalid_redirect_uri: must use https", str(ctx.exception))
+
+	def test_register_dynamic_non_2xx_captures_a_plain_text_reason_sanitized(self):
+		hostile = "line one\r\nline two\x07" + ("x" * 400)
+		transport = _ScriptedTransport(
+			{self.REGISTRATION_ENDPOINT: HttpResult(status=400, headers={}, json=None, text=hostile)}
+		)
+		with self.assertRaises(OAuthRegistrationError) as ctx:
+			registration.register_dynamic(
+				self.REGISTRATION_ENDPOINT,
+				redirect_uri="https://jarvis.example/oauth/callback",
+				scope="repo",
+				client_name=self.CLIENT_NAME,
+				transport=transport,
+			)
+		detail = ctx.exception.detail
+		self.assertNotIn("\r", detail)
+		self.assertNotIn("\n", detail)
+		self.assertNotIn("\x07", detail)
+		self.assertLessEqual(len(detail), 200)
+
+	def test_register_dynamic_non_2xx_drops_a_markup_body(self):
+		# An edge's HTML error page is not a reason anyone can read at 200
+		# chars; the exception then carries the status alone.
+		page = "<!DOCTYPE html><html><body><h1>400 Bad Request</h1></body></html>"
+		transport = _ScriptedTransport(
+			{self.REGISTRATION_ENDPOINT: HttpResult(status=400, headers={}, json=None, text=page)}
+		)
+		with self.assertRaises(OAuthRegistrationError) as ctx:
+			registration.register_dynamic(
+				self.REGISTRATION_ENDPOINT,
+				redirect_uri="https://jarvis.example/oauth/callback",
+				scope="repo",
+				client_name=self.CLIENT_NAME,
+				transport=transport,
+			)
+		self.assertEqual(ctx.exception.detail, "")
+		self.assertNotIn("html", str(ctx.exception))
 
 
 # --------------------------------------------------------------------------- #
@@ -890,6 +972,33 @@ class ExchangeCodeTests(unittest.TestCase):
 				resource=CANONICAL_BASE,
 				transport=transport,
 			)
+
+	def test_non_2xx_captures_the_providers_reason(self):
+		# Same detail-capture path flow.refresh rides too - both raise through
+		# the shared _parse_token_response.
+		disc = _discovery_fixture()
+		creds = registration.static_client("cid-1")
+		transport = _ScriptedTransport(
+			{
+				disc.token_endpoint: _json_result(
+					{"error": "invalid_grant", "error_description": "code expired"}, status=400
+				)
+			}
+		)
+
+		with self.assertRaises(OAuthTokenError) as ctx:
+			flow.exchange_code(
+				disc,
+				creds,
+				code="c",
+				code_verifier="v",
+				redirect_uri="https://jarvis.example/oauth/callback",
+				resource=CANONICAL_BASE,
+				transport=transport,
+			)
+		self.assertEqual(ctx.exception.code, "token_request_failed")
+		self.assertEqual(ctx.exception.detail, "invalid_grant: code expired")
+		self.assertIn("invalid_grant: code expired", str(ctx.exception))
 
 
 class RefreshTests(unittest.TestCase):

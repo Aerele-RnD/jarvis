@@ -14,11 +14,19 @@ from __future__ import annotations
 class OAuthError(Exception):
 	"""Base of the MCP OAuth client error hierarchy. ``code`` is stable across
 	releases so a caller (the broker, in Phase B) can switch on it without
-	string-matching the human-facing message."""
+	string-matching the human-facing message.
 
-	def __init__(self, code: str, message: str):
+	``detail`` is a short, sanitized excerpt of the PROVIDER'S OWN words for why
+	a hop failed (its ``error``/``error_description``, or a text-body excerpt -
+	see ``transport.provider_error_detail``) - ``""`` when the failure is ours
+	(a guard rejection, a validation gate) rather than something the far end
+	said. A caller may surface this alongside its own friendly sentence, never
+	in place of it - see ``connectors_api._oauth_error_message``."""
+
+	def __init__(self, code: str, message: str, *, detail: str = ""):
 		super().__init__(message)
 		self.code = code
+		self.detail = detail
 
 
 class OAuthTransportError(OAuthError):

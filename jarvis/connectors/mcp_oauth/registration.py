@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from jarvis.connectors.mcp_oauth import transport as transport_module
 from jarvis.connectors.mcp_oauth.errors import OAuthRegistrationError
@@ -69,6 +70,7 @@ def register_dynamic(
 	*,
 	redirect_uri: str,
 	scope: str,
+	client_name: str,
 	transport: Callable,
 	egress_allowed: Callable[[str], bool] | None = None,
 	connect_timeout: float = 5.0,
@@ -82,16 +84,29 @@ def register_dynamic(
 	public client (``none``) has its choice recorded on :class:`ClientCreds` and
 	honoured by every later token request.
 
+	``client_name`` is ALWAYS sent - some servers (Atlassian, at least) answer a
+	body with none with a plain HTTP 400, and there is nothing here to retry
+	against. This module stays frappe-free, so the caller (``connectors_api``)
+	is the one that knows the tenant's brand and builds this string; here it is
+	just a value to put in the body. ``client_uri`` is derived from
+	``redirect_uri`` instead - that needs no tenant knowledge, only the URL
+	already being passed in - and is sent only when ``redirect_uri`` is https
+	(a plain-http site origin is not a URI a provider should be told to trust).
+
 	Raises :class:`OAuthRegistrationError` on a non-2xx response or a response
 	with no ``client_id``."""
 	request_body = {
 		"redirect_uris": [redirect_uri],
+		"client_name": client_name,
 		"application_type": "web",
 		"token_endpoint_auth_method": AUTH_POST,
 		"grant_types": ["authorization_code", "refresh_token"],
 		"response_types": ["code"],
 		"scope": scope,
 	}
+	parsed_redirect = urlparse(redirect_uri)
+	if parsed_redirect.scheme == "https":
+		request_body["client_uri"] = f"{parsed_redirect.scheme}://{parsed_redirect.netloc}"
 	body = json.dumps(request_body).encode("utf-8")
 	headers = {"Content-Type": "application/json", "Accept": "application/json"}
 	result = transport(
@@ -105,8 +120,10 @@ def register_dynamic(
 		egress_allowed=egress_allowed,
 	)
 	if not (200 <= result.status < 300):
+		detail = transport_module.provider_error_detail(result)
+		message = f"Dynamic client registration returned HTTP {result.status}."
 		raise OAuthRegistrationError(
-			"registration_failed", f"Dynamic client registration returned HTTP {result.status}."
+			"registration_failed", f"{message} ({detail})" if detail else message, detail=detail
 		)
 	doc = result.json if isinstance(result.json, dict) else {}
 	client_id = doc.get("client_id")

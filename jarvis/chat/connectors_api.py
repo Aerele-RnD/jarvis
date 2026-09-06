@@ -337,8 +337,22 @@ _OAUTH_ERROR_MESSAGES = {
 }
 
 
-def _oauth_error_message(code: str) -> str:
-	return _OAUTH_ERROR_MESSAGES.get(code, "We could not set up sign-in for this address.")
+#: Codes that DO carry a provider-supplied detail worth showing (see
+#: mcp_oauth.errors.OAuthError.detail): a hop the provider answered but
+#: refused, not a guard rejection or a validation gate of our own.
+_OAUTH_ERROR_DETAIL_CODES = {"registration_failed", "token_request_failed"}
+
+
+def _oauth_error_message(code: str, detail: str = "") -> str:
+	"""The friendly sentence for ``code``, with the provider's OWN reason
+	folded in parenthetically when one was captured (``detail`` - see
+	``OAuthError.detail``) and the code is one that can carry it. The friendly
+	sentence always comes first; nothing here adds a protocol word of our
+	own - whatever text follows is the provider's, passed through as-is."""
+	message = _OAUTH_ERROR_MESSAGES.get(code, "We could not set up sign-in for this address.")
+	if detail and code in _OAUTH_ERROR_DETAIL_CODES:
+		return f"{message.rstrip('.')} ({detail})."
+	return message
 
 
 def _mcp_oauth_status(doc) -> dict:
@@ -780,13 +794,13 @@ def _setup_mcp_oauth_client(doc) -> None:
 			# not hidden behind the friendly message.
 			frappe.logger("jarvis.connectors").warning("catalog seeding failed after insert", exc_info=True)
 			_discard_connector(doc)
-			frappe.throw(_oauth_error_message(getattr(exc, "code", "")))
+			frappe.throw(_oauth_error_message(getattr(exc, "code", ""), getattr(exc, "detail", "")))
 		return
 	try:
 		_discover_and_save_client(doc)
 	except mcp_oauth.OAuthError as exc:
 		_discard_connector(doc)
-		frappe.throw(_oauth_error_message(exc.code))
+		frappe.throw(_oauth_error_message(exc.code, exc.detail))
 
 
 def _discover_and_save_client(doc) -> None:
@@ -804,10 +818,12 @@ def _discover_and_save_client(doc) -> None:
 	)
 	scope = _requested_scope(found)
 	if found.registration_endpoint:
+		redirect_uri = oauth_redirect_uri()
 		creds = mcp_oauth.register_dynamic(
 			found.registration_endpoint,
-			redirect_uri=oauth_redirect_uri(),
+			redirect_uri=redirect_uri,
 			scope=scope,
+			client_name=_dcr_client_name(redirect_uri),
 			transport=MCP_OAUTH_TRANSPORT,
 			egress_allowed=broker._egress_allowed,
 		)
@@ -880,6 +896,25 @@ def _requested_scope(found) -> str:
 	if found.challenge_scope:
 		return found.challenge_scope
 	return " ".join(found.scopes_supported or [])
+
+
+def _brand_name() -> str:
+	"""The tenant's white-label assistant name, same field and fallback every
+	other server-side reader uses (``www/jarvis.py``, ``pwa.py``): the
+	non-secret ``Jarvis Settings.agent_name``, or "Jarvis" when unset.
+	``cache=False`` - a name set moments ago (Settings -> Branding) must show up
+	in the very next registration, not a request-local value read before it."""
+	return (frappe.db.get_single_value(SETTINGS, "agent_name", cache=False) or "").strip() or "Jarvis"
+
+
+def _dcr_client_name(redirect_uri: str) -> str:
+	"""The RFC 7591 ``client_name`` to register with: some servers (Atlassian,
+	at least) answer a body with none with a bare HTTP 400, so this is always
+	sent. "<brand> (<host>)" so the provider's own app-management screen shows
+	which tenant a registration belongs to, not an identical "Jarvis" across
+	every tenant that self-registers there."""
+	netloc = urlparse(redirect_uri).netloc
+	return f"{_brand_name()} ({netloc})" if netloc else _brand_name()
 
 
 def _provider_declares_endpoints(provider) -> bool:
@@ -1279,7 +1314,7 @@ def connect_oauth(name: str) -> dict:
 		try:
 			_ensure_mcp_oauth_client(doc)
 		except mcp_oauth.OAuthError as exc:
-			return _error("oauth_not_configured", _oauth_error_message(exc.code))
+			return _error("oauth_not_configured", _oauth_error_message(exc.code, exc.detail))
 
 	if doc.get("mcp_oauth_client"):
 		return _connect_mcp_oauth(doc)
@@ -1400,9 +1435,9 @@ def probe_connector_auth(base_url: str) -> dict:
 			# The address served the call without asking for anything, so there is
 			# no sign-in to set up. Not a failure - the other kind of connector.
 			return {"ok": True, "needs_signin": False}
-		return _error(exc.code, _oauth_error_message(exc.code))
+		return _error(exc.code, _oauth_error_message(exc.code, exc.detail))
 	except mcp_oauth.OAuthError as exc:
-		return _error(exc.code, _oauth_error_message(exc.code))
+		return _error(exc.code, _oauth_error_message(exc.code, exc.detail))
 
 	return {
 		"ok": True,
@@ -1460,7 +1495,7 @@ def set_oauth_client_credentials(name: str, client_id: str, client_secret: str =
 		try:
 			_ensure_mcp_oauth_client(doc)
 		except mcp_oauth.OAuthError as exc:
-			frappe.throw(_oauth_error_message(exc.code))
+			frappe.throw(_oauth_error_message(exc.code, exc.detail))
 	client = mcp_oauth_store.client_for(doc.name) if doc.get("mcp_oauth_client") else None
 	if client is None:
 		frappe.throw(_("This connector does not use this kind of sign-in."))

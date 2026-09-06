@@ -34,6 +34,7 @@ No ``import frappe`` here or anywhere in this package.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -46,6 +47,13 @@ from jarvis.connectors.mcp_oauth.errors import OAuthTransportError
 # response) is small; this is a generous ceiling against a malicious or
 # misbehaving server streaming an unbounded body at us.
 _MAX_BODY_BYTES = 2 * 1024 * 1024
+
+# A provider-supplied error detail folded into one of OUR messages is capped
+# hard, and newlines/control chars are collapsed to spaces - a hostile or
+# careless server's response body must never corrupt a log line or a UI
+# sentence, or blow past a sane length.
+_MAX_PROVIDER_DETAIL_CHARS = 200
+_CONTROL_CHARS_RE = re.compile(r"[\r\n\t\x00-\x1f\x7f]+")
 
 # WALL-CLOCK ceiling for ONE hop: connect + every redirect it follows + reading
 # the whole body. ``read_timeout`` alone bounds none of that - it is a per-recv
@@ -257,3 +265,34 @@ def http_form(
 		total_timeout=total_timeout,
 		egress_allowed=egress_allowed,
 	)
+
+
+def provider_error_detail(result: HttpResult) -> str:
+	"""A short, sanitized reason for a non-2xx OAuth response, in the
+	PROVIDER'S own words: RFC 6749/7591's ``error``/``error_description`` JSON
+	fields when the body parsed as a JSON document, else up to 200 chars of
+	whatever text it sent back. ``""`` when there is nothing usable.
+
+	Reads only the RESPONSE - never the request we sent - and never returns
+	more than :data:`_MAX_PROVIDER_DETAIL_CHARS` chars with newlines/control
+	characters intact, so a caller (registration.py, flow.py) can fold this
+	into its own exception message without corrupting a log line or a UI
+	sentence."""
+	if isinstance(result.json, dict):
+		code = result.json.get("error")
+		description = result.json.get("error_description")
+		parts = [p.strip() for p in (code, description) if isinstance(p, str) and p.strip()]
+		if parts:
+			return _sanitize_provider_text(": ".join(parts))
+	text = (result.text or "").strip()
+	# A markup body (an edge's error page, a framework's HTML 400) is not a
+	# reason anyone can read once it is cut to 200 chars; the status alone
+	# says more than a "<!DOCTYPE html>" prefix would.
+	if text and not text.startswith("<"):
+		return _sanitize_provider_text(text)
+	return ""
+
+
+def _sanitize_provider_text(text: str) -> str:
+	collapsed = _CONTROL_CHARS_RE.sub(" ", text).strip()
+	return collapsed[:_MAX_PROVIDER_DETAIL_CHARS]
