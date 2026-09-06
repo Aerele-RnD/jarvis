@@ -262,6 +262,11 @@ PROVIDERS: tuple[Provider, ...] = (
 		logo="square",
 		help_url=None,
 		hint=None,
+		# Its sign-in service only accepts callback addresses it already
+		# knows (localhost and a few hosted assistants); every self-hosted
+		# tenant address is refused with invalid_redirect_uri (probed
+		# 2026-09-06). Off until Square opens registration.
+		enabled=False,
 	),
 	# --- work ------------------------------------------------------------
 	Provider(
@@ -314,6 +319,10 @@ PROVIDERS: tuple[Provider, ...] = (
 		logo="dropbox",
 		help_url=None,
 		hint=None,
+		# Its sign-in service answers registration_not_supported: "only
+		# pre-registered MCP trusted partners" (probed 2026-09-06). Off until
+		# Dropbox opens registration.
+		enabled=False,
 	),
 	Provider(
 		name="Box",
@@ -345,6 +354,10 @@ PROVIDERS: tuple[Provider, ...] = (
 		logo="figma",
 		help_url=None,
 		hint=None,
+		# Its registration endpoint answers 403 to every request shape
+		# (probed 2026-09-06); registration is limited to approved partners.
+		# Off until Figma opens it.
+		enabled=False,
 	),
 	# --- support ------------------------------------------------------------
 	Provider(
@@ -427,6 +440,10 @@ PROVIDERS: tuple[Provider, ...] = (
 		logo="vercel",
 		help_url=None,
 		hint=None,
+		# Its sign-in service only approves callback addresses of known
+		# assistants (invalid_redirect_uri, probed 2026-09-06). Off until
+		# Vercel opens registration.
+		enabled=False,
 	),
 	Provider(
 		name="Netlify",

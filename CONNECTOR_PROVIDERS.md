@@ -7,7 +7,11 @@ RFC 9728 protected-resource metadata → RFC 8414 / OIDC authorization-server me
 `probe_sweep.py` (job tmp) to refresh. Classes map 1:1 onto the connection flows the
 engine supports.
 
-## Sign-in, zero setup (DCR — the auth server self-registers) — 18
+## Sign-in, zero setup (DCR: the auth server self-registers): 14
+
+Re-verified 2026-09-06 with a REAL registration from an e2e tenant (client name
+`Jarvis (<site host>)`, callback on the tenant's own host): every row below issued a
+client id.
 
 | Provider | MCP endpoint | Auth server | PKCE |
 |---|---|---|---|
@@ -15,8 +19,6 @@ engine supports.
 | Atlassian (Jira, Confluence) | `https://mcp.atlassian.com/v2/mcp` | auth.atlassian.com | S256 |
 | Canva | `https://mcp.canva.com/mcp` | mcp.canva.com | S256 |
 | Cloudflare (bindings) | `https://bindings.mcp.cloudflare.com/mcp` | bindings.mcp.cloudflare.com | S256 |
-| Dropbox | `https://mcp.dropbox.com/mcp` | www.dropbox.com | S256 |
-| Figma | `https://mcp.figma.com/mcp` | api.figma.com | S256 |
 | Linear | `https://mcp.linear.app/mcp` | mcp.linear.app | S256 |
 | Neon | `https://mcp.neon.tech/mcp` | mcp.neon.tech | S256 |
 | Netlify | `https://netlify-mcp.netlify.app/mcp` | netlify-mcp.netlify.app | S256 |
@@ -24,13 +26,33 @@ engine supports.
 | PayPal | `https://mcp.paypal.com/mcp` | mcp.paypal.com | S256 |
 | Razorpay | `https://mcp.razorpay.com/mcp` | mcp.razorpay.com | S256 |
 | Sentry | `https://mcp.sentry.dev/mcp` | mcp.sentry.dev | S256 |
-| Square | `https://mcp.squareup.com/mcp` | mcp.squareup.com | S256 |
 | Supabase | `https://mcp.supabase.com/mcp` | api.supabase.com | S256 |
-| Vercel | `https://mcp.vercel.com/` | vercel.com | S256 |
 | Webflow | `https://mcp.webflow.com/mcp` | mcp.webflow.com | S256 |
 | Wix | `https://mcp.wix.com/mcp` | mcp.wix.com | S256 |
 
 Several also advertise `plain` PKCE; the engine always sends S256 (spec-mandated).
+
+Two things the live registration taught the engine (both fixed 2026-09-06):
+- **Atlassian** answers a bare HTTP 400 to a registration with no `client_name`; the
+  engine now always sends one (`<brand> (<site host>)`) plus `client_uri` when https.
+- **Razorpay and Asana** declare `resource` at ORIGIN level (`https://mcp.razorpay.com`)
+  for an endpoint at `/mcp`; the RFC 9728 gate now accepts a same-origin path-prefix
+  declaration (`canonical.resource_covers`), as the reference client SDK does. Asana's
+  401 also points at the ROOT well-known document, not `/.well-known/.../mcp`.
+
+## Sign-in advertised, but closed to third-party apps: 4 (listed, `enabled=False`)
+
+Each advertises a registration endpoint, and each refuses a self-hosted tenant:
+
+| Provider | MCP endpoint | What it answers |
+|---|---|---|
+| Square | `https://mcp.squareup.com/mcp` | `invalid_redirect_uri` for any public host; `localhost` callbacks are accepted, so only local assistants and its approved hosted ones can sign in |
+| Figma | `https://mcp.figma.com/mcp` | `403 Forbidden` from `api.figma.com/v1/oauth/mcp/register` for every request shape (public or confidential, any user agent) |
+| Dropbox | `https://mcp.dropbox.com/mcp` | `registration_not_supported`: "only pre-registered MCP trusted partners are allowed" |
+| Vercel | `https://mcp.vercel.com/` | `invalid_redirect_uri`: "redirect URIs are not approved for use by this authorization server" |
+
+They stay in the catalog (logos, endpoints) switched off, like Plaid, so turning one
+on when its vendor opens registration is a one-line change.
 
 ## Sign-in, one-time app registration (static — auth server has no self-registration) — 5
 

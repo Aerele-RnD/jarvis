@@ -28,3 +28,22 @@ def canonical_resource(base_url: str) -> str:
 		path = path.rstrip("/")
 
 	return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, parsed.query, ""))
+
+
+def resource_covers(declared: str, requested: str) -> bool:
+	"""True when a protected-resource ``resource`` declaration (``declared``)
+	describes ``requested``: the same canonical URI, or a same-origin path
+	PREFIX of it at a segment boundary - ``https://mcp.example.com`` covers
+	``https://mcp.example.com/mcp``, ``https://mcp.example.com/mc`` and
+	``https://mcp.example.com/other`` do not, and another origin never does.
+	A query on either side has to match exactly (a prefix says nothing about
+	it). Raises ``ValueError`` for a URL :func:`canonical_resource` rejects."""
+	d = urlsplit(canonical_resource(declared))
+	r = urlsplit(canonical_resource(requested))
+	if (d.scheme, d.netloc) != (r.scheme, r.netloc):
+		return False
+	if d.query != r.query:
+		return False
+	if d.path == r.path:
+		return True
+	return not d.path or r.path.startswith(d.path + "/")

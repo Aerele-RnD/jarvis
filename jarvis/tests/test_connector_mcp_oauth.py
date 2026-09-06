@@ -368,6 +368,25 @@ class DiscoveryGateTests(unittest.TestCase):
 		exc = self._discover_and_expect(script)
 		self.assertEqual(exc.code, "resource_mismatch")
 
+	def test_resource_declared_at_origin_level_accepted(self):
+		# Razorpay and Asana describe their whole host for a connector at /mcp.
+		script, _ = _happy_path_script(resource="https://mcp.example.com")
+		found = discovery.discover(BASE_URL, transport=_ScriptedTransport(script))
+		self.assertEqual(found.resource, CANONICAL_BASE)
+		self.assertEqual(found.resource_declared, "https://mcp.example.com")
+
+	def test_resource_declared_as_sibling_path_rejected(self):
+		script, _ = _happy_path_script(resource="https://mcp.example.com/other")
+		self.assertEqual(self._discover_and_expect(script).code, "resource_mismatch")
+
+	def test_resource_declared_as_partial_segment_rejected(self):
+		script, _ = _happy_path_script(resource="https://mcp.example.com/mc")
+		self.assertEqual(self._discover_and_expect(script).code, "resource_mismatch")
+
+	def test_resource_declared_below_the_endpoint_rejected(self):
+		script, _ = _happy_path_script(resource="https://mcp.example.com/mcp/v2")
+		self.assertEqual(self._discover_and_expect(script).code, "resource_mismatch")
+
 	def test_issuer_mismatch_rejected(self):
 		script, as_doc = _happy_path_script()
 		bad_as_doc = dict(as_doc, issuer="https://not-the-as.example.com")

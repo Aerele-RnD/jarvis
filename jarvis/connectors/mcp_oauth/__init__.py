@@ -15,7 +15,7 @@ fake transport and no network. No DocTypes, no whitelisted APIs, and no
 
 from __future__ import annotations
 
-from jarvis.connectors.mcp_oauth.canonical import canonical_resource
+from jarvis.connectors.mcp_oauth.canonical import canonical_resource, resource_covers
 from jarvis.connectors.mcp_oauth.discovery import Discovery, discover
 from jarvis.connectors.mcp_oauth.errors import (
 	OAuthDiscoveryError,
@@ -60,6 +60,7 @@ __all__ = [
 	"pkce_new_verifier",
 	"refresh",
 	"register_dynamic",
+	"resource_covers",
 	"static_client",
 	"validate_iss",
 ]

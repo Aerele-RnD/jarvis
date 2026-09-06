@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
 from jarvis.connectors.mcp_oauth import transport as transport_module
-from jarvis.connectors.mcp_oauth.canonical import canonical_resource
+from jarvis.connectors.mcp_oauth.canonical import canonical_resource, resource_covers
 from jarvis.connectors.mcp_oauth.errors import OAuthDiscoveryError
 
 # Matches quoted key="value" params in a WWW-Authenticate challenge, e.g.
@@ -322,12 +322,21 @@ def discover(
 	# connector whose base_url is the same URL - the gate's job is anti-phishing
 	# (this metadata describes THIS host), not trailing-slash pedantry, and RFC
 	# 3986 section 6 syntax-based normalization permits exactly this comparison.
+	#
+	# A server may also declare a BROADER resource than the endpoint we were
+	# given: Razorpay and Asana both answer "https://mcp.<vendor>.com" for a
+	# connector at "https://mcp.<vendor>.com/mcp". RFC 8707 lets a resource
+	# indicator name a whole origin, and the reference client SDK accepts a
+	# same-origin path-prefix declaration for exactly this reason. The
+	# anti-phishing property holds unchanged - the metadata still describes
+	# this host, never another - so that prefix is accepted too; a sibling or
+	# unrelated path on the same host still is not.
 	resource_declared = _require_str(rm_doc.get("resource"), "resource")
 	try:
-		rm_resource = canonical_resource(resource_declared)
+		covered = resource_covers(resource_declared, resource)
 	except ValueError:
-		rm_resource = None
-	if rm_resource != resource:
+		covered = False
+	if not covered:
 		raise OAuthDiscoveryError(
 			"resource_mismatch",
 			"Protected-resource metadata's resource did not match the connector's canonical URL.",
