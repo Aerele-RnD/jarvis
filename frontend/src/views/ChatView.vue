@@ -3096,10 +3096,10 @@
 											stroke-linecap="round"
 											stroke-linejoin="round"
 										>
-											<rect x="3" y="3" width="7" height="7" rx="1" />
-											<rect x="14" y="3" width="7" height="7" rx="1" />
-											<rect x="14" y="14" width="7" height="7" rx="1" />
-											<rect x="3" y="14" width="7" height="7" rx="1" />
+											<path d="M12 22v-5" />
+											<path d="M9 8V2" />
+											<path d="M15 8V2" />
+											<path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
 										</svg>
 										<span style="flex: 1">Browse connectors</span>
 									</button>
@@ -3526,22 +3526,16 @@
 							</button>
 							<!-- Connector-focus pill: scope this conversation to one connected +
 							     enabled app (soft prompt-level nudge — see sendCtx.focus_connector
-							     in send()). Shown whenever connectors are switched on for this
-							     workspace, even before the first app is connected, so the picker's
-							     "Browse connectors" row is the way in; hidden when the feature is
-							     off, exactly like the wiki button above, EXCEPT a focus already
-							     armed still shows so it stays clearable even if that connector
-							     was since disabled. The pill's
+							     in send()). Connectors are a default feature, so this is always
+							     shown, even before the first app is connected, so the picker's
+							     "Browse connectors" row is the way in; a focus already armed still
+							     shows the pill so it stays clearable even if that connector was
+							     since disabled. The pill's
 							     border/background live on this wrapping span (not on either
 							     button), because Composer.vue's own convention is that a remove
 							     control is a SIBLING button, never nested inside the one it sits
 							     on - the ×, below, is exactly that sibling, not a nested control. -->
 							<span
-								v-if="
-									connectorsEnabled ||
-									connectorFocusOptions.length ||
-									connectorFocus
-								"
 								class="jv-connfocus-pill"
 								:style="{
 									display: 'flex',
@@ -3549,8 +3543,11 @@
 									height: '30px',
 									padding: connectorFocus ? '0 2px 0 8px' : '0',
 									borderRadius: '7px',
-									border: connectorFocus ? '1px solid var(--cta)' : 'none',
-									color: connectorFocus ? 'var(--cta)' : 'var(--text-3)',
+									border: connectorFocus ? '1px solid var(--border)' : 'none',
+									background: connectorFocus
+										? 'var(--surface-1)'
+										: 'transparent',
+									color: connectorFocus ? 'var(--text)' : 'var(--text-3)',
 								}"
 							>
 								<button
@@ -3595,10 +3592,10 @@
 										stroke-linecap="round"
 										stroke-linejoin="round"
 									>
-										<rect x="3" y="3" width="7" height="7" rx="1" />
-										<rect x="14" y="3" width="7" height="7" rx="1" />
-										<rect x="14" y="14" width="7" height="7" rx="1" />
-										<rect x="3" y="14" width="7" height="7" rx="1" />
+										<path d="M12 22v-5" />
+										<path d="M9 8V2" />
+										<path d="M15 8V2" />
+										<path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
 									</svg>
 									<span
 										v-if="connectorFocus"
@@ -5150,10 +5147,6 @@ const connectorFocus = ref(null);
 const connectorFocusOpen = ref(false);
 const connectorFocusOptions = ref([]);
 const connectorFocusLoaded = ref(false);
-// Whether connectors are switched on for this workspace at all (the list
-// call's own flag) - what keeps the pill on screen before any app is
-// connected, so its Browse connectors row is reachable.
-const connectorsEnabled = ref(false);
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
 // moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("");
@@ -11235,13 +11228,9 @@ async function loadConnectorFocusOptions() {
 	try {
 		const res = await api.listConnectors();
 		connectorFocusLoaded.value = true;
-		connectorsEnabled.value = !!(res && res.enabled);
-		connectorFocusOptions.value =
-			res && res.enabled
-				? [...(res.shared || []), ...(res.mine || [])].filter(
-						(r) => r.enabled && (r.auth_method !== "OAuth" || r.oauth_connected)
-				  )
-				: [];
+		connectorFocusOptions.value = [...(res?.shared || []), ...(res?.mine || [])].filter(
+			(r) => r.enabled && (r.auth_method !== "OAuth" || r.oauth_connected)
+		);
 	} catch (e) {
 		// Best-effort: the picker just shows its empty state.
 		connectorFocusOptions.value = [];
@@ -11250,7 +11239,13 @@ async function loadConnectorFocusOptions() {
 function toggleConnectorFocusPicker() {
 	mention.value = { ...mention.value, open: false };
 	connectorFocusOpen.value = !connectorFocusOpen.value;
-	if (connectorFocusOpen.value) loadConnectorFocusOptions();
+	// Refetch on every open: an app connected in Settings a moment ago must
+	// show up here without a page reload (the mount-time prefetch only decides
+	// the button's first paint).
+	if (connectorFocusOpen.value) {
+		connectorFocusLoaded.value = false;
+		loadConnectorFocusOptions();
+	}
 }
 // Footer row of the picker (both the populated and empty states). Uses
 // store.openSettings, not the local settingsTab ref: settingsTab only
