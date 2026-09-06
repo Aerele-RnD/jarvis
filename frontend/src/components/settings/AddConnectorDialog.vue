@@ -1,8 +1,8 @@
 <template>
-	<Dialog v-model="show" :options="{ title: dialogTitle, size: 'lg' }" @after-leave="onClosed">
+	<Dialog v-model="show" :options="{ title: dialogTitle, size: 'xl' }" @after-leave="onClosed">
 		<template #body-content>
 			<!-- ── Step 1: connect ─────────────────────────────────────────── -->
-			<div v-if="step === 1" class="flex flex-col gap-3">
+			<div v-if="step === 1" class="flex flex-col gap-4">
 				<div class="flex items-center gap-2 text-xs text-ink-gray-5">
 					<span class="flex items-center gap-1.5 font-medium text-ink-gray-9">
 						<span
@@ -48,24 +48,26 @@
 				</div>
 
 				<template v-if="form.preset === 'Custom URL'">
-					<div class="flex items-end gap-2">
-						<FormControl
-							class="flex-1"
-							type="text"
-							label="Base URL"
-							placeholder="https://example.com/mcp"
-							:modelValue="form.base_url"
-							@update:modelValue="(v) => (form.base_url = v)"
-						/>
-						<Button
-							variant="subtle"
-							:label="probing ? 'Checking…' : 'Check'"
-							:loading="probing"
-							:disabled="!form.base_url.trim()"
-							@click="runProbe"
-						/>
+					<div class="flex flex-col gap-2">
+						<div class="flex items-end gap-2">
+							<FormControl
+								class="flex-1"
+								type="text"
+								label="Base URL"
+								placeholder="https://example.com/mcp"
+								:modelValue="form.base_url"
+								@update:modelValue="(v) => (form.base_url = v)"
+							/>
+							<Button
+								variant="subtle"
+								:label="probing ? 'Checking…' : 'Check'"
+								:loading="probing"
+								:disabled="!form.base_url.trim()"
+								@click="runProbe"
+							/>
+						</div>
+						<p v-if="probeError" class="text-xs text-ink-red-4">{{ probeError }}</p>
 					</div>
-					<p v-if="probeError" class="text-xs text-ink-red-4">{{ probeError }}</p>
 				</template>
 
 				<div v-if="isAdmin && !isEdit" class="flex items-center justify-between gap-3">
@@ -83,139 +85,147 @@
 
 				<!-- One connect card, its shape picked by cardKind (see the state
 				     machine note above the script). -->
-				<div class="flex flex-col gap-3 rounded-lg border p-3">
-					<template v-if="cardKind === 'need-check'">
-						<p class="text-xs text-ink-gray-5">Check the address above to continue.</p>
-					</template>
+				<div class="flex flex-col gap-2">
+					<div class="flex flex-col gap-3 rounded-lg border p-3">
+						<template v-if="cardKind === 'need-check'">
+							<p class="text-xs text-ink-gray-5">
+								Check the address above to continue.
+							</p>
+						</template>
 
-					<template v-else-if="cardKind === 'signin'">
-						<template v-if="signingIn">
-							<template v-if="!rowName">
-								<p class="text-xs text-ink-gray-5">Setting up…</p>
+						<template v-else-if="cardKind === 'signin'">
+							<template v-if="signingIn">
+								<template v-if="!rowName">
+									<p class="text-xs text-ink-gray-5">Setting up…</p>
+								</template>
+								<template v-else>
+									<p class="text-xs text-ink-gray-5">
+										Finish signing in to {{ signinAppName }} in the other tab.
+									</p>
+								</template>
+								<div class="flex justify-end">
+									<Button
+										variant="ghost"
+										size="sm"
+										label="Cancel"
+										@click="cancelSignIn"
+									/>
+								</div>
+							</template>
+							<template v-else-if="rowOauthConnected">
+								<template v-if="testing">
+									<p class="text-xs text-ink-gray-5">Checking the connection…</p>
+								</template>
+								<template v-else-if="testState.status === 'passed'">
+									<div
+										class="flex items-center gap-1.5 text-xs text-ink-green-3"
+									>
+										<FeatherIcon name="check" class="size-3.5" />
+										Connected · {{ testState.tools.length }}
+										{{ testState.tools.length === 1 ? "action" : "actions" }}
+										found
+									</div>
+									<div class="flex justify-end">
+										<Button
+											variant="ghost"
+											size="sm"
+											icon="log-out"
+											:tooltip="'Disconnect'"
+											:loading="disconnectingInline"
+											@click="disconnectInline"
+										/>
+									</div>
+								</template>
+								<template v-else-if="testState.status === 'failed'">
+									<p class="text-xs text-ink-red-4">{{ testState.message }}</p>
+									<div class="flex justify-end">
+										<Button
+											variant="ghost"
+											size="sm"
+											icon="log-out"
+											:tooltip="'Disconnect'"
+											:loading="disconnectingInline"
+											@click="disconnectInline"
+										/>
+									</div>
+								</template>
+							</template>
+							<template v-else-if="connectError">
+								<p class="text-xs text-ink-red-4">{{ connectError }}</p>
+								<div class="flex justify-end">
+									<Button
+										variant="solid"
+										label="Try again"
+										iconRight="external-link"
+										@click="beginSignIn"
+									/>
+								</div>
 							</template>
 							<template v-else>
-								<div class="text-sm font-medium text-ink-gray-9">
-									Sign in to {{ signinAppName }}
+								<div>
+									<div class="text-sm font-medium text-ink-gray-9">
+										Sign in to {{ signinAppName }}
+									</div>
+									<p class="mt-1 text-p-sm text-ink-gray-6">
+										You will be sent to
+										{{ displaySigninHost || "the provider" }} to approve
+										access.
+									</p>
 								</div>
-								<p class="text-xs text-ink-gray-5">
-									Finish signing in in the other tab.
-								</p>
-							</template>
-							<Button
-								variant="ghost"
-								size="sm"
-								label="Cancel"
-								class="self-start"
-								@click="cancelSignIn"
-							/>
-						</template>
-						<template v-else-if="rowOauthConnected">
-							<template v-if="testing">
-								<p class="text-xs text-ink-gray-5">Checking the connection…</p>
-							</template>
-							<template v-else-if="testState.status === 'passed'">
-								<div class="flex items-center gap-1.5 text-sm text-ink-green-3">
-									<FeatherIcon name="check" class="size-4" />
-									Connected
+								<div class="flex justify-end">
+									<Button
+										variant="solid"
+										:label="`Sign in with ${signinAppName}`"
+										iconRight="external-link"
+										@click="beginSignIn"
+									/>
 								</div>
-								<p class="text-xs text-ink-gray-5">
-									{{ testState.tools.length }}
-									{{ testState.tools.length === 1 ? "action" : "actions" }} found
-								</p>
-								<Button
-									variant="ghost"
-									size="sm"
-									icon="log-out"
-									:tooltip="'Disconnect'"
-									:loading="disconnectingInline"
-									class="self-start"
-									@click="disconnectInline"
-								/>
-							</template>
-							<template v-else-if="testState.status === 'failed'">
-								<p class="text-xs text-ink-red-4">{{ testState.message }}</p>
-								<Button
-									variant="ghost"
-									size="sm"
-									icon="log-out"
-									:tooltip="'Disconnect'"
-									:loading="disconnectingInline"
-									class="self-start"
-									@click="disconnectInline"
-								/>
 							</template>
 						</template>
-						<template v-else-if="connectError">
-							<p class="text-xs text-ink-red-4">{{ connectError }}</p>
-							<Button
-								variant="solid"
-								label="Try again"
-								iconRight="external-link"
-								class="self-start"
-								@click="beginSignIn"
-							/>
-						</template>
-						<template v-else>
+
+						<template v-else-if="cardKind === 'register'">
 							<div>
 								<div class="text-sm font-medium text-ink-gray-9">
-									Sign in to {{ signinAppName }}
+									Register your {{ form.preset }} app once
 								</div>
-								<p class="mt-1 text-xs text-ink-gray-5">
-									You will be sent to
-									{{ displaySigninHost || "the provider" }} to approve access.
+								<p v-if="staticHint" class="mt-1 text-p-sm text-ink-gray-6">
+									{{ staticHint }}
 								</p>
 							</div>
-							<Button
-								variant="solid"
-								:label="`Sign in with ${signinAppName}`"
-								iconRight="external-link"
-								class="self-start"
-								@click="beginSignIn"
-							/>
-						</template>
-					</template>
 
-					<template v-else-if="cardKind === 'register'">
-						<div>
-							<div class="text-sm font-medium text-ink-gray-9">
-								Register your {{ form.preset }} app once
-							</div>
-							<p v-if="staticHint" class="mt-1 text-xs text-ink-gray-5">
-								{{ staticHint }}
-							</p>
-						</div>
-
-						<div class="flex gap-2.5">
-							<span
-								class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-surface-gray-2 text-[10px] font-medium text-ink-gray-6"
-								>1</span
-							>
-							<div class="flex flex-1 flex-col gap-1.5">
-								<div class="text-xs text-ink-gray-8">
+							<div class="grid grid-cols-[20px_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
+								<span
+									class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-surface-gray-2 text-2xs font-medium text-ink-gray-6"
+									>1</span
+								>
+								<div class="text-sm text-ink-gray-9">
 									Copy this callback address into the app
 								</div>
-								<div v-if="registerRedirectUri" class="flex items-center gap-2">
+								<div
+									v-if="registerRedirectUri"
+									class="col-start-2 flex items-center gap-2"
+								>
 									<code
-										class="min-w-0 flex-1 truncate rounded border px-2 py-1 text-xs text-ink-gray-7"
+										:title="registerRedirectUri"
+										class="min-w-0 flex-1 truncate rounded border px-2 py-1 font-mono text-xs text-ink-gray-7"
 										>{{ registerRedirectUri }}</code
 									>
 									<Button
 										variant="ghost"
 										icon="copy"
 										:tooltip="copied ? 'Copied' : 'Copy'"
+										class="shrink-0"
 										@click="copyRedirectUri"
 									/>
 								</div>
 							</div>
-						</div>
 
-						<div class="flex gap-2.5">
-							<span
-								class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-surface-gray-2 text-[10px] font-medium text-ink-gray-6"
-								>2</span
-							>
-							<div class="flex flex-1 flex-col gap-1.5">
-								<div class="text-xs text-ink-gray-8">
+							<div class="grid grid-cols-[20px_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
+								<span
+									class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-surface-gray-2 text-2xs font-medium text-ink-gray-6"
+									>2</span
+								>
+								<div class="text-sm text-ink-gray-9">
 									Create the app in your {{ form.preset }} organisation
 								</div>
 								<a
@@ -223,24 +233,22 @@
 									:href="staticHelpUrl"
 									target="_blank"
 									rel="noopener"
-									class="inline-flex w-fit items-center gap-1 text-xs text-ink-blue-link hover:underline"
+									class="col-start-2 inline-flex w-fit items-center gap-1 text-xs text-ink-blue-link hover:underline"
 								>
 									Open {{ form.preset }} app settings
 									<FeatherIcon name="external-link" class="size-3" />
 								</a>
 							</div>
-						</div>
 
-						<div class="flex gap-2.5">
-							<span
-								class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-surface-gray-2 text-[10px] font-medium text-ink-gray-6"
-								>3</span
-							>
-							<div class="flex flex-1 flex-col gap-3">
-								<div class="text-xs text-ink-gray-8">
+							<div class="grid grid-cols-[20px_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
+								<span
+									class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-surface-gray-2 text-2xs font-medium text-ink-gray-6"
+									>3</span
+								>
+								<div class="text-sm text-ink-gray-9">
 									Paste what {{ form.preset }} gives you
 								</div>
-								<div class="grid grid-cols-2 gap-2">
+								<div class="col-start-2 grid grid-cols-2 gap-2">
 									<FormControl
 										type="text"
 										label="Client ID"
@@ -255,118 +263,126 @@
 									/>
 								</div>
 							</div>
-						</div>
 
-						<Button
-							variant="solid"
-							label="Save"
-							:loading="savingClient"
-							:disabled="!staticClient.id.trim() || !staticClient.secret.trim()"
-							class="self-start"
-							@click="saveStaticClient"
-						/>
-						<p v-if="connectError" class="text-xs text-ink-red-4">
-							{{ connectError }}
-						</p>
-					</template>
-
-					<template v-else-if="cardKind === 'ask-admin'">
-						<p class="text-xs text-ink-gray-5">Ask your admin to finish setup.</p>
-					</template>
-
-					<template v-else-if="cardKind === 'key'">
-						<div>
-							<div class="text-sm font-medium text-ink-gray-9">Paste a key</div>
-							<p v-if="tokenHint" class="mt-1 text-xs text-ink-gray-5">
-								{{ tokenHint }}
+							<div class="flex justify-end">
+								<Button
+									variant="solid"
+									label="Save"
+									:loading="savingClient"
+									:disabled="
+										!staticClient.id.trim() || !staticClient.secret.trim()
+									"
+									@click="saveStaticClient"
+								/>
+							</div>
+							<p v-if="connectError" class="text-xs text-ink-red-4">
+								{{ connectError }}
 							</p>
-						</div>
-						<FormControl
-							type="password"
-							label="Key"
-							:placeholder="
-								isEdit ? 'Leave blank to keep the saved key' : 'Paste your key'
-							"
-							:modelValue="form.credential"
-							@update:modelValue="onCredentialChange"
-						/>
-						<div class="flex items-center justify-between gap-2">
-							<a
-								v-if="tokenDocsUrl"
-								:href="tokenDocsUrl"
-								target="_blank"
-								rel="noopener"
-								class="inline-flex items-center gap-1 text-xs text-ink-blue-link hover:underline"
-							>
-								How to create this key
-								<FeatherIcon name="external-link" class="size-3" />
-							</a>
-							<span v-else />
-							<Button
-								variant="solid"
-								:label="testing ? 'Connecting…' : 'Connect'"
-								:loading="testing"
-								:disabled="!canConnectKey"
-								@click="runConnect"
+						</template>
+
+						<template v-else-if="cardKind === 'ask-admin'">
+							<p class="text-xs text-ink-gray-5">Ask your admin to finish setup.</p>
+						</template>
+
+						<template v-else-if="cardKind === 'key'">
+							<div>
+								<div class="text-sm font-medium text-ink-gray-9">Paste a key</div>
+								<p v-if="tokenHint" class="mt-1 text-p-sm text-ink-gray-6">
+									{{ tokenHint }}
+								</p>
+							</div>
+							<FormControl
+								type="password"
+								label="Key"
+								:placeholder="
+									isEdit ? 'Leave blank to keep the saved key' : 'Paste your key'
+								"
+								:modelValue="form.credential"
+								@update:modelValue="onCredentialChange"
 							/>
-						</div>
+							<div class="flex items-center justify-between gap-2">
+								<a
+									v-if="tokenDocsUrl"
+									:href="tokenDocsUrl"
+									target="_blank"
+									rel="noopener"
+									class="inline-flex items-center gap-1 text-xs text-ink-blue-link hover:underline"
+								>
+									How to create this key
+									<FeatherIcon name="external-link" class="size-3" />
+								</a>
+								<span v-else />
+								<Button
+									variant="solid"
+									:label="testing ? 'Connecting…' : 'Connect'"
+									:loading="testing"
+									:disabled="!canConnectKey"
+									@click="runConnect"
+								/>
+							</div>
+							<div
+								v-if="testState.status === 'passed'"
+								class="flex items-center gap-1.5 text-xs text-ink-green-3"
+							>
+								<FeatherIcon name="check" class="size-3.5" />
+								Connected · {{ testState.tools.length }}
+								{{ testState.tools.length === 1 ? "action" : "actions" }} found
+							</div>
+							<p
+								v-else-if="testState.status === 'failed'"
+								class="text-xs text-ink-red-4"
+							>
+								{{ testState.message }}
+							</p>
+						</template>
+
+						<template v-else-if="cardKind === 'open'">
+							<p class="text-xs text-ink-gray-5">No sign-in needed.</p>
+							<div class="flex justify-end">
+								<Button
+									variant="solid"
+									:label="testing ? 'Connecting…' : 'Connect'"
+									:loading="testing"
+									@click="runConnect"
+								/>
+							</div>
+							<div
+								v-if="testState.status === 'passed'"
+								class="flex items-center gap-1.5 text-xs text-ink-green-3"
+							>
+								<FeatherIcon name="check" class="size-3.5" />
+								Connected · {{ testState.tools.length }}
+								{{ testState.tools.length === 1 ? "action" : "actions" }} found
+							</div>
+							<p
+								v-else-if="testState.status === 'failed'"
+								class="text-xs text-ink-red-4"
+							>
+								{{ testState.message }}
+							</p>
+						</template>
+					</div>
+					<div
+						v-if="showUseKeyInsteadLink || showSignInInsteadLink"
+						class="flex justify-end"
+					>
+						<Button
+							v-if="showUseKeyInsteadLink"
+							variant="ghost"
+							size="sm"
+							label="Use a key instead"
+							class="text-ink-gray-5"
+							@click="switchAuthMethod('API Key')"
+						/>
 						<Button
 							v-if="showSignInInsteadLink"
 							variant="ghost"
 							size="sm"
 							:label="`Sign in with ${form.preset} instead`"
-							class="self-start"
+							class="text-ink-gray-5"
 							@click="switchAuthMethod('OAuth')"
 						/>
-						<div
-							v-if="testState.status === 'passed'"
-							class="flex items-center gap-1.5 text-sm text-ink-green-3"
-						>
-							<FeatherIcon name="check" class="size-4" />
-							Connected · {{ testState.tools.length }}
-							{{ testState.tools.length === 1 ? "action" : "actions" }} found
-						</div>
-						<p
-							v-else-if="testState.status === 'failed'"
-							class="text-xs text-ink-red-4"
-						>
-							{{ testState.message }}
-						</p>
-					</template>
-
-					<template v-else-if="cardKind === 'open'">
-						<p class="text-xs text-ink-gray-5">No sign-in needed.</p>
-						<Button
-							variant="solid"
-							:label="testing ? 'Connecting…' : 'Connect'"
-							:loading="testing"
-							class="self-start"
-							@click="runConnect"
-						/>
-						<div
-							v-if="testState.status === 'passed'"
-							class="flex items-center gap-1.5 text-sm text-ink-green-3"
-						>
-							<FeatherIcon name="check" class="size-4" />
-							Connected · {{ testState.tools.length }}
-							{{ testState.tools.length === 1 ? "action" : "actions" }} found
-						</div>
-						<p
-							v-else-if="testState.status === 'failed'"
-							class="text-xs text-ink-red-4"
-						>
-							{{ testState.message }}
-						</p>
-					</template>
-
-					<Button
-						v-if="showUseKeyInsteadLink"
-						variant="ghost"
-						size="sm"
-						label="Use a key instead"
-						class="self-start"
-						@click="switchAuthMethod('API Key')"
-					/>
+					</div>
 				</div>
 			</div>
 
@@ -814,7 +830,11 @@ const showUseKeyInsteadLink = computed(
 		(!rowName.value || isPlaceholder.value)
 );
 const showSignInInsteadLink = computed(
-	() => !isEdit.value && presetHasOauth.value && (!rowName.value || isPlaceholder.value)
+	() =>
+		!isEdit.value &&
+		cardKind.value === "key" &&
+		presetHasOauth.value &&
+		(!rowName.value || isPlaceholder.value)
 );
 
 const signinAppName = computed(() =>
