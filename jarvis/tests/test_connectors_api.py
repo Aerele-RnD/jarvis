@@ -245,6 +245,21 @@ class TestAddConnector(_ConnectorApiTestCase):
 		self.assertEqual(out["label"], "mcp.example.com")
 		self.assertEqual(out["key"], "mcp_example_com")
 
+	def test_enabled_zero_yields_a_disabled_row(self):
+		# F8: the dialog creates the row on the "Sign in" press with enabled=0 so a
+		# half-made Shared row is never visible to other users until Save turns it on.
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.add_connector(
+			preset="GitHub",
+			base_url="",
+			scope="Personal",
+			credential="tok",
+			enabled=0,
+		)
+		self._connectors.append(out["name"])
+		self.assertIs(out["enabled"], False)
+		self.assertEqual(frappe.db.get_value(CONNECTOR, out["name"], "enabled"), 0)
+
 
 class TestDisabledCatalogPreset(_ConnectorApiTestCase):
 	"""Plaid ships disabled (its endpoint speaks the older transport). Disabled
@@ -1489,6 +1504,18 @@ class TestConnectOauthMcp(_McpOauthTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			connectors_api.connect_oauth(name)
 
+	def test_a_stale_parked_error_is_discarded_when_a_new_flow_starts(self):
+		# F1: a popup-blocked earlier attempt parked a failure that nothing ever polled.
+		# The next Connect must discard it, or the very first poll of the brand-new flow
+		# would surface the stale reason and close the fresh vendor tab.
+		name = self._mk_mcp_connector("connect-stale")
+		mcp_oauth_store.park_signin_error(name, PLAIN_A, "We could not finish signing you in.")
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.connect_oauth(name)
+		self.assertTrue(out["ok"], out)
+		status = connectors_api.oauth_signin_status(name)
+		self.assertEqual(status["error"], "")
+
 
 class TestMcpOauthCallback(_McpOauthTestCase):
 	"""The callback renders a small self-closing web page in the tab the SPA opened,
@@ -1597,6 +1624,10 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		self.assertEqual(transport.calls, [], "no token is ever requested for a stolen state")
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_B}"))
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_A}"))
+		# The stolen-state path parks nothing: the wrong session must not be able to
+		# inject a reason into the STARTING user's poll (nor into its own).
+		self.assertEqual(mcp_oauth_store.take_signin_error(name, PLAIN_A), "")
+		self.assertEqual(mcp_oauth_store.take_signin_error(name, PLAIN_B), "")
 
 	def test_rejects_a_mismatched_issuer_before_any_token_request(self):
 		name = self._mk_mcp_connector("cb-iss")
@@ -1606,12 +1637,16 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			response = self._callback(code="the-code", state=state, iss="https://evil.invalid")
 
-		# RFC 9207: a mix-up response MUST NOT be shown - generic page, nothing parked.
+		# RFC 9207: a mix-up response MUST NOT be shown. The page stays generic and the
+		# starting user gets the GENERIC parked reason (never anything from the response),
+		# so nothing about the mix-up is revealed while the tab still resolves.
 		page = self._assert_failure_page(response)
 		self.assertNotIn("evil.invalid", page["body"])
 		self.assertEqual(transport.calls, [])
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_A}"))
-		self.assertEqual(mcp_oauth_store.take_signin_error(name, PLAIN_A), "")
+		parked = mcp_oauth_store.take_signin_error(name, PLAIN_A)
+		self.assertEqual(parked, connectors_api._SIGNIN_FAILURE_COPY["denied"])
+		self.assertNotIn("evil.invalid", parked)
 
 	def test_rejects_a_missing_issuer_when_the_service_declared_one(self):
 		name = self._mk_mcp_connector("cb-noiss")
@@ -1638,8 +1673,35 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		page = self._assert_failure_page(response)
 		# The attacker-influenced error_description is dropped unread, never rendered.
 		self.assertNotIn("alert(1)", page["body"])
-		self.assertNotIn("script", page["body"])
+		self.assertNotIn("<script>alert", page["body"])
+		# The ONLY <script> on the page is our own tab-closer, appended to every page.
+		self.assertEqual(page["body"].count("<script>"), 1)
+		self.assertIn("window.close", page["body"])
 		self.assertEqual(transport.calls, [])
+
+	def test_cancel_at_vendor_parks_the_generic_reason_and_closes_the_tab(self):
+		# F5: the user declined or cancelled at the vendor, so the provider redirects
+		# back with error= and no code. The page must self-close AND park the GENERIC
+		# reason so the original tab's poll resolves instead of only ever seeing the tab
+		# close ("window closed").
+		name = self._mk_mcp_connector("cb-cancel")
+		frappe.set_user(PLAIN_A)
+		_url, state = self._connect(name)
+		transport = self._script()
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
+			response = self._callback(state=state, iss=MCP_AS_URL, error="access_denied")
+
+		page = self._assert_failure_page(response)
+		self.assertIn("window.close", page["body"])
+		# No token exchange is ever attempted for a cancelled sign-in.
+		self.assertEqual(transport.calls, [])
+		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_A}"))
+		# The GENERIC copy is parked (never the provider's own error text) and surfaced
+		# once, then cleared.
+		first = connectors_api.oauth_signin_status(name)
+		self.assertEqual(first["error"], connectors_api._SIGNIN_FAILURE_COPY["denied"])
+		second = connectors_api.oauth_signin_status(name)
+		self.assertEqual(second["error"], "")
 
 	def test_unknown_state_renders_a_generic_page_without_touching_anything(self):
 		transport = self._script()
@@ -1731,6 +1793,20 @@ class TestOauthSigninStatus(_McpOauthTestCase):
 		out = connectors_api.oauth_signin_status(name)
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "forbidden")
+
+	def test_plain_user_may_poll_a_shared_signin_row(self):
+		# F10: a plain Jarvis User who is neither the owner nor an admin may poll their
+		# OWN sign-in state on a SHARED row - read permission on the row is enough (the
+		# negative twin above proves a stranger's Personal row is refused). Each user's
+		# token is per-user, so PLAIN_B sees their own connected state.
+		name = self._mk_mcp_connector("st-shared", scope="Shared", owner=None)
+		self._mk_mcp_token(name, PLAIN_B, access_token="b-token")
+		frappe.set_user(PLAIN_B)
+		out = connectors_api.oauth_signin_status(name)
+		self.assertTrue(out["ok"], out)
+		self.assertTrue(out["connected"])
+		self.assertTrue(out["connected_at"].endswith("+00:00"), out["connected_at"])
+		self.assertEqual(out["error"], "")
 
 
 class TestBrokerMcpOauthToken(_McpOauthTestCase):

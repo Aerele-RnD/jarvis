@@ -650,6 +650,7 @@ def add_connector(
 	label: str | None = None,
 	key: str | None = None,
 	auth_method: str = "API Key",
+	enabled: int = 1,
 ) -> dict:
 	"""Create a connector. Never marks it Passed — a fresh row's
 	``last_test_status`` is blank by field default, and only ``test_connector``
@@ -674,6 +675,11 @@ def add_connector(
 	for OAuth but can never name or steer what backs it. "API Key" is the shipped,
 	unchanged behaviour, and an ``open`` preset needs no credential at all (the
 	broker sends no Authorization header when the credential is empty).
+
+	``enabled`` defaults to 1 (the shipped behaviour). The dialog passes ``enabled=0``
+	when it creates the row on the "Sign in" press, so a half-made Shared row is not
+	visible to other users until Save turns it on; the value is coerced with ``cint``
+	and clamped to 0/1. ``update_connector`` is what later flips it back on.
 
 	Every OAuth-capable preset uses the sign-in engine (see the module docstring):
 	a ``dcr``/``static`` preset and a Custom URL row get an ``MCP OAuth Client``
@@ -729,7 +735,7 @@ def add_connector(
 		"base_url": resolved_base_url,
 		"scope": scope,
 		"auth_method": auth_method,
-		"enabled": 1,
+		"enabled": 1 if cint(enabled) else 0,
 	}
 	engine_oauth = auth_method == oauth.OAUTH_AUTH_METHOD and _uses_discovery_engine(preset)
 	# A bring-your-own-app static preset (GitHub) seeds its client straight from the
@@ -1350,6 +1356,12 @@ def _connect_mcp_oauth(doc) -> dict:
 	URI and the user who started the flow all live in the state record, because
 	the callback's own query string is attacker-influenced and may not be trusted
 	for any of them."""
+	# A parked error from an EARLIER flow (a popup-blocked, same-tab attempt whose
+	# failure nothing ever polled) would otherwise be handed to the FIRST poll of this
+	# brand-new sign-in and close the vendor tab we are about to open. Discard it here,
+	# after the caller's permission checks and before any state is minted, so this flow
+	# starts from a clean slate.
+	mcp_oauth_store.take_signin_error(doc.name, frappe.session.user)
 	client = mcp_oauth_store.client_for(doc.name)
 	client_id = (client.get("client_id") or "").strip() if client else ""
 	if not client_id:
@@ -1573,6 +1585,18 @@ def set_oauth_client_credentials(name: str, client_id: str, client_secret: str =
 	return _connector_summary(doc)
 
 
+def _park_generic_signin_failure(record: dict) -> None:
+	"""Park the fixed GENERIC failure sentence for the flow ``record`` belongs to, so
+	the original tab's poll resolves with a readable reason once the callback tab has
+	closed. Only ever :data:`_SIGNIN_FAILURE_COPY`'s ``denied`` copy, NEVER anything from
+	the provider's response, so a mix-up response is never surfaced (RFC 9207) and no
+	attacker-influenced text is ever shown. The token-exchange failure is the ONE path
+	that parks the provider's own reason instead; it does not go through here."""
+	mcp_oauth_store.park_signin_error(
+		record.get("connector") or "", record.get("user") or "", _SIGNIN_FAILURE_COPY["denied"]
+	)
+
+
 @frappe.whitelist(methods=["GET"])
 @require_jarvis_user
 def mcp_oauth_callback(
@@ -1597,18 +1621,21 @@ def mcp_oauth_callback(
 	  2. The session user must be the user who started the flow, or a stolen
 	     state cannot be redeemed into someone else's account.
 	  3. RFC 9207 ``iss`` validation BEFORE any token request (mix-up defense).
-	     On mismatch nothing is acted on and nothing from the response is shown.
-	  4. Only then a provider-reported ``error`` is turned into a generic result.
-	     ``error_description`` is accepted so the URL parses and is then dropped
-	     unread - it is attacker-influenced text and is never echoed.
+	     On mismatch nothing from the response is shown; a GENERIC reason is parked for
+	     the starting user's poll, so nothing about the mix-up is ever revealed.
+	  4. Only then a provider-reported ``error`` (or a missing code) is turned into a
+	     GENERIC result and parked. ``error_description`` is accepted so the URL parses
+	     and is then dropped unread, being attacker-influenced text that is never echoed.
 
 	This lands in the NEW tab the SPA opened for the provider, so it renders a small
 	self-closing page (:func:`_callback_page`) rather than redirecting into the SPA;
 	the SPA learns the real outcome by polling :func:`oauth_signin_status` in the
-	original tab. The success and token-exchange-failure pages name the connector and
-	the reason; the state / iss / provider-error paths stay generic (RFC 9207: a mix-up
-	response MUST NOT be shown), and only the token-exchange failure parks a reason for
-	the poll to surface.
+	original tab. Every page closes that tab. The success and token-exchange-failure
+	pages name the connector and the provider's reason; the provider-error and
+	iss-mismatch paths, once the state has been matched to the user who started it, park
+	the GENERIC reason (never anything from the response, so a mix-up response is still
+	never shown, RFC 9207) so the poll resolves instead of hanging on "window closed".
+	The expired (no record) and stolen-state (wrong user) paths park nothing at all.
 
 	Nothing secret is ever put in the page or a log line: it carries a connector label
 	and a friendly reason, never a token, code or state. And the whole body is wrapped,
@@ -1617,11 +1644,28 @@ def mcp_oauth_callback(
 	try:
 		record = mcp_oauth_store.consume_state(state)
 		if record is None:
+			# No record: an expired or replayed state names no connector or user, so
+			# there is nothing a poll could key a parked reason on. Left unparked.
 			return _callback_page(reason="expired")
 		if record.get("user") != frappe.session.user:
+			# A stolen state redeemed by the WRONG session. Parking here would let that
+			# session inject a message into the STARTING user's poll, so this path never
+			# parks; the starting user's own tab keeps polling until it times out.
 			return _callback_page(reason="denied")
-		mcp_oauth.validate_iss(iss, record.get("issuer") or "", bool(record.get("iss_param_supported")))
+		try:
+			mcp_oauth.validate_iss(iss, record.get("issuer") or "", bool(record.get("iss_param_supported")))
+		except mcp_oauth.OAuthError:
+			# RFC 9207 mix-up defense: the response's issuer does not match the one this
+			# flow started against. Nothing from the response is shown or parked; the
+			# starting user (matched just above) gets the GENERIC reason so their tab
+			# resolves instead of hanging on "window closed".
+			_park_generic_signin_failure(record)
+			return _callback_page(reason="denied")
 		if error or not code:
+			# The user declined or cancelled at the vendor, or it returned no code.
+			# The record is matched to this user, so park the GENERIC reason (never the
+			# provider's error text) for the poll to surface after this tab closes.
+			_park_generic_signin_failure(record)
 			return _callback_page(reason="denied")
 		try:
 			_exchange_and_store(record, code)
@@ -1686,6 +1730,12 @@ _SIGNIN_FAILURE_COPY = {
 	"expired": "This sign-in took too long to finish. Please start it again.",
 }
 
+#: Appended to EVERY callback page, success and failure alike, so the vendor tab the
+#: SPA opened closes itself 0.8s after render (long enough to read the outcome). A no-op
+#: on a tab the browser will not let a script close (one the user opened by hand), which
+#: is why every page still ships the back link. Fixed markup, no interpolation.
+_TAB_CLOSE_SCRIPT = "<script>setTimeout(function(){window.close()},800)</script>"
+
 
 def _signin_failure_body(reason: str | None, message: str | None) -> str:
 	"""The escaped body sentence for a failed-sign-in page. A token-exchange failure
@@ -1708,21 +1758,21 @@ def _callback_page(
 	:func:`oauth_signin_status` in the original tab for the real result; this page just
 	tells the person what happened and offers a link back.
 
-	Success (``connector`` set, no ``reason``) is green and appends a script that closes
-	the tab; a failure (any ``reason``) is red and its back link drops the ``oauth``
-	param. EVERYTHING interpolated - the connector label, the brand name, a provider
-	detail - is HTML-escaped, because the message template renders the body raw; the
-	back link is the fixed ``_SPA_CONNECTORS_PATH`` with the connector name
-	percent-encoded, never a value taken from the callback's own query string."""
+	Success (``connector`` set, no ``reason``) is green; a failure (any ``reason``) is
+	red and its back link drops the ``oauth`` param. BOTH append the same
+	``_TAB_CLOSE_SCRIPT`` that closes the tab the SPA opened. EVERYTHING interpolated
+	(the connector label, the brand name, a provider detail) is HTML-escaped, because
+	the message template renders the body raw; the back link is the fixed
+	``_SPA_CONNECTORS_PATH`` with the connector name percent-encoded, never a value taken
+	from the callback's own query string."""
+	# LOAD-BEARING escape: frappe's ``www/message.html`` renders ``{{ message }}`` with
+	# Jinja autoescape OFF, so this ``html.escape`` (and the ones below) is the only thing
+	# between an interpolated value and raw HTML in the page. A future "double escaping"
+	# cleanup must NOT remove it.
 	back_label = f"Back to {html.escape(_brand_name())}"
 	if reason is None and connector:
 		label = html.escape(frappe.db.get_value(CONNECTOR, connector, "label") or connector)
-		body = (
-			f"You're connected to {label}. You can close this tab."
-			# Closes the tab the SPA opened. A no-op when the tab is not script-closable
-			# (one the user opened by hand), which is why the back link still ships.
-			"<script>setTimeout(function(){window.close()},800)</script>"
-		)
+		body = f"You're connected to {label}. You can close this tab." + _TAB_CLOSE_SCRIPT
 		frappe.respond_as_web_page(
 			"Connected",
 			body,
@@ -1733,7 +1783,7 @@ def _callback_page(
 		return
 	frappe.respond_as_web_page(
 		"Sign-in didn't finish",
-		_signin_failure_body(reason, message),
+		_signin_failure_body(reason, message) + _TAB_CLOSE_SCRIPT,
 		indicator_color="red",
 		primary_action=_SPA_CONNECTORS_PATH,
 		primary_label=back_label,
