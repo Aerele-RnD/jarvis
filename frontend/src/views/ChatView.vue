@@ -4704,16 +4704,13 @@ const hasUrgentAlert = computed(
 			llmApplyStuck.value
 		)
 );
-// The soft banner shows only when: it's a not-snoozed soft notice AND the
-// top-of-chat region is otherwise clear (no greeting/welcome/booting) AND no
-// urgent alert is competing for attention. The pill stays regardless.
+// The soft banner shows whenever it's a not-snoozed soft/severe notice AND the
+// top-of-chat region is otherwise clear (no greeting/booting) AND no urgent
+// alert is competing for attention - it also shows over the welcome screen
+// (the highest-traffic surface), which no longer suppresses it. The pill
+// stays regardless.
 const updateBannerVisible = computed(
-	() =>
-		showBanner.value &&
-		!bizGreeting.value.show &&
-		!showWelcome.value &&
-		!booting.value &&
-		!hasUrgentAlert.value
+	() => showBanner.value && !bizGreeting.value.show && !booting.value && !hasUrgentAlert.value
 );
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects

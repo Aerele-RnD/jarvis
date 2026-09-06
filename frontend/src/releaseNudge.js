@@ -5,7 +5,10 @@
 //
 // The wire payload is minimal: { active, version, message, tier, behind,
 // banner_interval_days }. There is NO `state` field - the display state (current /
-// soft / hard / unknown) is derived here from `version` + `tier` + `behind`.
+// soft / severe / hard / unknown) is derived here from `version` + `tier` + `behind`.
+// Only "hard" is blocking (active=true, critical release or below the floor
+// version); "severe" (behind >= release_lag_threshold) is a red pill + banner
+// like "soft", non-blocking - see the Slice 3b.1 severity-split addendum.
 
 export const SNOOZE_KEY = "jarvis-release-banner-snooze";
 
@@ -14,7 +17,12 @@ export const SNOOZE_KEY = "jarvis-release-banner-snooze";
 // `agentName` is a PARAMETER (default "Jarvis"), not an import, so this module stays
 // node-testable and single-sourced - the caller passes the branded agent name in.
 //   - no notice / no target version -> hidden (never a false "on the latest").
-//   - tier "hard" -> red   (N versions behind, or "Update required").
+//   - tier "hard" -> red   (N versions behind, or "Update required"). "hard" is
+//     block-only (critical release / below the floor version) and is normally
+//     hidden behind the full-page gate, so in practice the visible red pill is
+//     "severe" below - both render identically.
+//   - tier "severe" -> red (N versions behind, or "Update available"; NON-blocking:
+//     behind >= release_lag_threshold, chat stays open).
 //   - tier "soft" -> amber (N versions behind, or "Update available").
 //   - otherwise (tier "none", with a known version) -> green (current).
 export function pillFor(notice, agentName = "Jarvis") {
@@ -30,6 +38,16 @@ export function pillFor(notice, agentName = "Jarvis") {
 					: "Update required",
 		};
 	}
+	if (notice.tier === "severe") {
+		return {
+			show: true,
+			tone: "red",
+			label:
+				behind >= 1
+					? `${behind} version${behind === 1 ? "" : "s"} behind`
+					: "Update available",
+		};
+	}
 	if (notice.tier === "soft") {
 		return {
 			show: true,
@@ -43,11 +61,14 @@ export function pillFor(notice, agentName = "Jarvis") {
 	return { show: true, tone: "green", label: `On the latest ${agentName}` };
 }
 
-// The soft banner shows only for the soft tier, and only when not currently snoozed:
-// no snooze, a snooze for a different (older) target version, or a snooze that has
+// The soft banner shows for the "soft" and "severe" tiers - both are non-blocking
+// nudges (chat stays open; "hard" is the only blocking tier and has no banner, it
+// gets the full-page gate instead) - and only when not currently snoozed: no
+// snooze, a snooze for a different (older) target version, or a snooze that has
 // expired. `now` and `snooze` are passed in so this stays pure and testable.
 export function bannerShouldShow(notice, now, snooze) {
-	if (!notice || !notice.version || notice.tier !== "soft") return false;
+	if (!notice || !notice.version) return false;
+	if (notice.tier !== "soft" && notice.tier !== "severe") return false;
 	return !snooze || snooze.version !== notice.version || now > snooze.until;
 }
 

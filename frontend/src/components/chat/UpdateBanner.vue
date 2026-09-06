@@ -23,12 +23,14 @@
 </template>
 
 <script setup>
-// UpdateBanner: the occasional soft nudge that a newer app version exists
-// (Slice 3b). Dismiss ("Remind me later" or ×) plays a short minimise-into-pill
-// FLIP, then snoozes per-device. Honors prefers-reduced-motion (instant hide +
-// snooze, no FLIP/pulse), and degrades to a plain hide when the pill rect can't
-// be measured. Mounting/visibility (yield to greeting/welcome/booting/urgent
-// alerts) is decided by the caller's v-if in ChatView.
+// UpdateBanner: the occasional soft/severe nudge that a newer app version exists
+// (Slice 3b, severity split in 3b.1) - non-blocking; the blocking "hard" tier has
+// no banner, it gets the full-page gate instead. Dismiss ("Remind me later" or ×)
+// plays a short minimise-into-pill FLIP, then snoozes per-device. Honors
+// prefers-reduced-motion (instant hide + snooze, no FLIP/pulse), and degrades to
+// a plain hide when the pill rect can't be measured. Mounting/visibility (yield
+// to greeting/booting/urgent alerts; shows over the welcome screen too) is
+// decided by the caller's v-if in ChatView.
 import { ref } from "vue";
 import Banner from "@/components/Banner.vue";
 import { FeatherIcon } from "frappe-ui";
