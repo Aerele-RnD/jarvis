@@ -3,25 +3,51 @@
 		<template #body-content>
 			<!-- ── Step 1: connect ─────────────────────────────────────────── -->
 			<div v-if="step === 1" class="flex flex-col gap-3">
-				<p class="text-sm text-ink-gray-6">
-					{{ agentName }} can use this connector's actions in chat, gated by what you
-					allow on the next step.
-				</p>
-
-				<div class="flex items-end gap-2">
-					<FormControl
-						class="flex-1"
-						type="select"
-						label="App"
-						:options="presetOptions"
-						:disabled="isEdit"
-						:modelValue="form.preset"
-						@update:modelValue="onPresetChange"
-					/>
-					<ConnectorLogo :preset="form.preset" :size="20" class="mb-2 text-ink-gray-5" />
+				<div class="flex items-center gap-2 text-xs text-ink-gray-5">
+					<span class="flex items-center gap-1.5 font-medium text-ink-gray-9">
+						<span
+							class="flex size-4 items-center justify-center rounded-full bg-surface-gray-7 text-[10px] font-medium text-ink-white"
+						>
+							1
+						</span>
+						Connect
+					</span>
+					<span class="h-px w-6 bg-outline-gray-2" />
+					<span class="flex items-center gap-1.5">
+						<span
+							class="flex size-4 items-center justify-center rounded-full bg-surface-gray-2 text-[10px] font-medium text-ink-gray-5"
+						>
+							2
+						</span>
+						Permissions
+					</span>
 				</div>
 
-				<template v-if="form.preset === 'Custom URL' && allowCustomUrls">
+				<div class="flex items-center gap-3 rounded-lg border px-3 py-2.5">
+					<ConnectorLogo
+						:preset="form.preset"
+						:size="24"
+						class="shrink-0 text-ink-gray-5"
+					/>
+					<div class="min-w-0 flex-1">
+						<div class="truncate text-sm font-medium text-ink-gray-9">
+							{{ chipName }}
+						</div>
+						<div v-if="chipSub" class="truncate text-xs text-ink-gray-5">
+							{{ chipSub }}
+						</div>
+					</div>
+					<button
+						v-if="!isEdit"
+						type="button"
+						class="shrink-0 text-xs text-ink-gray-6 hover:underline"
+						@click="onChange"
+					>
+						Change
+					</button>
+				</div>
+
+				<template v-if="form.preset === 'Custom URL'">
 					<div class="flex items-end gap-2">
 						<FormControl
 							class="flex-1"
@@ -29,7 +55,7 @@
 							label="Base URL"
 							placeholder="https://example.com/mcp"
 							:modelValue="form.base_url"
-							@update:modelValue="(v) => onBaseUrlChange(v)"
+							@update:modelValue="(v) => (form.base_url = v)"
 						/>
 						<Button
 							variant="subtle"
@@ -42,178 +68,325 @@
 					<p v-if="probeError" class="text-xs text-ink-red-4">{{ probeError }}</p>
 				</template>
 
-				<!-- OAuth-first (design §1): a preset with a sign-in option defaults
-				     here. The pasted-token path stays one click away via "Use a token
-				     instead" - shown only before a row exists this session (rowName),
-				     so switching mid-flow never has to migrate an already-saved row's
-				     auth method. "Sign-in option" means whatever the catalog marks
-				     dcr/static (jarvis/connectors/catalog.py) - token and open presets
-				     never reach this branch. Custom URL only earns it once Check finds a
-				     sign-in requirement (customUrlOauth.active) - a plain token-only
-				     server never leaves the FormControl-only path below. -->
-				<template v-if="presetHasOauth && form.auth_method === 'OAuth'">
-					<div
-						v-if="!rowOauthConnected"
-						class="flex flex-col gap-2 rounded-lg border p-3"
-					>
-						<p v-if="form.preset !== 'Custom URL'" class="text-xs text-ink-gray-5">
-							Sign in to {{ form.preset }} to connect.
-						</p>
-						<p v-else-if="customUrlOauth.signinHost" class="text-xs text-ink-gray-5">
-							This app signs you in at {{ customUrlOauth.signinHost }}.
-						</p>
+				<div v-if="isAdmin && !isEdit" class="flex items-center justify-between gap-3">
+					<span class="text-xs text-ink-gray-5">Who can use it</span>
+					<TabButtons
+						v-if="!scopeLocked"
+						:buttons="SCOPE_OPTIONS"
+						:model-value="form.scope"
+						@update:model-value="onScopeChange"
+					/>
+					<span v-else class="text-sm text-ink-gray-7">
+						{{ form.scope === "Shared" ? "Everyone" : "Only me" }}
+					</span>
+				</div>
 
-						<!-- A static (admin-registered) server needs a client id/secret
-						     before anyone can sign in. The row already exists (the first
-						     Connect press creates it) but connecting was deliberately
-						     skipped until this is filled in - see startOauthConnect. Gated
-						     on rowNeedsStaticClient alone (server truth), not the preset, so
-						     a named static preset gets the same block Custom URL already
-						     had. -->
-						<template v-if="rowNeedsStaticClient">
-							<template v-if="canSetStaticClient">
-								<p
-									v-if="staticHint || staticHelpUrl"
-									class="text-xs text-ink-gray-5"
-								>
-									{{ staticHint }}
-									<a
-										v-if="staticHelpUrl"
-										:href="staticHelpUrl"
-										target="_blank"
-										rel="noopener"
-										class="text-ink-blue-link hover:underline"
-									>
-										How to register this app
-									</a>
-								</p>
-								<FormControl
-									type="text"
-									label="Client ID"
-									:modelValue="staticClient.id"
-									@update:modelValue="(v) => (staticClient.id = v)"
-								/>
-								<FormControl
-									type="password"
-									label="Client secret"
-									:modelValue="staticClient.secret"
-									@update:modelValue="(v) => (staticClient.secret = v)"
-								/>
-								<div v-if="rowRedirectUri" class="flex flex-col gap-1">
-									<span class="text-xs text-ink-gray-5"
-										>Callback URL to register with the app</span
-									>
-									<div class="flex items-center gap-2">
-										<code
-											class="min-w-0 flex-1 truncate rounded border px-2 py-1 text-xs text-ink-gray-7"
-											>{{ rowRedirectUri }}</code
-										>
-										<Button
-											variant="ghost"
-											icon="copy"
-											:tooltip="copied ? 'Copied' : 'Copy'"
-											@click="copyRedirectUri"
-										/>
-									</div>
+				<!-- One connect card, its shape picked by cardKind (see the state
+				     machine note above the script). -->
+				<div class="flex flex-col gap-3 rounded-lg border p-3">
+					<template v-if="cardKind === 'need-check'">
+						<p class="text-xs text-ink-gray-5">Check the address above to continue.</p>
+					</template>
+
+					<template v-else-if="cardKind === 'signin'">
+						<template v-if="autoCreating">
+							<p class="text-xs text-ink-gray-5">Setting up…</p>
+						</template>
+						<template v-else-if="signingIn">
+							<div class="text-sm font-medium text-ink-gray-9">
+								Sign in to {{ signinAppName }}
+							</div>
+							<p class="text-xs text-ink-gray-5">
+								Finish signing in in the other tab.
+							</p>
+							<Button
+								variant="ghost"
+								size="sm"
+								label="Cancel"
+								class="self-start"
+								@click="cancelSignIn"
+							/>
+						</template>
+						<template v-else-if="rowOauthConnected">
+							<template v-if="testing">
+								<p class="text-xs text-ink-gray-5">Checking the connection…</p>
+							</template>
+							<template v-else-if="testState.status === 'passed'">
+								<div class="flex items-center gap-1.5 text-sm text-ink-green-3">
+									<FeatherIcon name="check" class="size-4" />
+									Connected
 								</div>
+								<p class="text-xs text-ink-gray-5">
+									{{ testState.tools.length }}
+									{{ testState.tools.length === 1 ? "action" : "actions" }} found
+								</p>
 								<Button
-									variant="solid"
-									label="Save"
-									:loading="savingClient"
-									:disabled="
-										!staticClient.id.trim() || !staticClient.secret.trim()
-									"
+									variant="ghost"
+									size="sm"
+									icon="log-out"
+									:tooltip="'Disconnect'"
+									:loading="disconnectingInline"
 									class="self-start"
-									@click="saveStaticClient"
+									@click="disconnectInline"
 								/>
 							</template>
-							<p v-else class="text-xs text-ink-gray-5">
-								Ask your admin to finish setup.
-							</p>
+							<template v-else-if="testState.status === 'failed'">
+								<p class="text-xs text-ink-red-4">{{ testState.message }}</p>
+								<Button
+									variant="ghost"
+									size="sm"
+									icon="log-out"
+									:tooltip="'Disconnect'"
+									:loading="disconnectingInline"
+									class="self-start"
+									@click="disconnectInline"
+								/>
+							</template>
 						</template>
+						<template v-else-if="connectError">
+							<p class="text-xs text-ink-red-4">{{ connectError }}</p>
+							<Button
+								variant="solid"
+								label="Try again"
+								iconRight="external-link"
+								class="self-start"
+								@click="beginSignIn"
+							/>
+						</template>
+						<template v-else>
+							<div>
+								<div class="text-sm font-medium text-ink-gray-9">
+									Sign in to {{ signinAppName }}
+								</div>
+								<p class="mt-1 text-xs text-ink-gray-5">
+									You will be sent to
+									{{ displaySigninHost || "the provider" }} to approve access.
+								</p>
+							</div>
+							<Button
+								variant="solid"
+								:label="`Sign in with ${signinAppName}`"
+								iconRight="external-link"
+								class="self-start"
+								:disabled="!rowName"
+								@click="beginSignIn"
+							/>
+						</template>
+					</template>
+
+					<template v-else-if="cardKind === 'register'">
+						<div>
+							<div class="text-sm font-medium text-ink-gray-9">
+								Register your {{ form.preset }} app once
+							</div>
+							<p v-if="staticHint" class="mt-1 text-xs text-ink-gray-5">
+								{{ staticHint }}
+							</p>
+						</div>
+
+						<div class="flex gap-2.5">
+							<span
+								class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-surface-gray-2 text-[10px] font-medium text-ink-gray-6"
+								>1</span
+							>
+							<div class="flex flex-1 flex-col gap-1.5">
+								<div class="text-xs text-ink-gray-8">
+									Copy this callback address into the app
+								</div>
+								<div v-if="rowRedirectUri" class="flex items-center gap-2">
+									<code
+										class="min-w-0 flex-1 truncate rounded border px-2 py-1 text-xs text-ink-gray-7"
+										>{{ rowRedirectUri }}</code
+									>
+									<Button
+										variant="ghost"
+										icon="copy"
+										:tooltip="copied ? 'Copied' : 'Copy'"
+										@click="copyRedirectUri"
+									/>
+								</div>
+							</div>
+						</div>
+
+						<div class="flex gap-2.5">
+							<span
+								class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-surface-gray-2 text-[10px] font-medium text-ink-gray-6"
+								>2</span
+							>
+							<div class="flex flex-1 flex-col gap-1.5">
+								<div class="text-xs text-ink-gray-8">
+									Create the app in your {{ form.preset }} organisation
+								</div>
+								<a
+									v-if="staticHelpUrl"
+									:href="staticHelpUrl"
+									target="_blank"
+									rel="noopener"
+									class="inline-flex w-fit items-center gap-1 text-xs text-ink-blue-link hover:underline"
+								>
+									Open {{ form.preset }} app settings
+									<FeatherIcon name="external-link" class="size-3" />
+								</a>
+							</div>
+						</div>
+
+						<div class="flex gap-2.5">
+							<span
+								class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-surface-gray-2 text-[10px] font-medium text-ink-gray-6"
+								>3</span
+							>
+							<div class="flex flex-1 flex-col gap-3">
+								<div class="text-xs text-ink-gray-8">
+									Paste what {{ form.preset }} gives you
+								</div>
+								<div class="grid grid-cols-2 gap-2">
+									<FormControl
+										type="text"
+										label="Client ID"
+										:modelValue="staticClient.id"
+										@update:modelValue="(v) => (staticClient.id = v)"
+									/>
+									<FormControl
+										type="password"
+										label="Client secret"
+										:modelValue="staticClient.secret"
+										@update:modelValue="(v) => (staticClient.secret = v)"
+									/>
+								</div>
+							</div>
+						</div>
 
 						<Button
-							v-else
 							variant="solid"
-							:label="oauthConnectLabel"
-							:loading="connecting"
+							label="Save"
+							:loading="savingClient"
+							:disabled="!staticClient.id.trim() || !staticClient.secret.trim()"
 							class="self-start"
-							@click="startOauthConnect"
+							@click="saveStaticClient"
 						/>
 						<p v-if="connectError" class="text-xs text-ink-red-4">
 							{{ connectError }}
 						</p>
-					</div>
+					</template>
+
+					<template v-else-if="cardKind === 'ask-admin'">
+						<p class="text-xs text-ink-gray-5">Ask your admin to finish setup.</p>
+					</template>
+
+					<template v-else-if="cardKind === 'key'">
+						<div>
+							<div class="text-sm font-medium text-ink-gray-9">Paste a key</div>
+							<p v-if="tokenHint" class="mt-1 text-xs text-ink-gray-5">
+								{{ tokenHint }}
+							</p>
+						</div>
+						<FormControl
+							type="password"
+							label="Key"
+							:placeholder="
+								isEdit ? 'Leave blank to keep the saved key' : 'Paste your key'
+							"
+							:modelValue="form.credential"
+							@update:modelValue="onCredentialChange"
+						/>
+						<div class="flex items-center justify-between gap-2">
+							<a
+								v-if="tokenDocsUrl"
+								:href="tokenDocsUrl"
+								target="_blank"
+								rel="noopener"
+								class="inline-flex items-center gap-1 text-xs text-ink-blue-link hover:underline"
+							>
+								How to create this key
+								<FeatherIcon name="external-link" class="size-3" />
+							</a>
+							<span v-else />
+							<Button
+								variant="solid"
+								:label="testing ? 'Connecting…' : 'Connect'"
+								:loading="testing"
+								:disabled="!canConnectKey"
+								@click="runConnect"
+							/>
+						</div>
+						<Button
+							v-if="showSignInInsteadLink"
+							variant="ghost"
+							size="sm"
+							:label="`Sign in with ${form.preset} instead`"
+							class="self-start"
+							@click="switchAuthMethod('OAuth')"
+						/>
+						<div
+							v-if="testState.status === 'passed'"
+							class="flex items-center gap-1.5 text-sm text-ink-green-3"
+						>
+							<FeatherIcon name="check" class="size-4" />
+							Connected · {{ testState.tools.length }}
+							{{ testState.tools.length === 1 ? "action" : "actions" }} found
+						</div>
+						<p
+							v-else-if="testState.status === 'failed'"
+							class="text-xs text-ink-red-4"
+						>
+							{{ testState.message }}
+						</p>
+					</template>
+
+					<template v-else-if="cardKind === 'open'">
+						<p class="text-xs text-ink-gray-5">No sign-in needed.</p>
+						<Button
+							variant="solid"
+							:label="testing ? 'Connecting…' : 'Connect'"
+							:loading="testing"
+							class="self-start"
+							@click="runConnect"
+						/>
+						<div
+							v-if="testState.status === 'passed'"
+							class="flex items-center gap-1.5 text-sm text-ink-green-3"
+						>
+							<FeatherIcon name="check" class="size-4" />
+							Connected · {{ testState.tools.length }}
+							{{ testState.tools.length === 1 ? "action" : "actions" }} found
+						</div>
+						<p
+							v-else-if="testState.status === 'failed'"
+							class="text-xs text-ink-red-4"
+						>
+							{{ testState.message }}
+						</p>
+					</template>
+
 					<Button
-						v-if="!rowName"
+						v-if="showUseKeyInsteadLink"
 						variant="ghost"
 						size="sm"
-						label="Use a token instead"
+						label="Use a key instead"
 						class="self-start"
 						@click="switchAuthMethod('API Key')"
 					/>
-				</template>
-
-				<template v-else-if="presetAuthClass === 'open'">
-					<p class="text-xs text-ink-gray-5">No sign-in needed.</p>
-				</template>
-
-				<template v-else>
-					<FormControl
-						type="password"
-						label="Access token"
-						:placeholder="
-							isEdit ? 'Leave blank to keep the saved token' : 'Paste your token'
-						"
-						:modelValue="form.credential"
-						@update:modelValue="(v) => onCredentialChange(v)"
-					/>
-					<p v-if="tokenHint || tokenDocsUrl" class="text-xs text-ink-gray-5">
-						{{ tokenHint }}
-						<a
-							v-if="tokenDocsUrl"
-							:href="tokenDocsUrl"
-							target="_blank"
-							rel="noopener"
-							class="text-ink-blue-link hover:underline"
-						>
-							How to create this token
-						</a>
-					</p>
-					<Button
-						v-if="presetHasOauth && !rowName"
-						variant="ghost"
-						size="sm"
-						:label="`Sign in to ${form.preset} instead`"
-						class="self-start"
-						@click="switchAuthMethod('OAuth')"
-					/>
-				</template>
-
-				<div
-					v-if="form.auth_method !== 'OAuth' || rowOauthConnected"
-					class="flex items-center gap-3 rounded-lg border p-3"
-				>
-					<Button
-						variant="subtle"
-						:label="testing ? 'Testing…' : 'Test connection'"
-						:loading="testing"
-						:disabled="!canTest"
-						@click="runTest"
-					/>
-					<span v-if="testState.status === 'passed'" class="text-sm text-ink-green-3">
-						Connected, {{ testState.tools.length }}
-						{{ testState.tools.length === 1 ? "tool" : "tools" }} found
-					</span>
-					<span v-else-if="testState.status === 'failed'" class="text-sm text-ink-red-4">
-						{{ testState.message }}
-					</span>
-					<span v-else class="text-sm text-ink-gray-5">Not tested yet</span>
 				</div>
 			</div>
 
 			<!-- ── Step 2: allowed actions ─────────────────────────────────── -->
 			<div v-else class="flex flex-col gap-3">
+				<div class="flex items-center gap-3 rounded-lg border px-3 py-2.5">
+					<ConnectorLogo
+						:preset="form.preset"
+						:size="24"
+						class="shrink-0 text-ink-gray-5"
+					/>
+					<div class="min-w-0 flex-1">
+						<div class="truncate text-sm font-medium text-ink-gray-9">
+							{{ chipName }}
+						</div>
+						<div v-if="chipSub" class="truncate text-xs text-ink-gray-5">
+							{{ chipSub }}
+						</div>
+					</div>
+				</div>
+
 				<div class="flex items-center justify-between gap-3">
 					<p class="text-sm text-ink-gray-6">
 						Choose what {{ agentName }} may do with {{ connectorDisplayName }}.
@@ -315,7 +488,13 @@
 		</template>
 		<template #actions>
 			<div class="flex items-center justify-end gap-2">
-				<Button v-if="step === 2" label="Back" :disabled="saving" @click="step = 1" />
+				<Button
+					v-if="step === 2"
+					label="Back"
+					:disabled="saving"
+					class="mr-auto"
+					@click="step = 1"
+				/>
 				<Button label="Cancel" :disabled="saving" @click="cancel" />
 				<Button
 					v-if="step === 1"
@@ -337,32 +516,61 @@
 </template>
 
 <script setup>
-// Add/edit an MCP connector (MCP_CONNECTORS_PLAN.md P4). Two steps, copying
-// PromotionRequestDialog's Dialog structure (#body-content/#actions slots,
-// FormControl type="select" for the preset picker rather than Autocomplete —
-// same documented trap: frappe-ui's Autocomplete search popover renders
-// outside a reka-ui Dialog's focus scope and is unclickable there).
+// Add/edit an MCP connector (Option B, chosen 2026-09-06 - see build.py's
+// note-b). The app is always picked on the Browse tab first
+// (ConnectorDirectory); this dialog opens straight onto that preset (or
+// "Custom URL"), no in-dialog Select any more.
 //
-// test_connector needs a SAVED row name, so step 1's "Test connection" both
-// persists the connect fields (add_connector the first time this session,
-// update_connector after) and runs the live probe in one click. Step 2 (the
-// allowed-actions picker) is only reachable once that test has passed, which
-// is what guarantees a row already exists by the time Save calls
-// set_allowed_actions. Cancelling out of a freshly-created, still-unsaved row
-// deletes it so a browser-closed-mid-dialog never leaves an orphan.
+// ── State machine (six connect-card shapes, one at a time) ──────────────────
+//   cardKind:
+//     "need-check" - Custom URL, Check not run yet. No action; Continue stays
+//         disabled (testState never reaches "passed" from here).
+//     "signin"     - dcr, or static once a client is on file, or Custom URL
+//         once Check found needs_signin. Sub-states: autoCreating -> signingIn
+//         -> (rowOauthConnected -> testing -> passed/failed) | connectError.
+//         The row is auto-created the moment this shape is first reachable
+//         (dialog open for a named preset, Check-success for Custom URL) so
+//         one press of "Sign in with X" both has a row to sign in against and
+//         calls signIn() synchronously in that same click (the interface's
+//         hard requirement - it opens a tab before its first await).
+//     "register"   - static, no client on file yet, current user allowed to
+//         set one. Numbered mini-steps; "Save" persists the client and the
+//         card flips to "signin" on the next render (two presses total, each
+//         a plain "Save" / "Sign in with X" - never a chained side effect).
+//     "ask-admin"  - static, no client, current user NOT allowed to set one.
+//     "key"        - token preset, or Custom URL once Check found no sign-in
+//         needed, or any sign-in preset the user explicitly switched off of.
+//     "open"       - open preset (no credential, no sign-in).
 //
-// Edit mode (`connector` prop set) reuses the same shape: the preset is fixed
-// (pinned server-side, see connectors_api.add_connector), "Test connection"
-// calls update_connector instead of add_connector, and a blank credential
-// means "keep the saved one" (connectors_api.update_connector's contract).
+// isPlaceholder is the one predicate that reconciles every tension the spec
+// itself narrates: a row THIS dialog auto-created that nobody has invested in
+// yet (no saved client, no live sign-in, no passing test) is disposable. It
+// drives three things at once: the Cancel-rule cleanup below, whether "Who
+// can use it" is still a live toggle or already plain text, and whether the
+// "use a key/sign in instead" switch links still show. Flipping the scope or
+// the auth method while placeholder discards the old row and starts over
+// instead of trying to mutate a saved row's immutable fields (scope and
+// auth_method are both set-once server side).
 import { computed, reactive, ref, watch } from "vue";
-import { Badge, Button, Dialog, FormControl, Switch, toast } from "frappe-ui";
+import {
+	Badge,
+	Button,
+	Dialog,
+	FeatherIcon,
+	FormControl,
+	Switch,
+	TabButtons,
+	toast,
+} from "frappe-ui";
 import ConnectorLogo from "@/components/settings/ConnectorLogo.vue";
 import { CUSTOM_URL_TOKEN_HINT } from "@/components/settings/connectorHelp.js";
+// Agent A's helper - opens the vendor tab synchronously and resolves once the
+// popup's own round trip finishes.
+import { signIn } from "@/components/settings/oauthSignin";
 import {
 	addConnector,
-	connectOauth,
 	deleteConnector,
+	disconnectOauth,
 	probeConnectorAuth,
 	setConnectorAllowedActions,
 	setOauthClientCredentials,
@@ -370,188 +578,140 @@ import {
 	updateConnector,
 } from "@/api";
 import { agentName } from "@/branding";
-import { errHtml, errMessage } from "@/lib/errors";
+import { errMessage, errHtml } from "@/lib/errors";
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
-	// "Shared" or "Personal" — which section's "Add connector" button opened
-	// this dialog. Ignored in edit mode (the row's own scope never changes here).
+	// "Shared" or "Personal" - the default scope handed in from the pane (an
+	// admin's Browse press defaults Shared; a non-admin's is always Personal).
+	// Ignored in edit mode.
 	scope: { type: String, default: "Personal" },
+	// The catalog name chosen on Browse, or "Custom URL". Ignored in edit mode.
+	preset: { type: String, default: "" },
 	allowCustomUrls: { type: Boolean, default: true },
 	// The row being edited, or null for a fresh Add.
 	connector: { type: Object, default: null },
-	// listConnectors()'s catalog: [{ name, key, auth, category, logo, help_url,
-	// hint, token_hint, token_help_url }], enabled providers in catalog order.
-	// Drives the preset picker and every auth-class branch below instead of a
-	// hardcoded list. token_hint/token_help_url carry paste-a-token guidance for
-	// the "use a token instead" fallback (help_url/hint guide app registration).
+	// listConnectors()'s catalog: [{ name, key, auth, category, description,
+	// logo, help_url, hint, token_hint, token_help_url }], enabled providers,
+	// catalog order.
 	catalog: { type: Array, default: () => [] },
 });
-const emit = defineEmits(["update:modelValue", "saved"]);
+const emit = defineEmits(["update:modelValue", "saved", "change"]);
 
 const show = computed({
 	get: () => props.modelValue,
 	set: (v) => emit("update:modelValue", v),
 });
 
+const SCOPE_OPTIONS = [
+	{ label: "Everyone", value: "Shared" },
+	{ label: "Only me", value: "Personal" },
+];
+
 const isAdmin = !!window.is_system_manager || !!window.is_jarvis_admin;
 // Who may enter an app's client id/secret: an admin for a Shared row, or the
-// owner of their own Personal row (their app, their connector). Mirrors the
-// server gate in set_oauth_client_credentials, so a Personal row is never a
-// dead end waiting on an admin who cannot even see it.
+// owner of their own Personal row (their app, their connector).
 const canSetStaticClient = computed(
-	() => isAdmin || (props.connector?.scope || props.scope) === "Personal"
+	() => isAdmin || (isEdit.value ? props.connector.scope : form.scope) === "Personal"
 );
 
 const isEdit = computed(() => !!props.connector);
-const dialogTitle = computed(() => (isEdit.value ? "Edit connector" : "Add connector"));
-const presetOptions = computed(() => {
-	const opts = props.catalog.map((c) => ({ label: c.name, value: c.name }));
-	if (props.allowCustomUrls) opts.push({ label: "Custom URL", value: "Custom URL" });
-	return opts;
+const dialogTitle = computed(() => {
+	if (isEdit.value) return "Edit connector";
+	return form.preset === "Custom URL" ? "Add a custom server" : `Connect ${form.preset}`;
 });
+
 const step = ref(1);
 const saving = ref(false);
 const testing = ref(false);
 
-const form = reactive({ preset: "", base_url: "", credential: "", auth_method: "API Key" });
-// resetForCreate/resetForEdit always set preset+auth_method before the dialog
-// is shown, so these are just safe empty defaults, not a real first preset.
+const form = reactive({
+	preset: "",
+	base_url: "",
+	credential: "",
+	auth_method: "API Key",
+	scope: "Personal",
+});
 
-// name -> catalog auth class ("dcr"/"static"/"token"/"open"), or null for
-// Custom URL (not a catalog entry) or an unknown/not-yet-loaded name.
 function catalogAuthOf(name) {
 	if (name === "Custom URL") return null;
 	const entry = props.catalog.find((c) => c.name === name);
 	return entry ? entry.auth : null;
 }
-// The picked preset's auth class, or "custom" for Custom URL (its class is
-// decided live by the Check probe instead, see customUrlOauth). Edit mode
-// reads this off the row itself (auth_class, sent on every list row - see
-// jarvis/chat/connectors_api.py's _auth_class) rather than the catalog: a
-// row whose preset was later disabled in the catalog has no catalog entry
-// to look up any more, and falling through to null would render the token
-// field for what is still an OAuth row. Create mode has no saved row yet,
-// so the catalog lookup is the only source of truth there.
+const catalogEntry = computed(() => props.catalog.find((c) => c.name === form.preset) || null);
+// dcr/static both default to a sign-in flow; token/open never do.
+function presetDefaultsToOauth(auth) {
+	return auth === "dcr" || auth === "static";
+}
 const presetAuthClass = computed(() => {
 	if (isEdit.value) return props.connector.auth_class;
 	return form.preset === "Custom URL" ? "custom" : catalogAuthOf(form.preset);
 });
-// dcr/static both default to a sign-in flow (OAUTH_CONNECTORS_DESIGN.md §3,
-// extended to every catalog auth class that supports it); token/open never do.
-function presetDefaultsToOauth(auth) {
-	return auth === "dcr" || auth === "static";
-}
-// Whether the selected preset offers a sign-in option at all - gates every
-// OAuth-mode template branch below. Custom URL only joins this once Check
-// (runProbe) finds the pasted server needs a sign-in - it never defaults to
-// it the way a named preset does.
+// Whether the selected preset offers a sign-in option at all. Custom URL only
+// joins this once Check finds the pasted server needs one.
 const presetHasOauth = computed(() => {
 	if (form.preset === "Custom URL") return customUrlOauth.active;
 	return presetDefaultsToOauth(presetAuthClass.value);
 });
-// The sign-in box's own button label: every sign-in flow (dcr/static/Custom URL)
-// gets the generic "Connect" (design §8 copy - nothing to brand it with beyond
-// the preset name already shown in the line above the button).
-const oauthConnectLabel = computed(() => {
-	if (connecting.value) return "Connecting…";
-	return "Connect";
-});
-// Step 2's "Choose what {agent} may do with X" line. There's no user-typed
-// Name field any more (the backend derives the saved label - preset display
-// name, or the Custom URL's hostname), so this falls back to the preset's
-// own name for a fresh Add and to the edited row's already-saved label
-// otherwise.
-const connectorDisplayName = computed(() => {
-	if (isEdit.value && props.connector?.label) return props.connector.label;
-	if (form.preset && form.preset !== "Custom URL") return form.preset;
-	return "this connector";
-});
-// Per-preset token guidance shown under the Access token field. A sign-in
-// preset's own hint/help_url now guide REGISTERING an app, not pasting a token,
-// so the paste-a-token copy lives on dedicated token_hint/token_help_url fields
-// (jarvis/connectors/catalog.py) shown here on ANY class when present. For a
-// token-class preset the plain hint IS token guidance, so it is the fallback;
-// a sign-in preset with no token_hint renders no line (its hint stays in the
-// register-your-own-app block instead). Custom URL has no catalog entry, so it
-// gets the one generic hint below.
-const tokenHint = computed(() => {
-	if (form.preset === "Custom URL") return CUSTOM_URL_TOKEN_HINT;
-	const entry = props.catalog.find((c) => c.name === form.preset);
-	if (!entry) return "";
-	if (entry.token_hint) return entry.token_hint;
-	// A static provider's hint is its app-registration guide, not token advice;
-	// every other class (token, dcr) keeps its key guidance on this fallback.
-	return entry.auth !== "static" ? entry.hint || "" : "";
-});
-const tokenDocsUrl = computed(() => {
-	if (form.preset === "Custom URL") return "";
-	const entry = props.catalog.find((c) => c.name === form.preset);
-	if (!entry) return "";
-	if (entry.token_help_url) return entry.token_help_url;
-	return entry.auth !== "static" ? entry.help_url || "" : "";
-});
-// The bring-your-own-app copy shown in the static-client block: the catalog's
-// own one-line hint plus a link to the vendor's app-creation page (catalog
-// help_url). Custom URL has no catalog entry, so it renders neither - it already
-// shows its own "signs you in at HOST" line above.
-const staticHint = computed(() => {
-	if (form.preset === "Custom URL") return "";
-	const entry = props.catalog.find((c) => c.name === form.preset);
-	return entry?.hint || "";
-});
-const staticHelpUrl = computed(() => {
-	if (form.preset === "Custom URL") return "";
-	const entry = props.catalog.find((c) => c.name === form.preset);
-	return entry?.help_url || "";
-});
-// The saved row this dialog is working against: the edited row's name, or the
-// name add_connector returned the first time "Test connection" ran this session.
+
+// ── the one saved (or placeholder) row this dialog is working against ──────
 const rowName = ref("");
-// Only true for a row THIS dialog session created (never for an edited row) —
-// gates the delete-on-close cleanup below.
+// Only true for a row THIS dialog session created (never for an edited row).
 const createdThisSession = ref(false);
-// Flips true once Save has actually committed, so a created-this-session row
-// that WAS saved is never mistaken for an orphan.
-const savedThisSession = ref(false);
-const testState = reactive({ status: "idle", tools: [], message: "" }); // idle | passed | failed
-// Whether THIS row currently has a live per-user connection (design §6a) -
-// true for an edited row that's already connected, or right after this
-// session's own sign-in round-trip reopens the dialog. Gates whether step 1
-// shows the "Sign in" prompt or the Test connection box.
+const savedClientThisSession = ref(false);
 const rowOauthConnected = ref(false);
-const connecting = ref(false);
-// Custom URL sign-in probe (design §8: paste a URL -> Check -> maybe sign-in).
-// `active` is what lets Custom URL join presetHasOauth above; a plain
-// token-only server never sets it.
+const rowNeedsStaticClient = ref(false);
+const rowRedirectUri = ref("");
+// The known sign-in host, once a row exists (any preset - set from the row's
+// own signin_host, same field a Custom URL's pre-row Check already surfaces
+// into customUrlOauth.signinHost below).
+const signinHost = ref("");
+const testState = reactive({ status: "idle", tools: [], message: "" }); // idle | passed | failed
+
+// A row THIS session created that nobody has invested in yet - see the state
+// machine note above. This is also, verbatim, the Cancel-rule predicate.
+const isPlaceholder = computed(
+	() =>
+		createdThisSession.value &&
+		!rowOauthConnected.value &&
+		!savedClientThisSession.value &&
+		testState.status !== "passed"
+);
+// "Who can use it" only stays a live toggle while there is nothing yet to
+// lose by discarding and recreating the row under a different scope.
+const scopeLocked = computed(() => !!rowName.value && !isPlaceholder.value);
+
+const autoCreating = ref(false);
+const signingIn = ref(false);
+// Bumped on every sign-in start/cancel/close so a signIn() promise that
+// resolves after the user has moved on (Cancel, dialog close, Change) is
+// ignored instead of mutating a card the user isn't looking at any more.
+let signInGen = 0;
+const connectError = ref("");
+const disconnectingInline = ref(false);
+// True once this dialog instance's Dialog has actually closed - guards the
+// in-flight autoCreateRow/runConnect awaits so a row created after Escape
+// still gets deleted instead of orphaned.
+const closed = ref(false);
+
+// Custom URL's Check step: probes the pasted server and decides whether it
+// needs a sign-in at all.
 const customUrlOauth = reactive({ active: false, signinHost: "", registration: "" });
 const probing = ref(false);
 const probeError = ref("");
-// Static-registration rows (design §9's "static" mode) need an admin to enter
-// a client id/secret before anyone can sign in - set from whatever
-// add_connector / set_oauth_client_credentials last returned, alongside the
-// callback URL the admin must register at the provider.
-const rowNeedsStaticClient = ref(false);
-const rowRedirectUri = ref("");
+const probeDone = ref(false);
+
 const staticClient = reactive({ id: "", secret: "" });
 const savingClient = ref(false);
-// "Copied" flash on the callback-URL copy button, same idiom as
-// DirectSubscriptionCard's own copy button.
 const copied = ref(false);
-// Sign-in-box failure (startOauthConnect, saveStaticClient) shown inline under
-// whichever of the two buttons is on screen, same idiom as probeError above -
-// the user is looking at this box, not at a toast, when the provider says why
-// it refused.
-const connectError = ref("");
 
-// Shared by resetForCreate/resetForEdit/onPresetChange so the Check state
-// never survives a swap to a different preset or a fresh Add.
 function resetCustomUrlOauthState() {
 	customUrlOauth.active = false;
 	customUrlOauth.signinHost = "";
 	customUrlOauth.registration = "";
 	probing.value = false;
 	probeError.value = "";
+	probeDone.value = false;
 	rowNeedsStaticClient.value = false;
 	rowRedirectUri.value = "";
 	staticClient.id = "";
@@ -561,24 +721,113 @@ function resetCustomUrlOauthState() {
 	connectError.value = "";
 }
 
-// The picker's opening preset: the catalog's own first entry (its order is
-// the shipped-first/category order jarvis/connectors/catalog.py documents),
-// or Custom URL when a tenant has no catalog presets enabled for it.
 function defaultPreset() {
 	if (props.catalog.length) return props.catalog[0].name;
 	return props.allowCustomUrls ? "Custom URL" : "";
 }
 
+// ── the connect card this render shows ──────────────────────────────────────
+const cardKind = computed(() => {
+	if (isEdit.value) {
+		const auth = presetAuthClass.value;
+		if (auth === "dcr") return "signin";
+		if (auth === "static")
+			return props.connector.needs_static_client
+				? canSetStaticClient.value
+					? "register"
+					: "ask-admin"
+				: "signin";
+		if (auth === "open") return "open";
+		return "key"; // token, or a Custom URL row (any auth_method not caught above)
+	}
+	if (form.preset === "Custom URL") {
+		if (!probeDone.value) return "need-check";
+		return customUrlOauth.active ? "signin" : "key";
+	}
+	const auth = catalogAuthOf(form.preset);
+	if (form.auth_method === "API Key") return auth === "open" ? "open" : "key";
+	if (auth === "dcr") return "signin";
+	if (auth === "static")
+		return rowNeedsStaticClient.value
+			? canSetStaticClient.value
+				? "register"
+				: "ask-admin"
+			: "signin";
+	if (auth === "open") return "open";
+	return "key";
+});
+
+// "Use a key instead" / "Sign in with X instead": only while the row (if any)
+// backing the current shape is still a placeholder, never once something is
+// actually saved on it - see the module doc above.
+const showUseKeyInsteadLink = computed(
+	() =>
+		!isEdit.value &&
+		(cardKind.value === "signin" || cardKind.value === "register") &&
+		(!rowName.value || isPlaceholder.value)
+);
+const showSignInInsteadLink = computed(
+	() => !isEdit.value && presetHasOauth.value && (!rowName.value || isPlaceholder.value)
+);
+
+const signinAppName = computed(() =>
+	form.preset === "Custom URL" ? customUrlOauth.signinHost || "this server" : form.preset
+);
+const displaySigninHost = computed(() => signinHost.value || customUrlOauth.signinHost || "");
+
+const connectorDisplayName = computed(() => {
+	if (isEdit.value && props.connector?.label) return props.connector.label;
+	if (form.preset && form.preset !== "Custom URL") return form.preset;
+	return "this connector";
+});
+const chipName = computed(() => (form.preset === "Custom URL" ? "Custom URL" : form.preset));
+const chipSub = computed(() => {
+	if (form.preset === "Custom URL") {
+		return customUrlOauth.signinHost
+			? `Signs in at ${customUrlOauth.signinHost}`
+			: "Paste your own server address";
+	}
+	return catalogEntry.value?.description || "";
+});
+
+const tokenHint = computed(() => {
+	if (form.preset === "Custom URL") return CUSTOM_URL_TOKEN_HINT;
+	const entry = catalogEntry.value;
+	if (!entry) return "";
+	if (entry.token_hint) return entry.token_hint;
+	return entry.auth !== "static" ? entry.hint || "" : "";
+});
+const tokenDocsUrl = computed(() => {
+	if (form.preset === "Custom URL") return "";
+	const entry = catalogEntry.value;
+	if (!entry) return "";
+	if (entry.token_help_url) return entry.token_help_url;
+	return entry.auth !== "static" ? entry.help_url || "" : "";
+});
+const staticHint = computed(() => {
+	if (form.preset === "Custom URL") return "";
+	return catalogEntry.value?.hint || "";
+});
+const staticHelpUrl = computed(() => {
+	if (form.preset === "Custom URL") return "";
+	return catalogEntry.value?.help_url || "";
+});
+
+// ── reset on open ───────────────────────────────────────────────────────────
 function resetForCreate() {
-	form.preset = defaultPreset();
+	form.preset = props.preset || defaultPreset();
 	form.base_url = "";
 	form.credential = "";
+	form.scope = isAdmin ? (props.scope === "Personal" ? "Personal" : "Shared") : "Personal";
 	form.auth_method = presetDefaultsToOauth(catalogAuthOf(form.preset)) ? "OAuth" : "API Key";
 	rowName.value = "";
 	createdThisSession.value = false;
-	savedThisSession.value = false;
+	savedClientThisSession.value = false;
 	rowOauthConnected.value = false;
-	connecting.value = false;
+	signinHost.value = "";
+	signingIn.value = false;
+	autoCreating.value = false;
+	connectError.value = "";
 	testState.status = "idle";
 	testState.tools = [];
 	testState.message = "";
@@ -587,21 +836,25 @@ function resetForCreate() {
 	touchedActions.value = new Set();
 	actionQuery.value = "";
 	resetCustomUrlOauthState();
+	maybeAutoCreateRow();
 }
 function resetForEdit(row) {
 	form.preset = row.preset || defaultPreset();
 	form.base_url = row.base_url || "";
 	form.credential = "";
 	form.auth_method = row.auth_method || "API Key";
+	form.scope = row.scope || "Personal";
 	rowName.value = row.name;
 	createdThisSession.value = false;
-	savedThisSession.value = false;
+	savedClientThisSession.value = false;
 	rowOauthConnected.value = !!row.oauth_connected;
-	connecting.value = false;
-	// An edited row may already have a passing test on record; that state is
-	// server truth (last_test_status), not something to re-derive here — but
-	// this dialog only knows the LIVE tools/list shape after a fresh test, so
-	// it still starts at "idle" and asks for a re-test before Continue unlocks.
+	signinHost.value = row.signin_host || "";
+	signingIn.value = false;
+	connectError.value = "";
+	// An edited row may already have a passing test on record, but this dialog
+	// only knows the LIVE tools/list shape after a fresh test - it starts idle
+	// and asks for a re-test before Continue unlocks (except the oauth-connected
+	// case below, whose card has no manual re-test action other than Disconnect).
 	testState.status = "idle";
 	testState.tools = [];
 	testState.message = "";
@@ -610,29 +863,27 @@ function resetForEdit(row) {
 	touchedActions.value = new Set();
 	actionQuery.value = "";
 	resetCustomUrlOauthState();
-	// A Custom URL row already on the sign-in path (opened fresh, or reopened
-	// after the provider redirects back) - re-derive the same state a live
-	// Check/Connect would have set, so reopening never needs a re-Check.
 	if (row.preset === "Custom URL" && row.auth_method === "OAuth") {
 		customUrlOauth.active = true;
 		customUrlOauth.signinHost = row.signin_host || "";
+		probeDone.value = true;
 	}
 	rowNeedsStaticClient.value = !!row.needs_static_client;
 	rowRedirectUri.value = row.oauth_redirect_uri || "";
+	if (rowOauthConnected.value) runOauthTest();
 }
 
 watch(
 	() => props.modelValue,
 	(open) => {
 		if (!open) return;
+		closed.value = false;
+		signInGen++; // invalidate any stale in-flight signIn from a previous open
 		if (props.connector) resetForEdit(props.connector);
 		else resetForCreate();
 	}
 );
 
-// Any change to what's actually tested (preset/base_url/credential) invalidates
-// a prior pass, same as the backend's own last_test_status reset on a real
-// base_url/credential change.
 watch([() => form.preset, () => form.base_url], () => {
 	if (testState.status !== "idle") {
 		testState.status = "idle";
@@ -640,98 +891,212 @@ watch([() => form.preset, () => form.base_url], () => {
 		testState.message = "";
 	}
 });
-// Editing the URL invalidates a prior Check the same way it invalidates a
-// prior Test above - the previous probe result no longer describes what's
-// typed, so a re-Check is required before Connect can show up again. Guarded
-// on !rowName for the same reason switchAuthMethod's own toggle links are
-// (see the template): once a row exists this session, nothing here may
-// migrate its already-saved auth method out from under it.
 watch(
 	() => form.base_url,
-	() => {
-		if (rowName.value) return;
-		if (!customUrlOauth.active && !probeError.value) return;
+	async () => {
+		if (rowName.value) {
+			if (!isPlaceholder.value) return;
+			await discardPlaceholderRow();
+		}
+		if (!customUrlOauth.active && !probeError.value && !probeDone.value) return;
 		resetCustomUrlOauthState();
 		if (form.preset === "Custom URL") form.auth_method = "API Key";
 	}
 );
-function onPresetChange(v) {
-	form.preset = v;
-	form.base_url = "";
-	// OAuth-first (design §1): switching to a preset with a sign-in option
-	// re-defaults to it, same as the dialog's own initial state.
-	form.auth_method = presetDefaultsToOauth(catalogAuthOf(v)) ? "OAuth" : "API Key";
-	rowOauthConnected.value = false;
-	resetCustomUrlOauthState();
-}
 
-// The toggle link only shows before this session has created a row (see the
-// template), so this never has to migrate an already-saved row's auth
-// method - it just flips which half of step 1 renders next.
-function switchAuthMethod(method) {
+// ── who-can-use-it / auth-method switches (may discard a placeholder row) ───
+async function discardPlaceholderRow() {
+	const name = rowName.value;
+	if (!name) return;
+	rowName.value = "";
+	createdThisSession.value = false;
+	rowOauthConnected.value = false;
+	rowNeedsStaticClient.value = false;
+	rowRedirectUri.value = "";
+	testState.status = "idle";
+	testState.tools = [];
+	testState.message = "";
+	connectError.value = "";
+	try {
+		await deleteConnector(name);
+	} catch (e) {
+		/* best-effort cleanup */
+	}
+}
+// Sets the field FIRST, synchronously, then discards any placeholder still
+// built against the old value - two rapid flips must never resolve a discard
+// against a value a later flip has already moved past. autoCreateRow itself
+// re-checks intent after its own await (see below), so a discard racing an
+// in-flight create is reconciled there, not here.
+async function onScopeChange(v) {
+	if (!v || v === form.scope) return;
+	form.scope = v;
+	if (rowName.value && isPlaceholder.value) await discardPlaceholderRow();
+	maybeAutoCreateRow();
+}
+async function switchAuthMethod(method) {
+	if (method === form.auth_method) return;
 	form.auth_method = method;
 	form.credential = "";
-	rowOauthConnected.value = false;
 	connectError.value = "";
 	testState.status = "idle";
 	testState.tools = [];
 	testState.message = "";
+	if (rowName.value && isPlaceholder.value) await discardPlaceholderRow();
+	if (method === "OAuth") maybeAutoCreateRow();
 }
 
-// Applies an add_connector / connect_oauth / set_oauth_client_credentials row
-// summary's OAuth-setup fields onto local state, so every call site that gets
-// a fresh row back (creating it, saving static creds) stays in sync the same
-// way.
+// ── auto-create (sign-in presets only - see the state machine note) ────────
+// One creation path for every sign-in shape: a named preset auto-creates as
+// soon as its auth class is known (dialog open), Custom URL once Check finds
+// needs_signin. Safe to call opportunistically (onScopeChange, Check, this
+// dialog's own open watcher) - it no-ops whenever a row already exists, one is
+// already in flight, or the current form doesn't call for one.
+function maybeAutoCreateRow() {
+	if (isEdit.value || rowName.value || autoCreating.value) return;
+	if (form.auth_method !== "OAuth") return;
+	if (form.preset === "Custom URL") {
+		if (!probeDone.value || !customUrlOauth.active) return;
+	} else if (!presetDefaultsToOauth(catalogAuthOf(form.preset))) {
+		return;
+	}
+	autoCreateRow();
+}
+function customUrlKey(url) {
+	try {
+		return slugifyKey(new URL(url).hostname);
+	} catch (e) {
+		return slugifyKey(url);
+	}
+}
+function slugifyKey(text) {
+	const slug = (text || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9_-]+/g, "-")
+		.replace(/^-+/, "")
+		.slice(0, 64);
+	return slug || "custom";
+}
 function applyOauthRowMeta(row) {
 	if (!row) return;
 	rowOauthConnected.value = !!row.oauth_connected;
 	rowNeedsStaticClient.value = !!row.needs_static_client;
 	rowRedirectUri.value = row.oauth_redirect_uri || "";
-	if (row.signin_host) customUrlOauth.signinHost = row.signin_host;
+	if (row.signin_host) signinHost.value = row.signin_host;
 }
-
-async function startOauthConnect() {
-	if (connecting.value) return;
-	connecting.value = true;
+async function autoCreateRow() {
+	if (rowName.value || autoCreating.value || isEdit.value) return;
+	autoCreating.value = true;
 	connectError.value = "";
+	// Snapshot what this call is creating FOR - a scope flip, an auth-method
+	// switch, or a base_url edit that lands mid-request must not silently
+	// attach to a row built against the old intent.
+	const wantScope = form.scope;
+	const wantPreset = form.preset;
+	const wantBaseUrl = form.base_url.trim();
+	let retry = false;
 	try {
-		if (!rowName.value) {
-			const row = await addConnector({
-				preset: form.preset,
-				scope: props.scope,
-				auth_method: "OAuth",
-				...(form.preset === "Custom URL"
-					? { base_url: form.base_url.trim(), key: customUrlKey(form.base_url.trim()) }
-					: {}),
-			});
-			rowName.value = row.name;
-			createdThisSession.value = true;
-			applyOauthRowMeta(row);
-			// A static-client row needs an admin to enter credentials before
-			// anyone can sign in - stop here rather than redirect into a
-			// sign-in that cannot succeed yet (the credentials block renders
-			// instead; see the template).
-			if (rowNeedsStaticClient.value) return;
-		}
-		const res = await connectOauth(rowName.value);
-		if (res && res.ok && res.url) {
-			window.location.href = res.url;
+		const row = await addConnector({
+			preset: wantPreset,
+			scope: wantScope,
+			auth_method: "OAuth",
+			...(wantPreset === "Custom URL"
+				? { base_url: wantBaseUrl, key: customUrlKey(wantBaseUrl) }
+				: {}),
+		});
+		const stale =
+			closed.value ||
+			form.preset !== wantPreset ||
+			form.scope !== wantScope ||
+			form.auth_method !== "OAuth" ||
+			(wantPreset === "Custom URL" && form.base_url.trim() !== wantBaseUrl);
+		if (stale) {
+			deleteConnector(row.name).catch(() => {});
+			retry = !closed.value;
 			return;
 		}
-		// A plain assignment, not errMessage(): this dict is `_error()`'s raw
-		// JSON, never frappe-escaped, so decoding it as if it were escaped HTML
-		// (what errMessage does) would be the wrong transform for a provider
-		// that put markup in its own error text.
-		connectError.value = (res && res.error && res.error.message) || "Could not sign in.";
+		rowName.value = row.name;
+		createdThisSession.value = true;
+		applyOauthRowMeta(row);
 	} catch (e) {
-		// A thrown Frappe error IS escaped once server-side, so errMessage's
-		// decode is the correct (and only) transform here.
-		connectError.value = errMessage(e, "Could not sign in.");
+		if (!closed.value) connectError.value = errMessage(e, "Could not start sign-in.");
 	} finally {
-		connecting.value = false;
+		autoCreating.value = false;
+		// The form moved on while this was in flight - try again against
+		// whatever it now says (a no-op if that no longer calls for a row).
+		if (retry) maybeAutoCreateRow();
 	}
 }
 
+// ── sign-in ──────────────────────────────────────────────────────────────
+const SIGNIN_STATUS_MESSAGE = {
+	closed: "Sign-in window was closed.",
+	timeout: "Sign-in took too long.",
+	error: "Could not sign in.",
+};
+async function beginSignIn() {
+	if (!rowName.value || signingIn.value) return;
+	const gen = ++signInGen;
+	signingIn.value = true;
+	connectError.value = "";
+	try {
+		// Called synchronously as the first statement here (nothing awaited
+		// before it) - it opens the vendor tab before its own first await, per
+		// the interface contract.
+		const res = await signIn(rowName.value, { label: signinAppName.value, agentName });
+		if (gen !== signInGen) return; // superseded by Cancel / a later open
+		if (res && res.status === "connected") {
+			rowOauthConnected.value = true;
+			await runOauthTest();
+		} else if (res && res.status === "navigated") {
+			// The whole page is leaving - nothing to do.
+		} else {
+			connectError.value =
+				(res && res.message) ||
+				SIGNIN_STATUS_MESSAGE[res && res.status] ||
+				"Could not sign in.";
+		}
+	} catch (e) {
+		if (gen !== signInGen) return;
+		connectError.value = errMessage(e, "Could not sign in.");
+	} finally {
+		if (gen === signInGen) signingIn.value = false;
+	}
+}
+function cancelSignIn() {
+	signInGen++; // the pending signIn() promise, whenever it settles, is now stale
+	signingIn.value = false;
+}
+async function runOauthTest() {
+	if (!rowName.value) return;
+	testing.value = true;
+	try {
+		applyTestResult(await testConnector(rowName.value));
+	} catch (e) {
+		testState.status = "failed";
+		testState.tools = [];
+		testState.message = errMessage(e);
+	} finally {
+		testing.value = false;
+	}
+}
+async function disconnectInline() {
+	if (!rowName.value || disconnectingInline.value) return;
+	disconnectingInline.value = true;
+	try {
+		await disconnectOauth(rowName.value);
+		rowOauthConnected.value = false;
+		testState.status = "idle";
+		testState.tools = [];
+		testState.message = "";
+	} catch (e) {
+		connectError.value = errMessage(e, "Could not disconnect.");
+	} finally {
+		disconnectingInline.value = false;
+	}
+}
+
+// ── register-your-app ────────────────────────────────────────────────────
 async function saveStaticClient() {
 	if (!rowName.value || savingClient.value) return;
 	const id = staticClient.id.trim();
@@ -742,6 +1107,7 @@ async function saveStaticClient() {
 	try {
 		const row = await setOauthClientCredentials(rowName.value, id, secret);
 		applyOauthRowMeta(row);
+		savedClientThisSession.value = true;
 		staticClient.id = "";
 		staticClient.secret = "";
 	} catch (e) {
@@ -750,11 +1116,6 @@ async function saveStaticClient() {
 		savingClient.value = false;
 	}
 }
-
-// Mirrors DirectSubscriptionCard's own copy button: the Clipboard API needs a
-// secure context, so a plain LAN http:// deployment falls back to a
-// detached-textarea execCommand copy. The URL is plain selectable text either
-// way, so a failed copy still leaves the user able to select and copy by hand.
 function copyRedirectUri() {
 	const text = rowRedirectUri.value;
 	if (!text) return;
@@ -786,36 +1147,36 @@ function copyRedirectUri() {
 	document.body.removeChild(ta);
 }
 
-function onBaseUrlChange(v) {
-	form.base_url = v;
-}
-
-// Custom URL's "Check" step (design §8): probes the pasted server and decides
-// whether it needs a sign-in at all. needs_signin:false leaves today's token
-// mode untouched; needs_signin:true switches this row into OAuth mode (the
-// template's presetHasOauth branch) the same way picking GitHub does.
+// ── Custom URL Check ─────────────────────────────────────────────────────
 async function runProbe() {
 	const url = form.base_url.trim();
 	if (!url || probing.value) return;
+	if (rowName.value && isPlaceholder.value) await discardPlaceholderRow();
 	probing.value = true;
 	probeError.value = "";
 	try {
 		const res = await probeConnectorAuth(url);
 		if (res && res.ok) {
+			probeDone.value = true;
 			customUrlOauth.active = !!res.needs_signin;
 			customUrlOauth.signinHost = res.needs_signin ? res.signin_host || "" : "";
 			customUrlOauth.registration = res.needs_signin ? res.registration || "" : "";
 			form.auth_method = res.needs_signin ? "OAuth" : "API Key";
+			if (res.needs_signin) maybeAutoCreateRow();
 		} else {
+			probeDone.value = false;
 			probeError.value =
 				(res && res.error && res.error.message) || "Could not check this address.";
 		}
 	} catch (e) {
+		probeDone.value = false;
 		probeError.value = errMessage(e, "Could not check this address.");
 	} finally {
 		probing.value = false;
 	}
 }
+
+// ── key / open connect ───────────────────────────────────────────────────
 function onCredentialChange(v) {
 	form.credential = v;
 	if (testState.status !== "idle") {
@@ -824,100 +1185,61 @@ function onCredentialChange(v) {
 		testState.message = "";
 	}
 }
-
-const canTest = computed(() => {
-	if (form.preset === "Custom URL" && !form.base_url.trim()) return false;
-	// OAuth mode has no credential field - the Test connection box only ever
-	// renders once rowOauthConnected is true (see template), so there's
-	// nothing further to gate here.
-	if (form.auth_method === "OAuth") return true;
-	// open has no credential field either - it creates+tests with an empty
-	// credential (runTest), same one-click shape as OAuth above.
-	if (presetAuthClass.value === "open") return true;
-	if (!isEdit.value && !form.credential.trim()) return false;
-	return true;
+const canConnectKey = computed(() => {
+	if (isEdit.value || rowName.value) return true; // re-test: blank credential keeps the saved one
+	return !!form.credential.trim();
 });
-
-// Custom URL is the one preset add_connector cannot derive a `key` for
-// (jarvis_connector.py._normalize_key requires a non-empty slug); every named
-// preset gets its key from the backend's own _PRESET_KEYS. Derived from the
-// host so two different custom endpoints don't collide on the same key.
-function slugifyKey(text) {
-	const slug = (text || "")
-		.toLowerCase()
-		.replace(/[^a-z0-9_-]+/g, "-")
-		.replace(/^-+/, "")
-		.slice(0, 64);
-	return slug || "custom";
-}
-function customUrlKey(url) {
-	try {
-		return slugifyKey(new URL(url).hostname);
-	} catch (e) {
-		return slugifyKey(url);
+function applyTestResult(res) {
+	if (res && res.ok) {
+		testState.status = "passed";
+		testState.tools = res.tools || [];
+		testState.message = "";
+	} else {
+		testState.status = "failed";
+		testState.tools = [];
+		testState.message =
+			(res && res.error && res.error.message) || "Could not reach the connector.";
 	}
 }
-
-async function runTest() {
-	if (!canTest.value || testing.value) return;
+async function runConnect() {
+	if (testing.value) return;
 	testing.value = true;
 	try {
 		if (!rowName.value) {
-			// First test this session, create mode: mint the row. No `label` is
-			// sent - add_connector derives one server-side (the preset's display
-			// name, or the Custom URL's hostname).
 			const row = await addConnector({
 				preset: form.preset,
 				base_url: form.base_url.trim(),
-				scope: props.scope,
+				scope: form.scope,
 				credential: form.credential,
-				auth_method: form.auth_method,
+				auth_method: "API Key",
 				...(form.preset === "Custom URL"
 					? { key: customUrlKey(form.base_url.trim()) }
 					: {}),
 			});
+			if (closed.value) {
+				deleteConnector(row.name).catch(() => {});
+				return;
+			}
 			rowName.value = row.name;
 			createdThisSession.value = true;
-		} else if (form.auth_method !== "OAuth") {
-			// Re-test (edit mode, or a second Test press this session): persist
-			// whatever changed first. Blank credential means "keep the saved one".
-			// An OAuth row has no credential to resend - its row was already
-			// created by startOauthConnect, so this branch never runs for it.
-			await updateConnector(rowName.value, {
-				...(form.preset === "Custom URL" ? { base_url: form.base_url.trim() } : {}),
-				...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
-			});
-		}
-		const res = await testConnector(rowName.value);
-		if (res && res.ok) {
-			testState.status = "passed";
-			testState.tools = res.tools || [];
-			testState.message = "";
 		} else {
-			testState.status = "failed";
-			testState.tools = [];
-			testState.message =
-				(res && res.error && res.error.message) || "Could not reach the connector.";
+			const patch = {};
+			if (form.preset === "Custom URL") patch.base_url = form.base_url.trim();
+			if (form.credential.trim()) patch.credential = form.credential.trim();
+			if (Object.keys(patch).length) await updateConnector(rowName.value, patch);
 		}
+		applyTestResult(await testConnector(rowName.value));
 	} catch (e) {
 		testState.status = "failed";
 		testState.tools = [];
-		// Rendered via {{ }} (a text sink), not v-html - plain text, not escaped HTML.
 		testState.message = errMessage(e);
 	} finally {
 		testing.value = false;
 	}
 }
 
-// ── step 2: allowed actions ─────────────────────────────────────────────────
-const selected = ref({}); // action -> bool (display / working value)
-// Actions the user actually touched this session (a Switch flip, or "Allow
-// all read-only"). test_connector's response carries each action's stored
-// `allowed` grant (its server-merged value: read-only pre-checked, writes off
-// the first time; an admin's PRIOR choice preserved on an edit re-test), so the
-// picker shows the connector's true current grants. Save still sends ONLY the
-// touched subset; set_allowed_actions keeps every unmentioned action's existing
-// stored value (its own documented contract).
+// ── step 2: allowed actions (unchanged) ─────────────────────────────────────
+const selected = ref({});
 const touchedActions = ref(new Set());
 const actionQuery = ref("");
 
@@ -925,19 +1247,16 @@ watch(
 	() => testState.tools,
 	(tools) => {
 		const next = {};
-		// Fall back to read_only if `allowed` is absent (older backend response).
 		for (const t of tools)
 			next[t.action] = t.allowed !== undefined ? !!t.allowed : !!t.read_only;
 		selected.value = next;
 		touchedActions.value = new Set();
 	}
 );
-
 function setActionAllowed(action, value) {
 	selected.value[action] = value;
 	touchedActions.value.add(action);
 }
-
 const readOnlyTools = computed(() => testState.tools.filter((t) => t.read_only));
 const writeTools = computed(() => testState.tools.filter((t) => !t.read_only));
 function matchesQuery(t) {
@@ -947,10 +1266,7 @@ function matchesQuery(t) {
 }
 const filteredReadOnly = computed(() => readOnlyTools.value.filter(matchesQuery));
 const filteredWrites = computed(() => writeTools.value.filter(matchesQuery));
-
 function allowAllReadOnly() {
-	// A deliberate bulk action - every read-only action counts as touched, even
-	// ones the search filter is currently hiding.
 	for (const t of readOnlyTools.value) setActionAllowed(t.action, true);
 }
 
@@ -963,7 +1279,6 @@ async function save() {
 			.map((t) => ({ action: t.action, allowed: !!selected.value[t.action] }));
 		await setConnectorAllowedActions(rowName.value, actions);
 		const row = await updateConnector(rowName.value, { enabled: 1 });
-		savedThisSession.value = true;
 		toast.success(isEdit.value ? "Connector updated" : "Connector added");
 		emit("saved", row);
 		show.value = false;
@@ -973,27 +1288,31 @@ async function save() {
 		saving.value = false;
 	}
 }
-
 function cancel() {
 	if (saving.value) return;
 	show.value = false;
 }
+// The app chip's "Change" link - go back to Browse instead of leaving the
+// dialog pinned to a preset the user wants to swap out.
+function onChange() {
+	show.value = false;
+	emit("change");
+}
 
-// Fires on EVERY close - Cancel, the dialog's own X, Escape, and a backdrop
-// click all set modelValue false via v-model and land here, not just the
-// Cancel button, which is why the orphan-delete lives here rather than in
-// cancel() above. Only a row THIS session created and never saved is an
-// orphan worth cleaning up - an edited row pre-dates this dialog and stays
-// exactly as update_connector last left it.
+// Fires on every close - Cancel, the dialog's own X, Escape, a backdrop click
+// and Save (which sets show.value itself) all land here via @after-leave.
+// Only a still-placeholder row is an orphan worth cleaning up - see the
+// module doc's isPlaceholder note.
 async function onClosed() {
-	if (createdThisSession.value && !savedThisSession.value && rowName.value) {
+	closed.value = true;
+	signInGen++; // ignore a signIn() still pending from this dialog instance
+	if (isPlaceholder.value && rowName.value) {
 		try {
 			await deleteConnector(rowName.value);
 		} catch (e) {
 			/* best-effort cleanup */
 		}
 	}
-	// Drop any in-memory tool list so the next open never flashes stale actions.
 	testState.status = "idle";
 	testState.tools = [];
 	selected.value = {};

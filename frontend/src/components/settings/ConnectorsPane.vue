@@ -3,6 +3,14 @@
 		title="Connectors"
 		:description="`Give ${agentName} access to other tools like GitHub, Linear or Stripe.`"
 	>
+		<template v-if="loaded" #actions>
+			<TabButtons
+				:buttons="tabButtons"
+				:model-value="activeTab"
+				@update:model-value="(v) => (activeTab = v)"
+			/>
+		</template>
+
 		<!-- Load failure keeps its own inline recovery rather than the pane-level
 		     error slot, which is reserved for action errors (UsageAdminPane's
 		     pattern) — showing the empty-state cards on a failed load would read
@@ -23,6 +31,15 @@
 			<JvSpinner />
 		</div>
 
+		<ConnectorDirectory
+			v-else-if="activeTab === 'browse'"
+			:catalog="catalog"
+			:installed-rows="[...shared, ...mine]"
+			:allow-custom-urls="allowCustomUrls"
+			@add="openAddDialog"
+			@add-custom="openAddCustomDialog"
+		/>
+
 		<div v-else class="flex flex-col gap-8">
 			<!-- ══════════════ Shared ══════════════ -->
 			<div class="flex flex-col gap-3">
@@ -36,7 +53,7 @@
 						variant="solid"
 						iconLeft="plus"
 						label="Add connector"
-						@click="openAdd('Shared')"
+						@click="activeTab = 'browse'"
 					/>
 				</div>
 
@@ -75,7 +92,7 @@
 						variant="solid"
 						iconLeft="plus"
 						label="Add connector"
-						@click="openAdd('Personal')"
+						@click="activeTab = 'browse'"
 					/>
 				</div>
 
@@ -107,10 +124,12 @@
 		<AddConnectorDialog
 			v-model="addOpen"
 			:scope="addScope"
+			:preset="addPreset"
 			:allow-custom-urls="allowCustomUrls"
 			:connector="editingRow"
 			:catalog="catalog"
 			@saved="onSaved"
+			@change="onDialogChange"
 		/>
 	</SettingsPane>
 </template>
@@ -130,10 +149,11 @@
 // fully owned by the caller. isAdmin reuses SettingsDialog's own gate
 // (is_system_manager OR is_jarvis_admin) rather than inventing a second one.
 import { computed, onMounted, ref } from "vue";
-import { Button, FeatherIcon, confirmDialog, toast } from "frappe-ui";
+import { Button, FeatherIcon, TabButtons, confirmDialog, toast } from "frappe-ui";
 import JvSpinner from "@/components/JvSpinner.vue";
 import SettingsPane from "@/components/settings/SettingsPane.vue";
 import AddConnectorDialog from "@/components/settings/AddConnectorDialog.vue";
+import ConnectorDirectory from "@/components/settings/ConnectorDirectory.vue";
 import ConnectorRow from "@/components/settings/ConnectorRow.vue";
 import { deleteConnector, listConnectors, testConnector, updateConnector } from "@/api";
 import { agentName } from "@/branding";
@@ -149,8 +169,8 @@ const loadError = ref(false);
 const shared = ref([]);
 const mine = ref([]);
 const allowCustomUrls = ref(true);
-// The connector preset catalog (jarvis/connectors/catalog.py), passed straight
-// through to AddConnectorDialog's preset picker.
+// The connector preset catalog (jarvis/connectors/catalog.py) - drives
+// ConnectorDirectory's grid and AddConnectorDialog's per-preset copy.
 const catalog = ref([]);
 // Two independent per-row flags — a Test press only ever sets testingRow, a
 // Switch flip only ever sets togglingRow, so neither control's spinner reads
@@ -175,32 +195,59 @@ async function load() {
 	}
 }
 
+// ── Installed / Browse tabs ─────────────────────────────────────────────────
+// Two-tab pane (Option B, chosen 2026-09-06): the old per-section "Add
+// connector" buttons and the composer's "Browse connectors" intent all just
+// switch here now - every connector is picked from the catalog grid, never
+// from a Select inside the dialog.
+const activeTab = ref("installed");
+const tabButtons = computed(() => [
+	{ label: `Installed · ${shared.value.length + mine.value.length}`, value: "installed" },
+	{ label: "Browse", value: "browse" },
+]);
+
 // ── add / edit dialog ───────────────────────────────────────────────────────
 const addOpen = ref(false);
 const addScope = ref("Personal");
+// The Browse card's preset name, or "Custom URL" for the footer's own link -
+// AddConnectorDialog opens straight onto this app, no in-dialog picker.
+const addPreset = ref("");
 const editingRow = ref(null);
 
-function openAdd(scope) {
+function openAddDialog(preset) {
 	editingRow.value = null;
-	addScope.value = scope;
+	addPreset.value = preset;
+	addScope.value = isAdmin ? "Shared" : "Personal";
 	addOpen.value = true;
+}
+function openAddCustomDialog() {
+	openAddDialog("Custom URL");
 }
 function openEdit(row) {
 	editingRow.value = row;
+	// The row lives on the Installed tab - land there under the dialog so its
+	// context matches whatever the dialog just did (an OAuth return, a
+	// deliberate Edit press, both already came from Installed anyway).
+	activeTab.value = "installed";
 	addOpen.value = true;
 }
 function onSaved() {
 	load();
+	activeTab.value = "installed";
+}
+// The dialog's own "Change" link (step 1's app chip) - close it and go back to
+// the picker rather than leaving a stale preset dialog to reopen.
+function onDialogChange() {
+	activeTab.value = "browse";
 }
 
 // Consumes the one-shot intent left by store.openSettings("connectors", ...)
-// - today only the composer's "Browse connectors" link sets one, landing the
-// viewer straight on the same Add-connector dialog the pane's own "Add
-// connector" buttons open. A future Browse tab reads this same intent.
+// - the composer's "Browse connectors" link sets one, landing the viewer on
+// this same Browse tab.
 function applySettingsIntent() {
 	const intent = store.takeSettingsIntent();
 	if (!intent || !intent.browse) return;
-	openAdd(isAdmin ? "Shared" : "Personal");
+	activeTab.value = "browse";
 }
 
 // ── row actions ──────────────────────────────────────────────────────────
