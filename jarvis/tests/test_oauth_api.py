@@ -533,7 +533,7 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 
 		self.assertEqual(
 			mock_save.call_args.kwargs["model"],
-			"gpt-5.5",
+			"gpt-5.6-sol",
 			"complete_paste_signin must re-coerce a stale-cached non-codex model",
 		)
 		# Blob doesn't carry the model field today, but the push provider id
