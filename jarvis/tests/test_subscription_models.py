@@ -52,11 +52,11 @@ class TestSubscriptionCatalogue(unittest.TestCase):
 		from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
 		from jarvis.tests.test_model_catalog import _clear_sub_model_cache
 
+		self.addCleanup(_clear_sub_model_cache)
 		with patch.object(admin_client, "get_model_catalog", return_value=BUNDLED_MODEL_CATALOG):
 			_clear_sub_model_cache()
 			self.assertEqual(_coerce_subscription_model("OpenAI", "nope"), "gpt-5.6-sol")
 			self.assertEqual(_coerce_subscription_model("OpenAI", ""), "gpt-5.6-sol")
-		_clear_sub_model_cache()
 
 	def test_google_gemini_has_no_subscription_seed(self):
 		# Google's chat subscription was removed 2026-08-19 (Google discontinued

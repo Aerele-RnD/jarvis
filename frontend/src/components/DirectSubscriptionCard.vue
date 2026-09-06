@@ -173,7 +173,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import * as api from "@/api";
 import { errMessage as _err } from "@/lib/errors";
-import { isCodeOnlyPaste } from "@/llm/pool";
+import { isCodeOnlyPaste, subModelSuggestions } from "@/llm/pool";
 import { exactDate } from "@/utils/datetime";
 import { useConfirm } from "@/composables/useConfirm";
 import { agentName } from "@/branding";
@@ -206,14 +206,9 @@ onMounted(async () => {
 });
 
 // Built-in fallback: subscription providers offered for a fresh DIRECT connect
-// before the catalog fetch lands or if it fails. Model lists mirror
-// jarvis/_subscription_models.py (codex/gemini-cli catalog).
-const FALLBACK_SUB_PROVIDERS = [
-	{
-		provider: "OpenAI",
-		models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
-	},
-];
+// before the catalog fetch lands or if it fails. The model list is the pool
+// editor's own fallback (one literal, in pool.js), so the two cannot drift.
+const FALLBACK_SUB_PROVIDERS = [{ provider: "OpenAI", models: subModelSuggestions().openai }];
 // Gated server-side on a non-empty auth_profile_id (R7): supports_subscription
 // is true for xai and moonshot too (cliproxy really does serve their
 // subscription models), but only openai supports this card's paste-back connect
