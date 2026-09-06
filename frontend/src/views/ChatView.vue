@@ -3519,15 +3519,22 @@
 							</button>
 							<!-- Connector-focus pill: scope this conversation to one connected +
 							     enabled app (soft prompt-level nudge — see sendCtx.focus_connector
-							     in send()). Hidden with nothing to offer, exactly like the wiki
-							     button above, EXCEPT a focus already armed still shows so it stays
-							     clearable even if that connector was since disabled. The pill's
+							     in send()). Shown whenever connectors are switched on for this
+							     workspace, even before the first app is connected, so the picker's
+							     "Browse connectors" row is the way in; hidden when the feature is
+							     off, exactly like the wiki button above, EXCEPT a focus already
+							     armed still shows so it stays clearable even if that connector
+							     was since disabled. The pill's
 							     border/background live on this wrapping span (not on either
 							     button), because Composer.vue's own convention is that a remove
 							     control is a SIBLING button, never nested inside the one it sits
 							     on - the ×, below, is exactly that sibling, not a nested control. -->
 							<span
-								v-if="connectorFocusOptions.length || connectorFocus"
+								v-if="
+									connectorsEnabled ||
+									connectorFocusOptions.length ||
+									connectorFocus
+								"
 								class="jv-connfocus-pill"
 								:style="{
 									display: 'flex',
@@ -5136,6 +5143,10 @@ const connectorFocus = ref(null);
 const connectorFocusOpen = ref(false);
 const connectorFocusOptions = ref([]);
 const connectorFocusLoaded = ref(false);
+// Whether connectors are switched on for this workspace at all (the list
+// call's own flag) - what keeps the pill on screen before any app is
+// connected, so its Browse connectors row is reachable.
+const connectorsEnabled = ref(false);
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
 // moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("");
@@ -11215,6 +11226,7 @@ async function loadConnectorFocusOptions() {
 	try {
 		const res = await api.listConnectors();
 		connectorFocusLoaded.value = true;
+		connectorsEnabled.value = !!(res && res.enabled);
 		connectorFocusOptions.value =
 			res && res.enabled
 				? [...(res.shared || []), ...(res.mine || [])].filter((r) => r.enabled)

@@ -98,10 +98,11 @@ URLs before listing; do not guess.
 - The preset's `auth` class drives the SPA: `dcr` → Connect directly (no Check step
   needed); `static` → admin app-credentials block then Connect; `token` → token field;
   `open` → no credential field.
-- ERPNext-relevant picks by category: payments (Razorpay, PayPal, Square, Stripe), work
-  (Atlassian, Linear, Asana, Notion, Monday.com, Slack), files (Dropbox, Box), design
-  (Canva, Figma), support (Intercom, Zendesk), data/infra (Supabase, Neon, Airtable,
-  Sentry, Cloudflare, Vercel, Netlify), web (Webflow, Wix), automation (Zapier), docs
-  (Microsoft Learn, Cloudflare Docs, Hugging Face).
+- ERPNext-relevant picks by category (offered today; the five closed sign-in vendors
+  above are listed but off): payments (Razorpay, PayPal, Stripe), work (Atlassian,
+  Linear, Notion, Monday.com, Slack), files (Box), design (Canva), support (Intercom,
+  Zendesk), data/infra (Supabase, Neon, Airtable, Sentry, Cloudflare, Netlify), web
+  (Webflow, Wix), automation (Zapier), docs (Microsoft Learn, Cloudflare Docs, Hugging
+  Face).
 - India-specific gaps with no public MCP today (GST/IRP, Tally, Shiprocket, WhatsApp
   Business) are candidates for our own MCP servers — a separate project.
