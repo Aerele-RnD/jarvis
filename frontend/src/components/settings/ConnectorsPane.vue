@@ -138,7 +138,9 @@ import ConnectorRow from "@/components/settings/ConnectorRow.vue";
 import { deleteConnector, listConnectors, testConnector, updateConnector } from "@/api";
 import { agentName } from "@/branding";
 import { errHtml } from "@/lib/errors";
+import { useShellStore } from "@/stores/shell";
 
+const store = useShellStore();
 const isAdmin = !!window.is_system_manager || !!window.is_jarvis_admin;
 
 const loading = ref(false);
@@ -189,6 +191,16 @@ function openEdit(row) {
 }
 function onSaved() {
 	load();
+}
+
+// Consumes the one-shot intent left by store.openSettings("connectors", ...)
+// - today only the composer's "Browse connectors" link sets one, landing the
+// viewer straight on the same Add-connector dialog the pane's own "Add
+// connector" buttons open. A future Browse tab reads this same intent.
+function applySettingsIntent() {
+	const intent = store.takeSettingsIntent();
+	if (!intent || !intent.browse) return;
+	openAdd(isAdmin ? "Shared" : "Personal");
 }
 
 // ── row actions ──────────────────────────────────────────────────────────
@@ -276,6 +288,7 @@ function consumeOauthReturn() {
 onMounted(async () => {
 	const oauthReturn = consumeOauthReturn();
 	await load();
+	applySettingsIntent();
 	if (!oauthReturn) return;
 	if (oauthReturn.error) {
 		toast.error("Sign-in didn't complete. Try again.");

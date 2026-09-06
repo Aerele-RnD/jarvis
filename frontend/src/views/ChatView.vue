@@ -3070,6 +3070,17 @@
 									"
 								>
 									No connected apps yet.
+								</div>
+								<!-- footer row: always shown whether the list has rows or is
+								     empty, so there is one consistent way out to the full
+								     connector list regardless of state. -->
+								<div
+									style="
+										border-top: 1px solid var(--border);
+										margin-top: 4px;
+										padding: 8px 8px 2px;
+									"
+								>
 									<button
 										type="button"
 										style="
@@ -3081,9 +3092,9 @@
 											font-size: 12px;
 											text-decoration: underline;
 										"
-										@click="openConnectorSettings"
+										@click="browseConnectors"
 									>
-										Add one in Settings
+										Browse connectors
 									</button>
 								</div>
 							</div>
@@ -11218,14 +11229,17 @@ function toggleConnectorFocusPicker() {
 	connectorFocusOpen.value = !connectorFocusOpen.value;
 	if (connectorFocusOpen.value) loadConnectorFocusOptions();
 }
-function openConnectorSettings() {
+// Footer row of the picker (both the populated and empty states). Uses
+// store.openSettings, not the local settingsTab ref: settingsTab only
+// drives ChatView's own macroruns-poll gate, it is not wired to the
+// hoisted SettingsDialog (which reads store.settingsSection, written by
+// this same call other ChatView buttons already use - see the AI models
+// button above). The second openSettings arg is a one-shot intent
+// (stores/shell.js) that ConnectorsPane reads on mount to jump straight
+// into adding one.
+function browseConnectors() {
 	connectorFocusOpen.value = false;
-	// store.openSettings, not the local settingsTab ref: settingsTab only
-	// drives ChatView's own macroruns-poll gate, it is not wired to the
-	// hoisted SettingsDialog (which reads store.settingsSection, written by
-	// this same call other ChatView buttons already use - see the AI models
-	// button above).
-	store.openSettings("connectors");
+	store.openSettings("connectors", { browse: true });
 }
 
 // ---- mentions (@ user, / doctype·tool) ----
