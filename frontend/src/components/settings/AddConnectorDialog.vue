@@ -728,18 +728,17 @@ const signInStartedThisSession = ref(false);
 // The in-flight signIn() promise, if any - cancelSignIn() and onClosed() both
 // call its .cancel() (see oauthSignin.js's module doc for the contract).
 let currentSignIn = null;
-// Bumped on every sign-in start/cancel/close so a signIn() promise that
-// resolves after the user has moved on (Cancel, dialog close, Change) is
-// ignored instead of mutating a card the user isn't looking at any more.
-let signInGen = 0;
+// Bumped on every session-changing event (sign-in start/cancel, dialog
+// close, dialog reopen) so any async call this dialog has in flight -
+// signIn(), or a row-creation/test await in saveStaticClient(), runConnect()
+// or onClosed() - can tell once it resolves whether the user has since moved
+// on (Cancel, Escape/close, Change, or a reopen for a different preset) and
+// back out instead of mutating a row or card that isn't this session's any
+// more. The dialog instance persists across close/reopen (see the module
+// doc above), so this is the only thing that tells one session from the next.
+let sessionGen = 0;
 const connectError = ref("");
 const disconnectingInline = ref(false);
-// True once this dialog instance's Dialog has actually closed - guards the
-// in-flight runConnect / saveStaticClient row-creation awaits so a row
-// created after Escape still gets deleted instead of orphaned (the sign-in
-// factory below uses signInGen for the same purpose instead, since it's
-// already bumped on cancel/close/reopen).
-const closed = ref(false);
 // Set in save()'s success path so onClosed doesn't fire a second "kept"
 // reload on top of the "saved" one it already emitted (Save closes the
 // dialog too, so onClosed still runs via @after-leave).
@@ -946,8 +945,7 @@ watch(
 	() => props.modelValue,
 	(open) => {
 		if (!open) return;
-		closed.value = false;
-		signInGen++; // invalidate any stale in-flight signIn from a previous open
+		sessionGen++; // invalidate any stale in-flight session from before this open
 		if (props.connector) resetForEdit(props.connector);
 		else resetForCreate();
 	}
@@ -1063,15 +1061,15 @@ const SIGNIN_STATUS_MESSAGE = {
 // sign in at all - see the register card - so that's surfaced as a thrown
 // error, which signIn() turns into a closed tab + {status:"error"} that the
 // (now "register") card's own connectError line shows.
-// `gen` is beginSignIn's own signInGen snapshot - Cancel, Escape/close and a
-// dialog reopen all bump signInGen, so checking it after the create's await
-// catches every way the user could have moved on during the ~45s a dcr
-// discovery + registration can take, the same protection runConnect and
-// saveStaticClient get from the `closed` ref (nothing here awaits `closed`
-// itself, since a reopened dialog resets `closed` back to false too).
+// `gen` is beginSignIn's own sessionGen snapshot - Cancel, Escape/close and a
+// dialog reopen all bump sessionGen, so checking it after the create's await
+// catches every way the user could have moved on during the ~45s a discovery
+// + registration can take. runConnect and saveStaticClient guard their own
+// row-creation awaits the same way, snapshotting sessionGen before the await
+// and comparing after.
 async function createRowForSignIn(gen) {
 	const row = await addConnector(connectRowPayload({ auth_method: "OAuth" }));
-	if (gen !== signInGen) {
+	if (gen !== sessionGen) {
 		deleteConnector(row.name).catch(() => {});
 		throw new Error("Could not sign in.");
 	}
@@ -1083,7 +1081,7 @@ async function createRowForSignIn(gen) {
 }
 async function beginSignIn() {
 	if (signingIn.value) return;
-	const gen = ++signInGen;
+	const gen = ++sessionGen;
 	signingIn.value = true;
 	signInStartedThisSession.value = true;
 	connectError.value = "";
@@ -1096,7 +1094,7 @@ async function beginSignIn() {
 	currentSignIn = pending;
 	try {
 		const res = await pending;
-		if (gen !== signInGen) return; // superseded by Cancel / a later open
+		if (gen !== sessionGen) return; // superseded by Cancel / a later open
 		if (res && res.status === "connected") {
 			rowOauthConnected.value = true;
 			await runOauthTest();
@@ -1109,15 +1107,15 @@ async function beginSignIn() {
 				"Could not sign in.";
 		}
 	} catch (e) {
-		if (gen !== signInGen) return;
+		if (gen !== sessionGen) return;
 		connectError.value = errMessage(e, "Could not sign in.");
 	} finally {
-		if (gen === signInGen) signingIn.value = false;
+		if (gen === sessionGen) signingIn.value = false;
 		if (currentSignIn === pending) currentSignIn = null;
 	}
 }
 function cancelSignIn() {
-	signInGen++; // the pending signIn() promise, whenever it settles, is now stale
+	sessionGen++; // the pending signIn() promise, whenever it settles, is now stale
 	signingIn.value = false;
 	if (currentSignIn) currentSignIn.cancel();
 }
@@ -1163,12 +1161,16 @@ async function saveStaticClient() {
 	const id = staticClient.id.trim();
 	const secret = staticClient.secret.trim();
 	if (!id || !secret) return;
+	// Snapshot before the awaits below - Cancel/Escape/reopen bump sessionGen,
+	// so a create or save that resolves after the user has moved on to a
+	// different preset can tell and back out instead of binding to it.
+	const gen = sessionGen;
 	savingClient.value = true;
 	connectError.value = "";
 	try {
 		if (!rowName.value) {
 			const row = await addConnector(connectRowPayload({ auth_method: "OAuth" }));
-			if (closed.value) {
+			if (gen !== sessionGen) {
 				deleteConnector(row.name).catch(() => {});
 				return;
 			}
@@ -1177,11 +1179,13 @@ async function saveStaticClient() {
 			applyOauthRowMeta(row);
 		}
 		const saved = await setOauthClientCredentials(rowName.value, id, secret);
+		if (gen !== sessionGen) return; // stale - rowName above is no longer this session's
 		applyOauthRowMeta(saved);
 		savedClientThisSession.value = true;
 		staticClient.id = "";
 		staticClient.secret = "";
 	} catch (e) {
+		if (gen !== sessionGen) return; // stale - don't surface an error onto a moved-on session
 		connectError.value = errMessage(e, "Could not save these details.");
 	} finally {
 		savingClient.value = false;
@@ -1278,13 +1282,15 @@ function applyTestResult(res) {
 // (enabled:0) itself rather than relying on anything eager.
 async function runConnect() {
 	if (testing.value) return;
+	// Snapshot before the awaits below - see saveStaticClient's comment.
+	const gen = sessionGen;
 	testing.value = true;
 	try {
 		if (!rowName.value) {
 			const row = await addConnector(
 				connectRowPayload({ credential: form.credential, auth_method: "API Key" })
 			);
-			if (closed.value) {
+			if (gen !== sessionGen) {
 				deleteConnector(row.name).catch(() => {});
 				return;
 			}
@@ -1296,8 +1302,10 @@ async function runConnect() {
 			if (form.credential.trim()) patch.credential = form.credential.trim();
 			if (Object.keys(patch).length) await updateConnector(rowName.value, patch);
 		}
+		if (gen !== sessionGen) return; // stale - don't run/apply the test against a moved-on session
 		applyTestResult(await testConnector(rowName.value));
 	} catch (e) {
+		if (gen !== sessionGen) return; // stale - don't surface an error onto a moved-on session
 		testState.status = "failed";
 		testState.tools = [];
 		testState.message = errMessage(e);
@@ -1378,36 +1386,68 @@ function onChange() {
 // FIRST (closes the vendor tab, stops the poll) so it can't land a token into
 // a row this function is about to delete out from under it (F6).
 async function onClosed() {
-	closed.value = true;
-	signInGen++; // ignore a signIn() still pending from this dialog instance
+	// Bump first - this both invalidates any signIn() still pending from a
+	// previous open (same as cancelSignIn) and gives this close its own
+	// generation: `gen` stops matching sessionGen the moment anything (a
+	// reopen, another close) moves the session on while the awaits below are
+	// in flight.
+	const gen = ++sessionGen;
 	if (currentSignIn) currentSignIn.cancel();
-	if (isPlaceholder.value && rowName.value) {
-		let keep = false;
-		if (signInStartedThisSession.value) {
+	// Snapshot rowName and everything isPlaceholder reads, plus what the
+	// branches below need - a reopen during the awaits resets/reassigns all
+	// of these (resetForCreate/resetForEdit), so reading the live refs
+	// afterwards would describe whatever session is on screen now, not the
+	// one this close is actually for.
+	const name = rowName.value;
+	const wasCreatedThisSession = createdThisSession.value;
+	const wasSavedClientThisSession = savedClientThisSession.value;
+	const wasRowOauthConnected = rowOauthConnected.value;
+	const hadPassedTest = testState.status === "passed";
+	const wasSavedThisClose = savedThisClose.value;
+	const hadSignInStarted = signInStartedThisSession.value;
+	const wasPlaceholder =
+		wasCreatedThisSession &&
+		!wasRowOauthConnected &&
+		!wasSavedClientThisSession &&
+		!hadPassedTest;
+
+	let keep = !wasPlaceholder && wasRowOauthConnected;
+	if (wasPlaceholder && name) {
+		if (hadSignInStarted) {
 			// The poll may have given up (timeout) a moment before a token
 			// actually landed - one last check before writing the row off.
 			try {
-				const s = await oauthSigninStatus(rowName.value);
+				const s = await oauthSigninStatus(name);
 				keep = !!(s && s.ok !== false && s.connected);
 			} catch (e) {
 				/* best-effort - fall through to delete on a failed check */
 			}
 		}
 		if (keep) {
-			rowOauthConnected.value = true;
+			// Only touch the live ref if nothing reopened while we awaited -
+			// otherwise it belongs to whatever session is showing now.
+			if (gen === sessionGen) rowOauthConnected.value = true;
 		} else {
+			// Safe regardless of a reopen: this targets the snapshotted row
+			// by name, not the live rowName ref.
 			try {
-				await deleteConnector(rowName.value);
+				await deleteConnector(name);
 			} catch (e) {
 				/* best-effort cleanup */
 			}
 		}
 	}
+	// A reopen has moved the session on since this close started - anything
+	// below only makes sense for the session that was actually closing, so
+	// stop here. The new session's own reset already covers
+	// testState/selected/touchedActions, and its own eventual close decides
+	// "kept" for itself.
+	if (gen !== sessionGen) return;
 	// F8: a row this dialog created is still around, connected, but was never
 	// saved (Cancel/close after a sign-in, or the late-arriving token just
 	// above) - the pane's own lists don't know about it yet, so ask for a
 	// reload. Skipped after a real Save, which already asked via "saved".
-	if (!savedThisClose.value && createdThisSession.value && rowOauthConnected.value) {
+	if (!wasSavedThisClose && wasCreatedThisSession && keep) {
 		emit("kept");
 	}
 	testState.status = "idle";

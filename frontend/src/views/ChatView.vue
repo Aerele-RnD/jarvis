@@ -3005,106 +3005,6 @@
 									>
 								</button>
 							</div>
-							<!-- connector-focus picker: same absolutely-positioned dropdown idiom
-							     as the mention list above, opened from the toolbar pill below. -->
-							<div
-								v-if="connectorFocusOpen"
-								style="
-									position: absolute;
-									bottom: calc(100% + 6px);
-									left: 0;
-									min-width: 220px;
-									max-height: 280px;
-									overflow-y: auto;
-									background: var(--surface);
-									border: 1px solid var(--border-2);
-									border-radius: 10px;
-									box-shadow: 0 10px 28px rgba(20, 20, 30, 0.16);
-									padding: 5px;
-									z-index: 30;
-								"
-							>
-								<div
-									v-if="!connectorFocusLoaded"
-									style="padding: 12px; display: flex; justify-content: center"
-								>
-									<JvSpinner :size="16" />
-								</div>
-								<template v-else-if="connectorFocusOptions.length">
-									<button
-										v-if="connectorFocus"
-										class="jv-menuitem"
-										style="color: var(--text-3)"
-										@click="setConnectorFocus(null)"
-									>
-										<span>Clear focus</span>
-									</button>
-									<button
-										v-for="row in connectorFocusOptions"
-										:key="row.name"
-										class="jv-menuitem"
-										:class="{
-											on: connectorFocus && connectorFocus.key === row.key,
-										}"
-										@click="setConnectorFocus(row)"
-									>
-										<ConnectorLogo :preset="row.preset" :size="16" />
-										<span
-											style="
-												flex: 1;
-												overflow: hidden;
-												text-overflow: ellipsis;
-												white-space: nowrap;
-											"
-											>{{ row.label }}</span
-										>
-									</button>
-								</template>
-								<div
-									v-else
-									style="
-										padding: 10px 8px;
-										font-size: 12px;
-										color: var(--text-3);
-										max-width: 220px;
-									"
-								>
-									No connected apps yet.
-								</div>
-								<!-- footer row: always shown whether the list has rows or is
-								     empty, so there is one consistent way out to the full
-								     connector list regardless of state. -->
-								<div
-									style="
-										border-top: 1px solid var(--border);
-										margin-top: 4px;
-										padding-top: 4px;
-									"
-								>
-									<button
-										type="button"
-										class="jv-menuitem"
-										@click="browseConnectors"
-									>
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="1.7"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<path d="M12 22v-5" />
-											<path d="M9 8V2" />
-											<path d="M15 8V2" />
-											<path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
-										</svg>
-										<span style="flex: 1">Browse connectors</span>
-									</button>
-								</div>
-							</div>
 							<!-- clipboard held only a file PATH, not the image bytes -->
 							<div
 								v-if="pasteHint"
@@ -3534,104 +3434,123 @@
 							     border/background live on this wrapping span (not on either
 							     button), because Composer.vue's own convention is that a remove
 							     control is a SIBLING button, never nested inside the one it sits
-							     on - the ×, below, is exactly that sibling, not a nested control. -->
-							<span
-								class="jv-connfocus-pill"
-								:style="{
-									display: 'flex',
-									alignItems: 'center',
-									height: '30px',
-									padding: connectorFocus ? '0 2px 0 8px' : '0',
-									borderRadius: '7px',
-									border: connectorFocus ? '1px solid var(--border)' : 'none',
-									background: connectorFocus
-										? 'var(--surface-1)'
-										: 'transparent',
-									color: connectorFocus ? 'var(--text)' : 'var(--text-3)',
-								}"
+							     on - the ×, below, is exactly that sibling, not a nested control.
+
+							     The picker itself is a frappe-ui Dropdown (same idiom as the
+							     header's support pill above) rather than a hand-rolled overlay:
+							     this span is its default-slot trigger, so open/close and
+							     outside-click/Escape are the component's, not ours - see
+							     connectorFocusMenuOptions and onConnectorFocusOpenChange below.
+							     side="top" because this toolbar sits at the BOTTOM of the
+							     composer, unlike the header pill which opens downward. The as-
+							     child trigger attaches its open-on-click behaviour to this span,
+							     so a click on either inner button bubbles up and opens the menu -
+							     the × must stop that bubbling (.stop) or clearing focus would
+							     reopen the picker in the same click. -->
+							<Dropdown
+								:options="connectorFocusMenuOptions"
+								side="top"
+								@update:open="onConnectorFocusOpenChange"
 							>
-								<button
-									class="jv-iconbtn"
-									:title="
-										connectorFocus
-											? `Focused on ${connectorFocus.label}. Click to change.`
-											: 'Focus this chat on one connected app'
-									"
-									@click="toggleConnectorFocusPicker"
-									:aria-pressed="String(!!connectorFocus)"
+								<span
+									class="jv-connfocus-pill"
 									:style="{
-										height: '26px',
 										display: 'flex',
 										alignItems: 'center',
-										gap: '4px',
-										padding: 0,
-										width: connectorFocus ? 'auto' : '30px',
-										justifyContent: 'center',
-										background: 'transparent',
-										border: 'none',
-										borderRadius: '6px',
-										cursor: 'pointer',
-										color: 'inherit',
-										fontSize: '12px',
-										fontWeight: '500',
+										height: '30px',
+										padding: connectorFocus ? '0 2px 0 8px' : '0',
+										borderRadius: '7px',
+										border: connectorFocus
+											? '1px solid var(--border)'
+											: 'none',
+										background: connectorFocus
+											? 'var(--surface-1)'
+											: 'transparent',
+										color: connectorFocus ? 'var(--text)' : 'var(--text-3)',
 									}"
 								>
-									<ConnectorLogo
-										v-if="connectorFocus"
-										:preset="connectorFocus.preset"
-										:size="14"
-									/>
-									<svg
-										v-else
-										width="16"
-										height="16"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.7"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									>
-										<path d="M12 22v-5" />
-										<path d="M9 8V2" />
-										<path d="M15 8V2" />
-										<path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
-									</svg>
-									<span
-										v-if="connectorFocus"
-										style="
-											max-width: 100px;
-											overflow: hidden;
-											text-overflow: ellipsis;
-											white-space: nowrap;
+									<button
+										class="jv-iconbtn"
+										:title="
+											connectorFocus
+												? `Focused on ${connectorFocus.label}. Click to change.`
+												: 'Focus this chat on one connected app'
 										"
-										>{{ connectorFocus.label }}</span
+										:aria-pressed="String(!!connectorFocus)"
+										:style="{
+											height: '26px',
+											display: 'flex',
+											alignItems: 'center',
+											gap: '4px',
+											padding: 0,
+											width: connectorFocus ? 'auto' : '30px',
+											justifyContent: 'center',
+											background: 'transparent',
+											border: 'none',
+											borderRadius: '6px',
+											cursor: 'pointer',
+											color: 'inherit',
+											fontSize: '12px',
+											fontWeight: '500',
+										}"
 									>
-								</button>
-								<button
-									v-if="connectorFocus"
-									class="jv-iconbtn"
-									title="Clear focus"
-									aria-label="Clear connector focus"
-									style="
-										width: 20px;
-										height: 20px;
-										display: flex;
-										align-items: center;
-										justify-content: center;
-										background: transparent;
-										border: none;
-										border-radius: 50%;
-										cursor: pointer;
-										color: inherit;
-										font-size: 13px;
-										line-height: 1;
-									"
-									@click="setConnectorFocus(null)"
-								>
-									×
-								</button>
-							</span>
+										<ConnectorLogo
+											v-if="connectorFocus"
+											:preset="connectorFocus.preset"
+											:size="14"
+										/>
+										<svg
+											v-else
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="1.7"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+										>
+											<path d="M12 22v-5" />
+											<path d="M9 8V2" />
+											<path d="M15 8V2" />
+											<path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+										</svg>
+										<span
+											v-if="connectorFocus"
+											style="
+												max-width: 100px;
+												overflow: hidden;
+												text-overflow: ellipsis;
+												white-space: nowrap;
+											"
+											>{{ connectorFocus.label }}</span
+										>
+									</button>
+									<button
+										v-if="connectorFocus"
+										class="jv-iconbtn"
+										title="Clear focus"
+										aria-label="Clear connector focus"
+										style="
+											width: 20px;
+											height: 20px;
+											display: flex;
+											align-items: center;
+											justify-content: center;
+											background: transparent;
+											border: none;
+											border-radius: 50%;
+											cursor: pointer;
+											color: inherit;
+											font-size: 13px;
+											line-height: 1;
+										"
+										@click.stop="setConnectorFocus(null)"
+									>
+										×
+									</button>
+								</span>
+							</Dropdown>
 							<!-- The composer's own "Get help from a human" button used to live
 							     here (Task 6) - it's gone now that Support has one entry point,
 							     the headphones icon in the header (see supportEntryVisible near
@@ -4591,7 +4510,6 @@ import ReceiptChip from "@/components/ReceiptChip.vue";
 import Message from "@/components/chat/Message.vue";
 import Composer from "@/components/chat/Composer.vue";
 import ConnectorLogo from "@/components/settings/ConnectorLogo.vue";
-import JvSpinner from "@/components/JvSpinner.vue";
 import FilePreview from "@/components/FilePreview.vue";
 import ModelEffortPicker from "@/components/chat/ModelEffortPicker.vue";
 import AskCard from "@/components/chat/AskCard.vue";
@@ -5144,7 +5062,6 @@ const groundNextTurn = ref(false);
 // conversation (see connectorFocusStore below) so it survives across turns
 // until the user clears it, unlike the one-shot groundNextTurn above.
 const connectorFocus = ref(null);
-const connectorFocusOpen = ref(false);
 const connectorFocusOptions = ref([]);
 const connectorFocusLoaded = ref(false);
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
@@ -8666,7 +8583,6 @@ async function loadConversation(id) {
 	// pick (unlike groundNextTurn/triggerMode, the pill persists — see
 	// _loadConnectorFocusFor).
 	connectorFocus.value = null;
-	connectorFocusOpen.value = false;
 	if (!id) {
 		messages.value = [];
 		originPage.value = "";
@@ -9170,7 +9086,6 @@ async function selectThinking(level) {
 function onDocClick(e) {
 	if (!e.target.closest(".jv-composer")) {
 		mention.value = { ...mention.value, open: false };
-		connectorFocusOpen.value = false;
 	}
 }
 async function retry(messageId) {
@@ -11210,11 +11125,12 @@ function _saveConnectorFocusFor(id, row) {
 	} catch (e) {}
 }
 // Called from the picker (a row click) and from the pill's own × (row = null).
+// The Dropdown closes itself on either path (item select or the ×'s own
+// click), so there is no open flag to clear here.
 function setConnectorFocus(row) {
 	connectorFocus.value = row
 		? { key: row.key, label: row.label, preset: row.preset || "" }
 		: null;
-	connectorFocusOpen.value = false;
 	_saveConnectorFocusFor(currentId.value, connectorFocus.value);
 }
 // Enabled connectors (shared + mine) usable by THIS user right now - an OAuth
@@ -11236,16 +11152,81 @@ async function loadConnectorFocusOptions() {
 		connectorFocusOptions.value = [];
 	}
 }
-function toggleConnectorFocusPicker() {
-	mention.value = { ...mention.value, open: false };
-	connectorFocusOpen.value = !connectorFocusOpen.value;
-	// Refetch on every open: an app connected in Settings a moment ago must
-	// show up here without a page reload (the mount-time prefetch only decides
-	// the button's first paint).
-	if (connectorFocusOpen.value) {
-		connectorFocusLoaded.value = false;
-		loadConnectorFocusOptions();
+// Same plug mark as the pill's own unfocused-state icon (see the template),
+// as a bare render function so it can go through an item's `slots.prefix`
+// below - Dropdown's `icon` field renders a component but passes it no
+// props, and a bare svg has none to pass, so this needs no wrapper.
+function _connectorFocusPlugIcon() {
+	return h(
+		"svg",
+		{
+			width: 16,
+			height: 16,
+			viewBox: "0 0 24 24",
+			fill: "none",
+			stroke: "currentColor",
+			"stroke-width": "1.7",
+			"stroke-linecap": "round",
+			"stroke-linejoin": "round",
+		},
+		[
+			h("path", { d: "M12 22v-5" }),
+			h("path", { d: "M9 8V2" }),
+			h("path", { d: "M15 8V2" }),
+			h("path", { d: "M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" }),
+		]
+	);
+}
+// Dropdown items for the picker: "Clear focus" first (only when a focus is
+// armed), one row per usable connected app, then an always-shown "Browse
+// connectors" row in its own group so the divide-y border lands in the same
+// place its old footer border did. A logo needs a per-row `preset` prop, and
+// the plain `icon` field has no way to carry one, so both icons render
+// through the item's own `slots.prefix` (same idiom supportMenuOptions above
+// uses for its `slots.suffix` count) instead of `icon`.
+const connectorFocusMenuOptions = computed(() => {
+	const rows = [];
+	if (connectorFocus.value) {
+		rows.push({ label: "Clear focus", onClick: () => setConnectorFocus(null) });
 	}
+	if (connectorFocusOptions.value.length) {
+		for (const row of connectorFocusOptions.value) {
+			rows.push({
+				label: row.label,
+				selected: connectorFocus.value?.key === row.key,
+				onClick: () => setConnectorFocus(row),
+				slots: { prefix: () => h(ConnectorLogo, { preset: row.preset, size: 16 }) },
+			});
+		}
+	} else {
+		rows.push({ label: "No connected apps yet.", disabled: true });
+	}
+	return [
+		{ group: "", hideLabel: true, items: rows },
+		{
+			group: "",
+			hideLabel: true,
+			items: [
+				{
+					label: "Browse connectors",
+					onClick: browseConnectors,
+					slots: { prefix: () => h(_connectorFocusPlugIcon) },
+				},
+			],
+		},
+	];
+});
+// Refetch on every open: an app connected in Settings a moment ago must show
+// up here without a page reload (the mount-time prefetch only decides the
+// pill's first paint). Hooked to the Dropdown's own update:open - fired by
+// reka-ui however the menu opened (click, keyboard) or closed (selection,
+// outside click, Escape) - rather than a manual toggle, so there is no open
+// flag here to keep in sync with the component's own state.
+function onConnectorFocusOpenChange(open) {
+	if (!open) return;
+	mention.value = { ...mention.value, open: false };
+	connectorFocusLoaded.value = false;
+	loadConnectorFocusOptions();
 }
 // Footer row of the picker (both the populated and empty states). Uses
 // store.openSettings, not the local settingsTab ref: settingsTab only
@@ -11256,7 +11237,6 @@ function toggleConnectorFocusPicker() {
 // (stores/shell.js) that ConnectorsPane reads on mount to jump straight
 // into adding one.
 function browseConnectors() {
-	connectorFocusOpen.value = false;
 	store.openSettings("connectors", { browse: true });
 }
 
@@ -11283,7 +11263,6 @@ function onInput() {
 		items: mention.value.items,
 		index: 0,
 	};
-	connectorFocusOpen.value = false; // typing @/ takes over the same overlay slot
 	queryMentions(type, query);
 }
 async function queryMentions(type, query) {
@@ -11432,11 +11411,12 @@ onMounted(async () => {
 			if (Array.isArray(t) && t.length) jarvisTools.value = t;
 		})
 		.catch(() => {});
-	// Connector-focus pill's own options, fetched eagerly (not on first picker
-	// open) so the toolbar button's OWN visibility — hidden with no enabled
-	// connector to offer — is known by the time the composer first paints,
-	// same fail-open posture as the flags above: an unreachable backend just
-	// leaves the button hidden.
+	// Connector-focus pill's own options, fetched eagerly (not only on first
+	// picker open) so the picker already has a row list ready the first time
+	// it's opened rather than a flash of "No connected apps yet." while the
+	// request is in flight - the pill itself is always shown regardless of
+	// this fetch (see the template), same fail-open posture as the flags
+	// above: an unreachable backend just leaves the picker's empty state.
 	loadConnectorFocusOptions();
 	// Billing banner off the boot readiness promise (memoized, already awaited by
 	// AppShell). Not awaited here: it must never delay painting the chat.
