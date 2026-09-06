@@ -326,5 +326,95 @@ class TestSessionFlow(unittest.TestCase):
 		self.assertEqual(cm.exception.kind, mcp_client.ERR_SESSION_EXPIRED)
 
 
+class _Sock:
+	def __init__(self):
+		self.timeouts: list[float] = []
+
+	def settimeout(self, value):
+		self.timeouts.append(value)
+
+
+class _Conn:
+	def __init__(self):
+		self.sock = _Sock()
+
+
+class _DripResp:
+	"""A slow-drip response: one byte per ``read1``, each read costing ``step``
+	seconds of the shared fake clock. ``stream`` must NEVER be reached while
+	``read1`` is present - the whole point of the port is to stop using it."""
+
+	def __init__(self, now: list[float], step: float, total_bytes: int = 10_000):
+		self._now = now
+		self._step = step
+		self._left = total_bytes
+		self.connection = _Conn()
+
+	def read1(self, amt=-1, decode_content=None):
+		if self._left <= 0:
+			return b""
+		self._left -= 1
+		self._now[0] += self._step
+		return b"x"
+
+	def stream(self, amt=8192, decode_content=True):  # pragma: no cover - must not run
+		raise AssertionError("stream() used although read1 is available")
+
+	def close(self):
+		pass
+
+
+class TestBodyDripBoundedByBudget(unittest.TestCase):
+	"""A slow-drip server (one byte per recv) must trip the client's time budget
+	after a BOUNDED number of reads. ``resp.stream(n)`` -> ``read(n)`` would loop
+	recvs until ``n`` bytes arrive before the per-chunk deadline check ran; the
+	ported one-syscall ``read1`` pattern re-checks after every recv."""
+
+	def _client(self, now, **kw):
+		return mcp_client.McpClient("https://api.example.com/mcp", clock=lambda: now[0], **kw)
+
+	def test_read_capped_trips_the_deadline_not_the_byte_count(self):
+		now = [0.0]
+		c = self._client(now, total_timeout=2.0)
+		c._remaining()  # prime the deadline at now + total_timeout
+		resp = _DripResp(now, step=0.5)  # a 2s budget lasts only a handful of reads
+		with self.assertRaises(mcp_client.McpError) as cm:
+			c._read_capped(resp)
+		self.assertEqual(cm.exception.kind, mcp_client.ERR_TRANSPORT)
+		self.assertLessEqual(now[0], 2.5, f"stopped at {now[0]}s against a 2s budget")
+		# Bounded: far fewer than the 10_000 bytes on offer were ever read.
+		self.assertGreater(resp._left, 9_990)
+
+	def test_stream_for_response_trips_the_deadline_on_a_byte_drip(self):
+		now = [0.0]
+		c = self._client(now, total_timeout=2.0)
+		c._remaining()
+		resp = _DripResp(now, step=0.5)  # never forms a matching SSE frame
+		with self.assertRaises(mcp_client.McpError) as cm:
+			c._stream_for_response(resp, request_id=2)
+		self.assertEqual(cm.exception.kind, mcp_client.ERR_TRANSPORT)
+		self.assertLessEqual(now[0], 2.5)
+
+	def test_socket_is_rearmed_to_the_remaining_budget_before_each_read(self):
+		now = [0.0]
+		c = self._client(now, total_timeout=10.0)
+		c._remaining()
+		resp = _DripResp(now, step=0.5, total_bytes=3)
+		self.assertEqual(c._read_capped(resp), b"xxx")
+		# One re-arm per read (including the final empty read), each armed with what
+		# is LEFT of the budget - strictly decreasing, never the original timeout.
+		self.assertEqual(resp.connection.sock.timeouts, [10.0, 9.5, 9.0, 8.5])
+
+	def test_size_cap_still_enforced_one_syscall_at_a_time(self):
+		now = [0.0]
+		c = self._client(now, total_timeout=100.0, max_bytes=4)  # no time pressure
+		c._remaining()
+		resp = _DripResp(now, step=0.0, total_bytes=1000)
+		with self.assertRaises(mcp_client.McpError) as cm:
+			c._read_capped(resp)
+		self.assertEqual(cm.exception.kind, mcp_client.ERR_TRANSPORT)
+		self.assertIn("size cap", str(cm.exception))
+
+
 if __name__ == "__main__":
 	unittest.main()

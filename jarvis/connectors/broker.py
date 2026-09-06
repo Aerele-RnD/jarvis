@@ -3,7 +3,10 @@
 The agent container hands the bench a (connector_key, action, args) triple over
 ``call_tool``; by the time this runs, ``jarvis.api._dispatch_from_session`` has
 already ``impersonate``-d the real end user, so ``frappe.session.user`` IS that
-user and Frappe row permissions apply beneath everything here. This module:
+user. Note that ``frappe.get_all`` ignores permissions and ``frappe.get_doc``
+does not check them on load, so tenant isolation here rests on the EXPLICIT
+``owner``/``scope`` filters in :func:`_resolve_row`, not on row permissions.
+This module:
 
   1. Resolves the ``Jarvis Connector`` row for the user (a PERSONAL row wins over
      a SHARED one of the same key), honouring ``enabled``.
@@ -59,10 +62,10 @@ TOTAL_TIMEOUT_S = 20.0
 #   budget, never past REFRESH_BUDGET_S + MIN_CALL_TIMEOUT_S + TOTAL_TIMEOUT_S
 #   - REFRESH_BUDGET_S = 25s.
 #
-# Caveat, honestly stated: the MCP call's OWN body loop (mcp_client) still reads
-# via urllib3 stream(), whose read(n) can loop recvs past the per-chunk deadline
-# check on a byte-dripping server; that is the pre-existing v1 surface and is
-# tracked as a follow-up, not something this arithmetic claims to bound.
+# The MCP call's OWN body loop (mcp_client) now reads the same way - one syscall
+# per iteration with the socket re-armed to the remaining budget before each read
+# (see mcp_client._read_capped / _iter_body) - so a byte-dripping server cannot
+# loop recvs past the deadline there either, and this arithmetic holds for both.
 #
 # The floor is what keeps a refresh that spends its whole budget from leaving the
 # call a guaranteed instant timeout. An API-key row spends none of this and keeps
@@ -153,10 +156,21 @@ def _egress_allowed(host: str) -> bool:
 # --------------------------------------------------------------------------- #
 # row resolution + credential
 # --------------------------------------------------------------------------- #
+def _load_row(name: str):
+	"""Load a resolved row by name, treating a row deleted between the name lookup
+	and this load as "not found" (``None``) - the same outcome an empty lookup
+	takes. Any OTHER exception (a DB outage is not "not found") propagates."""
+	try:
+		return frappe.get_doc(CONNECTOR_DOCTYPE, name)
+	except frappe.DoesNotExistError:
+		return None
+
+
 def _resolve_row(connector_key: str):
 	"""Personal row (owned by the current user) wins over a shared row of the
-	same key. Filters are EXPLICIT (never trust perms alone), and the row's own
-	DocType permissions still apply because we run under the impersonated user."""
+	same key. The ``owner``/``scope`` filters ARE the tenant isolation: neither
+	``frappe.get_all`` (ignores permissions) nor ``frappe.get_doc`` (no check on
+	load) enforces it for us, so the filters must stay explicit."""
 	if not connector_key:
 		raise _BrokerError("connector_not_found", "No connector was named.")
 	user = frappe.session.user
@@ -167,7 +181,9 @@ def _resolve_row(connector_key: str):
 		limit=1,
 	)
 	if personal:
-		return frappe.get_doc(CONNECTOR_DOCTYPE, personal[0])
+		row = _load_row(personal[0])
+		if row is not None:
+			return row
 	shared = frappe.get_all(
 		CONNECTOR_DOCTYPE,
 		filters={"key": connector_key, "scope": "Shared"},
@@ -175,7 +191,9 @@ def _resolve_row(connector_key: str):
 		limit=1,
 	)
 	if shared:
-		return frappe.get_doc(CONNECTOR_DOCTYPE, shared[0])
+		row = _load_row(shared[0])
+		if row is not None:
+			return row
 	raise _BrokerError("connector_not_found", f"No connector named {connector_key!r} is available to you.")
 
 
@@ -190,10 +208,11 @@ def resolve_for_status(connector_key: str):
 	broker or the MCP client.
 
 	Returns the resolved row, or ``None`` when it cannot be resolved (unknown
-	key, or none visible to the caller) - the caller should fall through to
-	:func:`call` in that case so the ORDINARY ``connector_not_found`` error
-	(with its own wording) is what the model sees, not a second one invented
-	here. Never raises."""
+	key, none visible to the caller, or a row deleted between the name lookup and
+	the load) - the caller should fall through to :func:`call` in that case so the
+	ORDINARY ``connector_not_found`` error (with its own wording) is what the model
+	sees, not a second one invented here. Never raises for a missing or
+	inaccessible row (an unexpected error - a DB outage - still propagates)."""
 	try:
 		return _resolve_row(connector_key)
 	except _BrokerError:
@@ -213,17 +232,13 @@ def _credential(row) -> str:
 	inside the time budget, and never feeding the circuit breaker.
 
 	Otherwise: decrypt the stored ``credential`` (the shipped API-key path,
-	unchanged). On an UNSAVED row (the P3 test button tests before first save)
-	``get_password`` cannot read ``__Auth`` by name, so fall back to the
-	in-memory field value."""
+	unchanged). Every caller resolves a SAVED row (the Test button loads the doc by
+	name before probing), so ``get_password`` can always read ``__Auth`` by name."""
 	if oauth.is_oauth(row):
 		token = oauth.resolve_connector_token(row, total_timeout=REFRESH_BUDGET_S)
 		if not token:
 			raise _BrokerError("connector_not_ready", "Connect this app in Settings before it can be used.")
 		return token
-	is_new = getattr(row, "is_new", None)
-	if callable(is_new) and is_new():
-		return row.get("credential") or ""
 	try:
 		return row.get_password("credential", raise_exception=False) or ""
 	except Exception:
@@ -449,8 +464,7 @@ def test_connector(row) -> dict:
 	"""Guarded row wrapper: runs the initialize + tools/list probe through the SAME
 	per-connector circuit breaker and per-(tenant, connector) concurrency cap as a
 	real :func:`call`, so the Test button cannot bypass the worker protection or
-	hammer a flapping endpoint. Handles the unsaved-row credential read (P3 tests
-	before the first save).
+	hammer a flapping endpoint.
 
 	The breaker/cap key is the connector row, shared with :func:`call`: 5 test-probe
 	transport failures in the window open the circuit for chat calls too, which is
@@ -462,7 +476,7 @@ def test_connector(row) -> dict:
 	this connector's capacity - and would count a slow sign-in service against the
 	cap that exists to protect the worker from this endpoint."""
 	store = _store()
-	guard_key = _guard_key(row) or (row.get("base_url") or "test")
+	guard_key = _guard_key(row)
 	breaker = CircuitBreaker(store, guard_key, threshold=CB_THRESHOLD, window_s=CB_WINDOW_S, open_s=CB_OPEN_S)
 	if not breaker.allow():
 		return {

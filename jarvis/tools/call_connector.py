@@ -65,7 +65,9 @@ def call_connector(connector: str, action: str, args: dict | None = None) -> dic
 	connector, connector not yet tested (``connector_not_ready``), action not
 	allowed, bad arguments, SSRF/egress block, transport failure, circuit
 	open, at capacity, or the connector's own tool-execution error). Never
-	raises.
+	raises for a connector-level outcome, including a connector row deleted
+	between the readiness lookup and the call (only an unexpected DB error while
+	resolving readiness can propagate).
 	"""
 	row = broker.resolve_for_status(connector)
 	# Only intercept an ENABLED-but-untested row with the more specific

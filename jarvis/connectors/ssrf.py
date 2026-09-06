@@ -306,9 +306,10 @@ def open_pinned_request(
 	``deadline`` (a ``clock()`` timestamp, ``clock`` defaulting to
 	``time.monotonic``) is an OPTIONAL wall-clock bound spanning the WHOLE
 	redirect chain. Without it each hop gets its own full ``read_timeout``, so a
-	chain of stalling hops costs ``(1 + max_redirects) x read_timeout`` - which is
-	how a "20s" request becomes a 60s one. With it, every hop is handed only what
-	is left, and an exhausted budget fails as ``ERR_CONNECT_FAILED`` (the caller
+	chain of stalling hops costs ``(1 + max_redirects) x read_timeout`` - which at
+	the default ``max_redirects=3`` is how a "20s" request becomes an 80s one. With
+	it, every hop is handed only what is left, and an exhausted budget fails as
+	``ERR_CONNECT_FAILED`` (the caller
 	classifies it further; ``mcp_oauth.transport`` reports it as a timeout).
 	``max_redirects`` lets a caller on a tight budget cap the chain below the
 	module default."""

@@ -133,6 +133,25 @@ def _matches_response(msg, request_id) -> bool:
 # --------------------------------------------------------------------------- #
 # client
 # --------------------------------------------------------------------------- #
+def _rearm_socket(resp, remaining: float) -> None:
+	"""Point the connection's socket timeout at what is LEFT of the budget before
+	each body read. urllib3 arms the socket once, before the headers, and never
+	re-evaluates the total for the body, so without this a single recv could wait
+	the whole original read timeout after the deadline has already passed. Best
+	effort: a fake or a closed connection has no socket.
+
+	Mirrors ``mcp_oauth.transport._rearm_socket`` on purpose - kept local so this
+	leaf module pulls in no other ``jarvis.connectors`` subpackage (the sibling's
+	own ``_read_capped`` raises ``OAuthTransportError`` and takes an external
+	deadline/clock, so it is not directly reusable here)."""
+	sock = getattr(getattr(resp, "connection", None), "sock", None)
+	if sock is not None:
+		try:
+			sock.settimeout(max(remaining, 0.05))
+		except Exception:
+			pass
+
+
 class McpClient:
 	"""One MCP session over Streamable HTTP. Construct, ``initialize()``, then
 	``list_tools()`` / ``call_tool()``; ``close()`` (or use as a context manager)
@@ -195,19 +214,39 @@ class McpClient:
 			headers["MCP-Protocol-Version"] = self._negotiated_version or self._protocol_version
 		return headers
 
-	def _read_capped(self, resp) -> bytes:
-		chunks: list[bytes] = []
+	def _iter_body(self, resp):
+		"""Yield the response body ONE syscall at a time, re-arming the socket to the
+		remaining budget before each read and re-checking the deadline after it, so a
+		slow-drip server cannot loop recvs past the time budget or the size cap the way
+		``resp.stream(n)`` -> ``read(n)`` would (that loops until ``n`` bytes arrive
+		before ever returning to us). A fake response without ``read1`` (the unit-test
+		fakes) falls back to ``stream``, still deadline-checked per yielded chunk."""
+		read1 = getattr(resp, "read1", None)
 		total = 0
-		for chunk in resp.stream(8192, decode_content=True):
-			# Re-check the deadline between recvs so a slow trickle still trips it.
+
+		def _reads():
+			if read1 is None:
+				yield from resp.stream(8192, decode_content=True)
+				return
+			while True:
+				_rearm_socket(resp, self._remaining())
+				chunk = read1(65536, decode_content=True)
+				if not chunk:
+					return
+				yield chunk
+
+		for chunk in _reads():
+			# Re-check the deadline after every recv so a slow trickle still trips it.
 			self._remaining()
 			if not chunk:
 				continue
 			total += len(chunk)
 			if total > self._max_bytes:
 				raise McpError("Connector response exceeded the size cap.", kind=ERR_TRANSPORT)
-			chunks.append(chunk)
-		return b"".join(chunks)
+			yield chunk
+
+	def _read_capped(self, resp) -> bytes:
+		return b"".join(self._iter_body(resp))
 
 	def _stream_for_response(self, resp, request_id) -> dict:
 		"""Read an SSE stream incrementally and return the JSON-RPC response to
@@ -215,14 +254,7 @@ class McpClient:
 		stream (a server MAY hold it open past the response). Non-matching frames
 		(server notifications/requests, keep-alives) are skipped."""
 		buf = b""
-		total = 0
-		for chunk in resp.stream(8192, decode_content=True):
-			self._remaining()
-			if not chunk:
-				continue
-			total += len(chunk)
-			if total > self._max_bytes:
-				raise McpError("Connector response exceeded the size cap.", kind=ERR_TRANSPORT)
+		for chunk in self._iter_body(resp):
 			buf += chunk
 			# Only whole events (terminated by a blank line) are safe to parse; a
 			# partial trailing event stays in the buffer for the next chunk.
@@ -276,8 +308,10 @@ class McpClient:
 				clock=self._clock,
 			)
 		except ssrf.SsrfError:
-			# A guard rejection is not a transport flake - let the broker classify
-			# it (it must NOT feed the circuit breaker). Re-raised as-is.
+			# A guard rejection (other than a connect failure) is not a transport
+			# flake - let the broker classify it (only ERR_CONNECT_FAILED feeds the
+			# circuit breaker; a blocked/unresolved address or egress denial must
+			# NOT). Re-raised as-is.
 			raise
 		try:
 			return self._handle_response(resp, request_id, is_request=is_request, is_initialize=is_initialize)

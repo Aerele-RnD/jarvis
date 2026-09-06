@@ -14,8 +14,10 @@ User role appears in the permission rows.
 
 ``resource`` is a security field, not a record-keeping one: it pins the token to
 the connector address it was issued for, so re-pointing a connector cannot
-forward this token to a different host. ``mcp_oauth_store.load_live_token``
-enforces it on every read.
+forward this token to a different host.
+``jarvis.connectors.oauth.resolve_mcp_oauth_token`` enforces it on every read
+(it refuses a token whose pinned ``resource`` no longer matches the connector's
+current address).
 """
 
 from __future__ import annotations

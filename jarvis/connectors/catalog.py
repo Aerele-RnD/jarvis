@@ -99,8 +99,10 @@ class Provider:
 	`token_hint` / `token_help_url` are the paste-a-token guidance shown when a user
 	picks "use a token instead" of a sign-in. They are display copy allowed on ANY
 	auth class (`validate` only requires `token_help_url` be https), kept separate
-	from `hint` / `help_url` because on a sign-in preset those now carry the
-	register-your-own-app guide, not token guidance.
+	from `hint` / `help_url` because on a `static` (bring-your-own-app) preset those
+	now carry the register-your-own-app guide, not token guidance. A `dcr` preset
+	(Atlassian, Linear) self-registers its app, so its `hint` / `help_url` are
+	unaffected and still carry token guidance.
 
 	`description` is one short plain line naming what the app is for (its data, not
 	a protocol), shown under the name in the SPA's preset picker. `validate` requires

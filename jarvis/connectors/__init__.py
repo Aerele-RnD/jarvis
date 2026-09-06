@@ -2,8 +2,10 @@
 
 An agent gets two dumb tools (call_connector, list_connector_actions); the bench
 does the real MCP call under the resolved (impersonated) user, so the credential
-never enters the agent container and Frappe row permissions enforce tenant
-isolation for free. See ``MCP_CONNECTORS_PLAN.md`` and memory
+never enters the agent container. Tenant isolation rests on the EXPLICIT
+``owner``/``scope`` filters in ``broker._resolve_row`` (``frappe.get_all``
+ignores permissions and ``frappe.get_doc`` does not check them on load), not on
+row permissions. See ``MCP_CONNECTORS_PLAN.md`` and memory
 ``jarvis-mcp-connectors-design``.
 
 Layering (import direction is one-way, leaves first):

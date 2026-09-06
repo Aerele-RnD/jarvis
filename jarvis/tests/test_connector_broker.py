@@ -144,5 +144,46 @@ class TestGuardedTestProbe(unittest.TestCase):
 		self.assertEqual(out["error"]["code"], "at_capacity")
 
 
+class _DoesNotExist(Exception):
+	"""Stand-in for ``frappe.DoesNotExistError`` - a REAL class so ``_resolve_row``'s
+	``except frappe.DoesNotExistError`` can catch it under a mocked frappe."""
+
+
+class TestResolveRowDeletedBetweenLookupAndLoad(unittest.TestCase):
+	"""A row deleted between the name lookup (``get_all``) and the load
+	(``get_doc``) used to raise ``DoesNotExistError`` straight through
+	``resolve_for_status`` / ``call_connector`` to a 500. ``_resolve_row`` now
+	treats that as "not found", so the ordinary ``connector_not_found`` envelope is
+	what surfaces - a DB outage (any OTHER exception) still propagates."""
+
+	def _frappe(self, *, get_doc_error):
+		fake = mock.MagicMock()
+		fake.DoesNotExistError = _DoesNotExist
+		fake.session.user = "u@example.com"
+		fake.get_all.return_value = ["conn-1"]  # the name lookup DID find a row
+		fake.get_doc.side_effect = get_doc_error  # ... which is gone by load time
+		return fake
+
+	def test_deleted_row_becomes_connector_not_found(self):
+		fake = self._frappe(get_doc_error=_DoesNotExist("deleted"))
+		with mock.patch.object(broker, "frappe", fake):
+			with self.assertRaises(broker._BrokerError) as cm:
+				broker._resolve_row("github")
+		self.assertEqual(cm.exception.code, "connector_not_found")
+
+	def test_resolve_for_status_returns_none_when_row_vanished(self):
+		fake = self._frappe(get_doc_error=_DoesNotExist("deleted"))
+		with mock.patch.object(broker, "frappe", fake):
+			self.assertIsNone(broker.resolve_for_status("github"))
+
+	def test_db_outage_on_load_is_not_swallowed_as_not_found(self):
+		# A DB outage is not "not found": it must propagate, never be masked as a
+		# clean connector_not_found envelope.
+		fake = self._frappe(get_doc_error=RuntimeError("db down"))
+		with mock.patch.object(broker, "frappe", fake):
+			with self.assertRaises(RuntimeError):
+				broker._resolve_row("github")
+
+
 if __name__ == "__main__":
 	unittest.main()
