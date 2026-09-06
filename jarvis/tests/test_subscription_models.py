@@ -25,13 +25,38 @@ class TestSubscriptionCatalogue(unittest.TestCase):
 		for value in cat.SUBSCRIPTION_MODELS.values():
 			self.assertIsInstance(value, list)
 
-	def test_openai_entry_unchanged(self):
-		self.assertEqual(cat.SUBSCRIPTION_MODELS["OpenAI"], ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"])
-		self.assertEqual(cat.DEFAULT_MODEL["OpenAI"], "gpt-5.5")
+	def test_openai_seed_carries_the_codex_catalog_ids(self):
+		# The Codex channel serves the suffixed gpt-5.6 ids and gpt-6-astra (bare
+		# "gpt-5.6" is an API-only alias); gpt-5.4 / gpt-5.4-mini were retired
+		# upstream and fail inside cliproxy, so they are gone from this tier.
+		self.assertEqual(
+			cat._SEED_SUBSCRIPTION_MODELS["OpenAI"],
+			["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
+		)
+		self.assertEqual(cat._SEED_DEFAULT_MODEL["OpenAI"], "gpt-5.6-sol")
+
+	def test_bundled_openai_subscription_tier_mirrors_the_seed(self):
+		from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
+
+		openai = next(p for p in BUNDLED_MODEL_CATALOG if p["provider_id"] == "openai")
+		rows = sorted(
+			(m for m in openai["models"] if m["tier"] == "subscription"), key=lambda m: m["sort_order"]
+		)
+		self.assertEqual([m["model_id"] for m in rows], cat._SEED_SUBSCRIPTION_MODELS["OpenAI"])
+		self.assertEqual([m["model_id"] for m in rows if m["is_default"]], ["gpt-5.6-sol"])
 
 	def test_coerce_falls_back_to_default_for_bogus_and_empty(self):
-		self.assertEqual(_coerce_subscription_model("OpenAI", "nope"), "gpt-5.5")
-		self.assertEqual(_coerce_subscription_model("OpenAI", ""), "gpt-5.5")
+		from unittest.mock import patch
+
+		from jarvis import admin_client
+		from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
+		from jarvis.tests.test_model_catalog import _clear_sub_model_cache
+
+		with patch.object(admin_client, "get_model_catalog", return_value=BUNDLED_MODEL_CATALOG):
+			_clear_sub_model_cache()
+			self.assertEqual(_coerce_subscription_model("OpenAI", "nope"), "gpt-5.6-sol")
+			self.assertEqual(_coerce_subscription_model("OpenAI", ""), "gpt-5.6-sol")
+		_clear_sub_model_cache()
 
 	def test_google_gemini_has_no_subscription_seed(self):
 		# Google's chat subscription was removed 2026-08-19 (Google discontinued
