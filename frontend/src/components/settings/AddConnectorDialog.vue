@@ -89,16 +89,18 @@
 					</template>
 
 					<template v-else-if="cardKind === 'signin'">
-						<template v-if="autoCreating">
-							<p class="text-xs text-ink-gray-5">Setting up…</p>
-						</template>
-						<template v-else-if="signingIn">
-							<div class="text-sm font-medium text-ink-gray-9">
-								Sign in to {{ signinAppName }}
-							</div>
-							<p class="text-xs text-ink-gray-5">
-								Finish signing in in the other tab.
-							</p>
+						<template v-if="signingIn">
+							<template v-if="!rowName">
+								<p class="text-xs text-ink-gray-5">Setting up…</p>
+							</template>
+							<template v-else>
+								<div class="text-sm font-medium text-ink-gray-9">
+									Sign in to {{ signinAppName }}
+								</div>
+								<p class="text-xs text-ink-gray-5">
+									Finish signing in in the other tab.
+								</p>
+							</template>
 							<Button
 								variant="ghost"
 								size="sm"
@@ -168,7 +170,6 @@
 								:label="`Sign in with ${signinAppName}`"
 								iconRight="external-link"
 								class="self-start"
-								:disabled="!rowName"
 								@click="beginSignIn"
 							/>
 						</template>
@@ -526,31 +527,37 @@
 //     "need-check" - Custom URL, Check not run yet. No action; Continue stays
 //         disabled (testState never reaches "passed" from here).
 //     "signin"     - dcr, or static once a client is on file, or Custom URL
-//         once Check found needs_signin. Sub-states: autoCreating -> signingIn
-//         -> (rowOauthConnected -> testing -> passed/failed) | connectError.
-//         The row is auto-created the moment this shape is first reachable
-//         (dialog open for a named preset, Check-success for Custom URL) so
-//         one press of "Sign in with X" both has a row to sign in against and
-//         calls signIn() synchronously in that same click (the interface's
-//         hard requirement - it opens a tab before its first await).
+//         once Check found needs_signin. Sub-states: signingIn (itself either
+//         "creating the row" or "waiting on the other tab", see signingIn +
+//         rowName in the template) -> (rowOauthConnected -> testing ->
+//         passed/failed) | connectError.
 //     "register"   - static, no client on file yet, current user allowed to
-//         set one. Numbered mini-steps; "Save" persists the client and the
-//         card flips to "signin" on the next render (two presses total, each
-//         a plain "Save" / "Sign in with X" - never a chained side effect).
+//         set one. Numbered mini-steps; "Save" creates the row first if none
+//         exists yet, then persists the client, and the card flips to
+//         "signin" on the next render.
 //     "ask-admin"  - static, no client, current user NOT allowed to set one.
 //     "key"        - token preset, or Custom URL once Check found no sign-in
 //         needed, or any sign-in preset the user explicitly switched off of.
 //     "open"       - open preset (no credential, no sign-in).
 //
+// No row is ever created just from opening this dialog or from touching the
+// form (scope, auth method, Custom URL's Check) - only an actual connect
+// press does: "Sign in with X" (via a factory `signIn()` runs AFTER it opens
+// the vendor tab - see oauthSignin.js), "Save" on the register card, or
+// "Connect" on the key/open card. Every one of those creates the row with
+// enabled:0 (F8) - nobody but this dialog's owner can see it until the final
+// Save in step 2 flips it to enabled:1.
+//
 // isPlaceholder is the one predicate that reconciles every tension the spec
-// itself narrates: a row THIS dialog auto-created that nobody has invested in
-// yet (no saved client, no live sign-in, no passing test) is disposable. It
+// itself narrates: a row THIS dialog created that nobody has invested in yet
+// (no saved client, no live sign-in, no passing test) is disposable. It
 // drives three things at once: the Cancel-rule cleanup below, whether "Who
 // can use it" is still a live toggle or already plain text, and whether the
-// "use a key/sign in instead" switch links still show. Flipping the scope or
-// the auth method while placeholder discards the old row and starts over
-// instead of trying to mutate a saved row's immutable fields (scope and
-// auth_method are both set-once server side).
+// "use a key/sign in instead" switch links still show. Switching the auth
+// method away from a placeholder row still discards it (auth_method is
+// immutable server side, so a fresh row is what a later press will create);
+// switching scope can no longer discard-and-recreate anything because the
+// toggle isn't even rendered once a row exists - see scopeLocked below.
 import { computed, reactive, ref, watch } from "vue";
 import {
 	Badge,
@@ -564,13 +571,14 @@ import {
 } from "frappe-ui";
 import ConnectorLogo from "@/components/settings/ConnectorLogo.vue";
 import { CUSTOM_URL_TOKEN_HINT } from "@/components/settings/connectorHelp.js";
-// Agent A's helper - opens the vendor tab synchronously and resolves once the
-// popup's own round trip finishes.
+// oauthSignin.js's signIn() - opens the vendor tab synchronously and returns
+// a promise (with a .cancel()) that resolves once the flow has a verdict.
 import { signIn } from "@/components/settings/oauthSignin";
 import {
 	addConnector,
 	deleteConnector,
 	disconnectOauth,
+	oauthSigninStatus,
 	probeConnectorAuth,
 	setConnectorAllowedActions,
 	setOauthClientCredentials,
@@ -596,7 +604,10 @@ const props = defineProps({
 	// catalog order.
 	catalog: { type: Array, default: () => [] },
 });
-const emit = defineEmits(["update:modelValue", "saved", "change"]);
+// "kept" - a row this dialog created is still around (oauth-connected) when
+// the dialog closes without going through save() - the pane reloads so it
+// shows up on Installed (F8/F6).
+const emit = defineEmits(["update:modelValue", "saved", "change", "kept"]);
 
 const show = computed({
 	get: () => props.modelValue,
@@ -677,12 +688,19 @@ const isPlaceholder = computed(
 		!savedClientThisSession.value &&
 		testState.status !== "passed"
 );
-// "Who can use it" only stays a live toggle while there is nothing yet to
-// lose by discarding and recreating the row under a different scope.
-const scopeLocked = computed(() => !!rowName.value && !isPlaceholder.value);
+// "Who can use it" only stays a live toggle while no row exists yet - once
+// one does (even a placeholder), scope is locked, never discarded-and-redone.
+const scopeLocked = computed(() => !!rowName.value);
 
-const autoCreating = ref(false);
 const signingIn = ref(false);
+// Set the moment "Sign in with X" is first pressed this dialog session -
+// onClosed() uses it to decide whether a final status check is worth making
+// before deleting an unfinished row (F6: a token can land just after the
+// poll gives up, and a plain close must not race it away).
+const signInStartedThisSession = ref(false);
+// The in-flight signIn() promise, if any - cancelSignIn() and onClosed() both
+// call its .cancel() (see oauthSignin.js's module doc for the contract).
+let currentSignIn = null;
 // Bumped on every sign-in start/cancel/close so a signIn() promise that
 // resolves after the user has moved on (Cancel, dialog close, Change) is
 // ignored instead of mutating a card the user isn't looking at any more.
@@ -690,9 +708,15 @@ let signInGen = 0;
 const connectError = ref("");
 const disconnectingInline = ref(false);
 // True once this dialog instance's Dialog has actually closed - guards the
-// in-flight autoCreateRow/runConnect awaits so a row created after Escape
-// still gets deleted instead of orphaned.
+// in-flight runConnect / saveStaticClient row-creation awaits so a row
+// created after Escape still gets deleted instead of orphaned (the sign-in
+// factory below uses signInGen for the same purpose instead, since it's
+// already bumped on cancel/close/reopen).
 const closed = ref(false);
+// Set in save()'s success path so onClosed doesn't fire a second "kept"
+// reload on top of the "saved" one it already emitted (Save closes the
+// dialog too, so onClosed still runs via @after-leave).
+const savedThisClose = ref(false);
 
 // Custom URL's Check step: probes the pasted server and decides whether it
 // needs a sign-in at all.
@@ -730,9 +754,16 @@ function defaultPreset() {
 const cardKind = computed(() => {
 	if (isEdit.value) {
 		const auth = presetAuthClass.value;
-		if (auth === "dcr") return "signin";
+		// F3: a sign-in Custom URL row's auth_class is "custom", same as any
+		// other Custom URL row - only auth_method distinguishes it, so it must
+		// be checked here too, not just auth === "dcr".
+		if (auth === "dcr" || (auth === "custom" && form.auth_method === "OAuth")) return "signin";
+		// F2: rowNeedsStaticClient (seeded from the row in resetForEdit), not
+		// props.connector.needs_static_client - the latter is a snapshot from
+		// dialog-open and never updates after saveStaticClient() writes the
+		// client, so Save never left the register card.
 		if (auth === "static")
-			return props.connector.needs_static_client
+			return rowNeedsStaticClient.value
 				? canSetStaticClient.value
 					? "register"
 					: "ask-admin"
@@ -826,7 +857,8 @@ function resetForCreate() {
 	rowOauthConnected.value = false;
 	signinHost.value = "";
 	signingIn.value = false;
-	autoCreating.value = false;
+	signInStartedThisSession.value = false;
+	savedThisClose.value = false;
 	connectError.value = "";
 	testState.status = "idle";
 	testState.tools = [];
@@ -836,7 +868,6 @@ function resetForCreate() {
 	touchedActions.value = new Set();
 	actionQuery.value = "";
 	resetCustomUrlOauthState();
-	maybeAutoCreateRow();
 }
 function resetForEdit(row) {
 	form.preset = row.preset || defaultPreset();
@@ -850,6 +881,8 @@ function resetForEdit(row) {
 	rowOauthConnected.value = !!row.oauth_connected;
 	signinHost.value = row.signin_host || "";
 	signingIn.value = false;
+	signInStartedThisSession.value = false;
+	savedThisClose.value = false;
 	connectError.value = "";
 	// An edited row may already have a passing test on record, but this dialog
 	// only knows the LIVE tools/list shape after a fresh test - it starts idle
@@ -923,17 +956,17 @@ async function discardPlaceholderRow() {
 		/* best-effort cleanup */
 	}
 }
-// Sets the field FIRST, synchronously, then discards any placeholder still
-// built against the old value - two rapid flips must never resolve a discard
-// against a value a later flip has already moved past. autoCreateRow itself
-// re-checks intent after its own await (see below), so a discard racing an
-// in-flight create is reconciled there, not here.
-async function onScopeChange(v) {
+// With no row yet, flipping "who can use it" is just a form change - nothing
+// to discard (the toggle isn't even rendered once a row exists, see
+// scopeLocked above).
+function onScopeChange(v) {
 	if (!v || v === form.scope) return;
 	form.scope = v;
-	if (rowName.value && isPlaceholder.value) await discardPlaceholderRow();
-	maybeAutoCreateRow();
 }
+// A placeholder row's auth_method is set once, server side - switching away
+// from it (via the "use a key/sign in instead" links) discards it rather
+// than trying to mutate it. With no row yet this is just a form change; a
+// later connect press creates the row that matches the new choice.
 async function switchAuthMethod(method) {
 	if (method === form.auth_method) return;
 	form.auth_method = method;
@@ -943,25 +976,8 @@ async function switchAuthMethod(method) {
 	testState.tools = [];
 	testState.message = "";
 	if (rowName.value && isPlaceholder.value) await discardPlaceholderRow();
-	if (method === "OAuth") maybeAutoCreateRow();
 }
 
-// ── auto-create (sign-in presets only - see the state machine note) ────────
-// One creation path for every sign-in shape: a named preset auto-creates as
-// soon as its auth class is known (dialog open), Custom URL once Check finds
-// needs_signin. Safe to call opportunistically (onScopeChange, Check, this
-// dialog's own open watcher) - it no-ops whenever a row already exists, one is
-// already in flight, or the current form doesn't call for one.
-function maybeAutoCreateRow() {
-	if (isEdit.value || rowName.value || autoCreating.value) return;
-	if (form.auth_method !== "OAuth") return;
-	if (form.preset === "Custom URL") {
-		if (!probeDone.value || !customUrlOauth.active) return;
-	} else if (!presetDefaultsToOauth(catalogAuthOf(form.preset))) {
-		return;
-	}
-	autoCreateRow();
-}
 function customUrlKey(url) {
 	try {
 		return slugifyKey(new URL(url).hostname);
@@ -984,48 +1000,19 @@ function applyOauthRowMeta(row) {
 	rowRedirectUri.value = row.oauth_redirect_uri || "";
 	if (row.signin_host) signinHost.value = row.signin_host;
 }
-async function autoCreateRow() {
-	if (rowName.value || autoCreating.value || isEdit.value) return;
-	autoCreating.value = true;
-	connectError.value = "";
-	// Snapshot what this call is creating FOR - a scope flip, an auth-method
-	// switch, or a base_url edit that lands mid-request must not silently
-	// attach to a row built against the old intent.
-	const wantScope = form.scope;
-	const wantPreset = form.preset;
-	const wantBaseUrl = form.base_url.trim();
-	let retry = false;
-	try {
-		const row = await addConnector({
-			preset: wantPreset,
-			scope: wantScope,
-			auth_method: "OAuth",
-			...(wantPreset === "Custom URL"
-				? { base_url: wantBaseUrl, key: customUrlKey(wantBaseUrl) }
-				: {}),
-		});
-		const stale =
-			closed.value ||
-			form.preset !== wantPreset ||
-			form.scope !== wantScope ||
-			form.auth_method !== "OAuth" ||
-			(wantPreset === "Custom URL" && form.base_url.trim() !== wantBaseUrl);
-		if (stale) {
-			deleteConnector(row.name).catch(() => {});
-			retry = !closed.value;
-			return;
-		}
-		rowName.value = row.name;
-		createdThisSession.value = true;
-		applyOauthRowMeta(row);
-	} catch (e) {
-		if (!closed.value) connectError.value = errMessage(e, "Could not start sign-in.");
-	} finally {
-		autoCreating.value = false;
-		// The form moved on while this was in flight - try again against
-		// whatever it now says (a no-op if that no longer calls for a row).
-		if (retry) maybeAutoCreateRow();
-	}
+// Shared shape for every "create the row this connect press needs" call -
+// always enabled:0 (F8): a row nobody has finished setting up yet stays
+// invisible to everyone else until the final Save (step 2) turns it on.
+function connectRowPayload(extra) {
+	return {
+		preset: form.preset,
+		scope: form.scope,
+		enabled: 0,
+		...(form.preset === "Custom URL"
+			? { base_url: form.base_url.trim(), key: customUrlKey(form.base_url.trim()) }
+			: {}),
+		...extra,
+	};
 }
 
 // ── sign-in ──────────────────────────────────────────────────────────────
@@ -1034,16 +1021,45 @@ const SIGNIN_STATUS_MESSAGE = {
 	timeout: "Sign-in took too long.",
 	error: "Could not sign in.",
 };
+// signIn()'s factory (F4): runs AFTER the vendor tab is open and BEFORE
+// connect_oauth, so the row is only created once the user has actually
+// pressed "Sign in with X". A static preset with no client on file yet can't
+// sign in at all - see the register card - so that's surfaced as a thrown
+// error, which signIn() turns into a closed tab + {status:"error"} that the
+// (now "register") card's own connectError line shows.
+// `gen` is beginSignIn's own signInGen snapshot - Cancel, Escape/close and a
+// dialog reopen all bump signInGen, so checking it after the create's await
+// catches every way the user could have moved on during the ~45s a dcr
+// discovery + registration can take, the same protection runConnect and
+// saveStaticClient get from the `closed` ref (nothing here awaits `closed`
+// itself, since a reopened dialog resets `closed` back to false too).
+async function createRowForSignIn(gen) {
+	const row = await addConnector(connectRowPayload({ auth_method: "OAuth" }));
+	if (gen !== signInGen) {
+		deleteConnector(row.name).catch(() => {});
+		throw new Error("Could not sign in.");
+	}
+	rowName.value = row.name;
+	createdThisSession.value = true;
+	applyOauthRowMeta(row);
+	if (row.needs_static_client) throw new Error("Register your app first.");
+	return row.name;
+}
 async function beginSignIn() {
-	if (!rowName.value || signingIn.value) return;
+	if (signingIn.value) return;
 	const gen = ++signInGen;
 	signingIn.value = true;
+	signInStartedThisSession.value = true;
 	connectError.value = "";
+	// A row already on hand (a retry, or one "Sign in with X" already created)
+	// signs in directly by name; otherwise the factory above creates it -
+	// signIn() calls it synchronously in this same click, after opening the
+	// tab, per the interface contract.
+	const target = rowName.value || (() => createRowForSignIn(gen));
+	const pending = signIn(target, { label: signinAppName.value, agentName });
+	currentSignIn = pending;
 	try {
-		// Called synchronously as the first statement here (nothing awaited
-		// before it) - it opens the vendor tab before its own first await, per
-		// the interface contract.
-		const res = await signIn(rowName.value, { label: signinAppName.value, agentName });
+		const res = await pending;
 		if (gen !== signInGen) return; // superseded by Cancel / a later open
 		if (res && res.status === "connected") {
 			rowOauthConnected.value = true;
@@ -1061,11 +1077,13 @@ async function beginSignIn() {
 		connectError.value = errMessage(e, "Could not sign in.");
 	} finally {
 		if (gen === signInGen) signingIn.value = false;
+		if (currentSignIn === pending) currentSignIn = null;
 	}
 }
 function cancelSignIn() {
 	signInGen++; // the pending signIn() promise, whenever it settles, is now stale
 	signingIn.value = false;
+	if (currentSignIn) currentSignIn.cancel();
 }
 async function runOauthTest() {
 	if (!rowName.value) return;
@@ -1097,16 +1115,31 @@ async function disconnectInline() {
 }
 
 // ── register-your-app ────────────────────────────────────────────────────
+// F4/F8: creates the row first when this dialog doesn't have one yet (the
+// register card is normally only reached in create mode after a "Sign in
+// with X" press has already created one and found needs_static_client - see
+// createRowForSignIn - but this stays defensive rather than assuming that),
+// then saves the pasted credentials - one press, one handler.
 async function saveStaticClient() {
-	if (!rowName.value || savingClient.value) return;
+	if (savingClient.value) return;
 	const id = staticClient.id.trim();
 	const secret = staticClient.secret.trim();
 	if (!id || !secret) return;
 	savingClient.value = true;
 	connectError.value = "";
 	try {
-		const row = await setOauthClientCredentials(rowName.value, id, secret);
-		applyOauthRowMeta(row);
+		if (!rowName.value) {
+			const row = await addConnector(connectRowPayload({ auth_method: "OAuth" }));
+			if (closed.value) {
+				deleteConnector(row.name).catch(() => {});
+				return;
+			}
+			rowName.value = row.name;
+			createdThisSession.value = true;
+			applyOauthRowMeta(row);
+		}
+		const saved = await setOauthClientCredentials(rowName.value, id, secret);
+		applyOauthRowMeta(saved);
 		savedClientThisSession.value = true;
 		staticClient.id = "";
 		staticClient.secret = "";
@@ -1148,6 +1181,9 @@ function copyRedirectUri() {
 }
 
 // ── Custom URL Check ─────────────────────────────────────────────────────
+// Only probes - creates nothing. A needs_signin result just flips the card
+// to "signin"; the row itself is created by that card's own sign-in press
+// (F4), same as every other preset.
 async function runProbe() {
 	const url = form.base_url.trim();
 	if (!url || probing.value) return;
@@ -1162,7 +1198,6 @@ async function runProbe() {
 			customUrlOauth.signinHost = res.needs_signin ? res.signin_host || "" : "";
 			customUrlOauth.registration = res.needs_signin ? res.registration || "" : "";
 			form.auth_method = res.needs_signin ? "OAuth" : "API Key";
-			if (res.needs_signin) maybeAutoCreateRow();
 		} else {
 			probeDone.value = false;
 			probeError.value =
@@ -1201,21 +1236,16 @@ function applyTestResult(res) {
 			(res && res.error && res.error.message) || "Could not reach the connector.";
 	}
 }
+// F8: this is the key/open card's own connect press, so it creates the row
+// (enabled:0) itself rather than relying on anything eager.
 async function runConnect() {
 	if (testing.value) return;
 	testing.value = true;
 	try {
 		if (!rowName.value) {
-			const row = await addConnector({
-				preset: form.preset,
-				base_url: form.base_url.trim(),
-				scope: form.scope,
-				credential: form.credential,
-				auth_method: "API Key",
-				...(form.preset === "Custom URL"
-					? { key: customUrlKey(form.base_url.trim()) }
-					: {}),
-			});
+			const row = await addConnector(
+				connectRowPayload({ credential: form.credential, auth_method: "API Key" })
+			);
 			if (closed.value) {
 				deleteConnector(row.name).catch(() => {});
 				return;
@@ -1278,8 +1308,12 @@ async function save() {
 			.filter((t) => touchedActions.value.has(t.action))
 			.map((t) => ({ action: t.action, allowed: !!selected.value[t.action] }));
 		await setConnectorAllowedActions(rowName.value, actions);
+		// F8: the row was created enabled:0 (or already was, in edit mode's case
+		// simply staying enabled) - this is what makes it visible to everyone
+		// else the row's scope allows.
 		const row = await updateConnector(rowName.value, { enabled: 1 });
 		toast.success(isEdit.value ? "Connector updated" : "Connector added");
+		savedThisClose.value = true; // onClosed's own reload would be redundant
 		emit("saved", row);
 		show.value = false;
 	} catch (e) {
@@ -1302,16 +1336,41 @@ function onChange() {
 // Fires on every close - Cancel, the dialog's own X, Escape, a backdrop click
 // and Save (which sets show.value itself) all land here via @after-leave.
 // Only a still-placeholder row is an orphan worth cleaning up - see the
-// module doc's isPlaceholder note.
+// module doc's isPlaceholder note. A sign-in still in flight is cancelled
+// FIRST (closes the vendor tab, stops the poll) so it can't land a token into
+// a row this function is about to delete out from under it (F6).
 async function onClosed() {
 	closed.value = true;
 	signInGen++; // ignore a signIn() still pending from this dialog instance
+	if (currentSignIn) currentSignIn.cancel();
 	if (isPlaceholder.value && rowName.value) {
-		try {
-			await deleteConnector(rowName.value);
-		} catch (e) {
-			/* best-effort cleanup */
+		let keep = false;
+		if (signInStartedThisSession.value) {
+			// The poll may have given up (timeout) a moment before a token
+			// actually landed - one last check before writing the row off.
+			try {
+				const s = await oauthSigninStatus(rowName.value);
+				keep = !!(s && s.ok !== false && s.connected);
+			} catch (e) {
+				/* best-effort - fall through to delete on a failed check */
+			}
 		}
+		if (keep) {
+			rowOauthConnected.value = true;
+		} else {
+			try {
+				await deleteConnector(rowName.value);
+			} catch (e) {
+				/* best-effort cleanup */
+			}
+		}
+	}
+	// F8: a row this dialog created is still around, connected, but was never
+	// saved (Cancel/close after a sign-in, or the late-arriving token just
+	// above) - the pane's own lists don't know about it yet, so ask for a
+	// reload. Skipped after a real Save, which already asked via "saved".
+	if (!savedThisClose.value && createdThisSession.value && rowOauthConnected.value) {
+		emit("kept");
 	}
 	testState.status = "idle";
 	testState.tools = [];

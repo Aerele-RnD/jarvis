@@ -99,7 +99,11 @@ const props = defineProps({
 	catalog: { type: Array, default: () => [] },
 	// Every row visible to the current viewer (Shared + their own Mine, exactly
 	// what ConnectorsPane's Installed tab renders) - drives the "Added" badge
-	// below without a second round-trip.
+	// below without a second round-trip. isAdded further filters this to rows
+	// the viewer can actually USE (F9): "mine" is by definition the viewer's
+	// own Personal rows, but a Shared row an admin hasn't finished setting up
+	// (needs_static_client) doesn't count for a plain user, who would
+	// otherwise see "Added" for something they can't sign in to yet.
 	installedRows: { type: Array, default: () => [] },
 	allowCustomUrls: { type: Boolean, default: true },
 });
@@ -145,8 +149,15 @@ const filtered = computed(() => {
 	});
 });
 
+// F9: a Personal row is always the viewer's own, so it always counts; a
+// Shared row only counts once it's past needs_static_client - a plain user
+// browsing sees Add (not a false "Added") for an admin's half-set-up row and
+// can still add their own.
 function isAdded(entry) {
-	return props.installedRows.some((row) => row.preset === entry.name);
+	return props.installedRows.some(
+		(row) =>
+			row.preset === entry.name && (row.scope === "Personal" || !row.needs_static_client)
+	);
 }
 
 // Matches the design's four-bucket AUTH_LABEL map exactly (Directory.dc.html):

@@ -187,6 +187,10 @@ async function doSignIn() {
 	if (signingIn.value) return;
 	signingIn.value = true;
 	try {
+		// signIn() returns a promise (with a .cancel() this row never uses -
+		// there's no Cancel affordance here, only in AddConnectorDialog) that
+		// resolves once the flow has a verdict; passing the row's own name
+		// (not a factory) since the row already exists.
 		const result = await signIn(props.row.name, { label: props.row.label, agentName });
 		if (result.status === "connected") {
 			emit("reload");

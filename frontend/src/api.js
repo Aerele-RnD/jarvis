@@ -786,8 +786,12 @@ export const fileboxDeleteBulk = (conversations) =>
 const CN = "jarvis.chat.connectors_api.";
 // {enabled, allow_custom_urls, shared:[row], mine:[row]}.
 export const listConnectors = () => call(CN + "list_connectors");
-// p = {label, preset, base_url, scope, credential, key?}. Presets other than
-// "Custom URL" ignore base_url server-side (pinned to the vendor endpoint).
+// p = {label, preset, base_url, scope, credential, auth_method?, enabled?,
+// key?}. Presets other than "Custom URL" ignore base_url server-side (pinned
+// to the vendor endpoint). enabled defaults to 1 server-side; the dialog
+// always passes 0 when creating from a connect press (F8) so a row nobody
+// has finished setting up isn't visible to anyone else until Save (step 2)
+// flips it back on.
 export const addConnector = (p) => call(CN + "add_connector", p);
 // Runs a live initialize + tools/list through the broker; on success writes
 // tools_cache + merges allowed_actions. {ok, tools:[...]} | {ok:false, error}.

@@ -130,6 +130,7 @@
 			:catalog="catalog"
 			@saved="onSaved"
 			@change="onDialogChange"
+			@kept="load"
 		/>
 	</SettingsPane>
 </template>
