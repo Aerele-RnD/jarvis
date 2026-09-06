@@ -194,10 +194,10 @@
 								<div class="text-xs text-ink-gray-8">
 									Copy this callback address into the app
 								</div>
-								<div v-if="rowRedirectUri" class="flex items-center gap-2">
+								<div v-if="registerRedirectUri" class="flex items-center gap-2">
 									<code
 										class="min-w-0 flex-1 truncate rounded border px-2 py-1 text-xs text-ink-gray-7"
-										>{{ rowRedirectUri }}</code
+										>{{ registerRedirectUri }}</code
 									>
 									<Button
 										variant="ghost"
@@ -597,6 +597,11 @@ const props = defineProps({
 	// The catalog name chosen on Browse, or "Custom URL". Ignored in edit mode.
 	preset: { type: String, default: "" },
 	allowCustomUrls: { type: Boolean, default: true },
+	// listConnectors()'s site-wide oauth_redirect_uri - the register card's step 1
+	// needs this BEFORE any row exists (a static preset's register card can show
+	// first, on the very first render, with no connector created yet); once a row
+	// exists its own oauth status carries the same value and takes over.
+	redirectUri: { type: String, default: "" },
 	// The row being edited, or null for a fresh Add.
 	connector: { type: Object, default: null },
 	// listConnectors()'s catalog: [{ name, key, auth, category, description,
@@ -673,6 +678,12 @@ const savedClientThisSession = ref(false);
 const rowOauthConnected = ref(false);
 const rowNeedsStaticClient = ref(false);
 const rowRedirectUri = ref("");
+// Step 1's callback address for the register card: the row's own value once one
+// exists (applyOauthRowMeta), else the site-wide value list_connectors shipped
+// (props.redirectUri) - same address either way (connectors_api.oauth_redirect_uri
+// is the ONE value both come from), this only decides which is on hand first so
+// the register card can show the callback before any row has been created.
+const registerRedirectUri = computed(() => rowRedirectUri.value || props.redirectUri);
 // The known sign-in host, once a row exists (any preset - set from the row's
 // own signin_host, same field a Custom URL's pre-row Check already surfaces
 // into customUrlOauth.signinHost below).
@@ -778,8 +789,13 @@ const cardKind = computed(() => {
 	const auth = catalogAuthOf(form.preset);
 	if (form.auth_method === "API Key") return auth === "open" ? "open" : "key";
 	if (auth === "dcr") return "signin";
+	// No row exists yet, so the row's own needs_static_client (still its
+	// reset-state false) cannot answer this - a bring-your-own-app static preset
+	// always needs one, so show "register" (or "ask-admin") from the very first
+	// render instead of a "Sign in with X" that would create the row, fail server
+	// side for want of app credentials, and only then flip.
 	if (auth === "static")
-		return rowNeedsStaticClient.value
+		return !rowName.value || rowNeedsStaticClient.value
 			? canSetStaticClient.value
 				? "register"
 				: "ask-admin"
@@ -1115,11 +1131,13 @@ async function disconnectInline() {
 }
 
 // ── register-your-app ────────────────────────────────────────────────────
-// F4/F8: creates the row first when this dialog doesn't have one yet (the
-// register card is normally only reached in create mode after a "Sign in
-// with X" press has already created one and found needs_static_client - see
-// createRowForSignIn - but this stays defensive rather than assuming that),
-// then saves the pasted credentials - one press, one handler.
+// F4/F8: creates the row first when this dialog doesn't have one yet - the
+// primary path for a fresh bring-your-own-app static preset, whose card is
+// "register" from the very first render (see cardKind), no prior "Sign in
+// with X" press required. Also covers a row a "Sign in with X" press already
+// created and found needs_static_client on (createRowForSignIn) and an
+// edit-mode row that never got a client - then saves the pasted credentials,
+// one press, one handler.
 async function saveStaticClient() {
 	if (savingClient.value) return;
 	const id = staticClient.id.trim();
@@ -1150,7 +1168,7 @@ async function saveStaticClient() {
 	}
 }
 function copyRedirectUri() {
-	const text = rowRedirectUri.value;
+	const text = registerRedirectUri.value;
 	if (!text) return;
 	const done = () => {
 		copied.value = true;

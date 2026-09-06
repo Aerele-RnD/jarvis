@@ -126,6 +126,7 @@
 			:scope="addScope"
 			:preset="addPreset"
 			:allow-custom-urls="allowCustomUrls"
+			:redirect-uri="redirectUri"
 			:connector="editingRow"
 			:catalog="catalog"
 			@saved="onSaved"
@@ -170,6 +171,11 @@ const loadError = ref(false);
 const shared = ref([]);
 const mine = ref([]);
 const allowCustomUrls = ref(true);
+// The site-wide OAuth callback address (jarvis.chat.connectors_api.oauth_redirect_uri) -
+// AddConnectorDialog needs this for a bring-your-own-app static preset's "register
+// your app" step BEFORE any row exists, so it comes off list_connectors rather than
+// a row's own oauth status.
+const redirectUri = ref("");
 // The connector preset catalog (jarvis/connectors/catalog.py) - drives
 // ConnectorDirectory's grid and AddConnectorDialog's per-preset copy.
 const catalog = ref([]);
@@ -187,6 +193,7 @@ async function load() {
 		shared.value = res.shared || [];
 		mine.value = res.mine || [];
 		allowCustomUrls.value = !!res.allow_custom_urls;
+		redirectUri.value = res.oauth_redirect_uri || "";
 		catalog.value = res.catalog || [];
 		loaded.value = true;
 	} catch (e) {

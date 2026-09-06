@@ -582,10 +582,15 @@ def _replace_allowed_actions(parent_name: str, actions: list[dict]) -> None:
 @frappe.whitelist()
 @require_jarvis_user
 def list_connectors() -> dict:
-	"""``{enabled, allow_custom_urls, catalog, shared, mine}``. ``frappe.get_list``
-	(not ``get_all``) so ``connector_query_conditions`` scopes the query the
-	same way the Desk list view is scoped: every Shared row plus the caller's
-	own Personal rows, nothing more. Never selects ``credential``.
+	"""``{enabled, allow_custom_urls, oauth_redirect_uri, catalog, shared, mine}``.
+	``frappe.get_list`` (not ``get_all``) so ``connector_query_conditions`` scopes
+	the query the same way the Desk list view is scoped: every Shared row plus the
+	caller's own Personal rows, nothing more. Never selects ``credential``.
+
+	``oauth_redirect_uri`` is the site-wide, non-secret callback address (see
+	:func:`oauth_redirect_uri`), shipped unconditionally so the SPA can show a
+	bring-your-own-app preset's "register your app" step BEFORE any row exists,
+	not only after a row's own ``_oauth_status``/``_mcp_oauth_status`` carries it.
 
 	``catalog`` is the in-app provider list (public fields only, no ``base_url``,
 	no secrets, disabled entries absent) the SPA builds its preset picker, logos,
@@ -631,6 +636,7 @@ def list_connectors() -> dict:
 	return {
 		"enabled": flags["enabled"],
 		"allow_custom_urls": flags["allow_custom_urls"],
+		"oauth_redirect_uri": oauth_redirect_uri(),
 		"catalog": catalog.to_public(),
 		"shared": shared,
 		"mine": mine,
