@@ -1,9 +1,11 @@
 <template>
-	<!-- Soft update banner: top-of-chat, calm info/blue (NOT the amber warning
-	     the billing/readiness alerts use). The wrapper is the FLIP target that
-	     minimises into the version pill on dismiss. -->
-	<div ref="bannerEl" class="jv-updatebanner" :style="flipStyle">
-		<Banner type="info" :message="message" align="center">
+	<!-- Soft update banner: top-of-chat, coloured by severity - amber (soft) or
+	     red (severe), matching the version pill. The banner only ever renders
+	     for these two tiers (see bannerShouldShow in releaseNudge.js). The
+	     wrapper is the FLIP target that minimises into the version pill on
+	     dismiss. -->
+	<div ref="bannerEl" class="jv-updatebanner" :class="toneClass" :style="flipStyle">
+		<Banner :type="bannerType" :message="message" align="center">
 			<template #action>
 				<button class="jv-ub-btn" type="button" @click="onWhatsNew">What's new</button>
 				<button class="jv-ub-btn jv-ub-btn--ghost" type="button" @click="dismiss">
@@ -35,7 +37,7 @@ import { ref } from "vue";
 import Banner from "@/components/Banner.vue";
 import { FeatherIcon } from "frappe-ui";
 import { agentName } from "@/branding";
-import { snoozeBanner, openWhatsNew } from "@/noticeGate";
+import { notice, snoozeBanner, openWhatsNew } from "@/noticeGate";
 
 const props = defineProps({
 	// The VersionPill's exposed instance ({ getEl, pulse }); may be null if the
@@ -44,6 +46,12 @@ const props = defineProps({
 });
 
 const message = `A new version of ${agentName} is available — ask your administrator to update.`;
+
+// Severity drives the Banner's colour, mirroring the pill: soft -> amber
+// (warning), severe -> red (error). `notice` is the stable, non-reactive boot
+// payload (see noticeGate.js), so these are plain consts, not computed().
+const bannerType = notice.tier === "severe" ? "error" : "warning";
+const toneClass = bannerType === "error" ? "jv-tone-red" : "jv-tone-amber";
 
 const bannerEl = ref(null);
 const flipStyle = ref({});
@@ -120,25 +128,35 @@ function dismiss() {
 	margin: 12px 18px 0;
 }
 
+/* The tone the primary button (and its own focus ring) resolve to - amber for
+   soft, red for severe. Scoped on the same wrapper the tone class lands on. */
+.jv-tone-amber {
+	--jv-ub-tone: var(--amber);
+}
+.jv-tone-red {
+	--jv-ub-tone: var(--red);
+}
+
 /* Compact, quiet action buttons inside the banner's #action slot. Real
    <button>s (keyboard-reachable); styled here since Banner is a child scope.
-   Colours come from the app palette (theme-aware, resolved on .jv-root),
-   --link being the one sanctioned blue. */
+   The primary button's ink/border/focus follow --jv-ub-tone (the banner's
+   severity colour) so it doesn't clash with the now amber/red Banner fill;
+   ghost + × stay neutral (--text-2) below. */
 .jv-ub-btn {
 	height: 26px;
 	padding: 0 10px;
-	border: 1px solid color-mix(in srgb, var(--link) 40%, transparent);
+	border: 1px solid color-mix(in srgb, var(--jv-ub-tone) 40%, transparent);
 	border-radius: 7px;
 	background: transparent;
 	font-family: inherit;
 	font-size: 12px;
 	font-weight: 500;
-	color: var(--link);
+	color: var(--jv-ub-tone);
 	cursor: pointer;
 	white-space: nowrap;
 }
 .jv-ub-btn:hover {
-	background: color-mix(in srgb, var(--link) 12%, transparent);
+	background: color-mix(in srgb, var(--jv-ub-tone) 12%, transparent);
 }
 .jv-ub-btn--ghost {
 	border-color: transparent;
@@ -149,7 +167,7 @@ function dismiss() {
 }
 .jv-ub-btn:focus-visible,
 .jv-ub-x:focus-visible {
-	outline: 2px solid var(--link);
+	outline: 2px solid var(--jv-ub-tone);
 	outline-offset: 2px;
 }
 .jv-ub-x {

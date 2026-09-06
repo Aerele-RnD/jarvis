@@ -15,9 +15,14 @@
 // caller's v-if in App.vue.
 import { ref } from "vue";
 import { agentName } from "@/branding";
-import { pillHandle, snoozeBanner, openWhatsNew } from "../noticeGate";
+import { notice, pillHandle, snoozeBanner, openWhatsNew } from "../noticeGate";
 
 const message = `A new version of ${agentName} is available — ask your administrator to update.`;
+
+// Severity drives the banner's colour, mirroring the pill: soft -> amber,
+// severe -> red. `notice` is the stable, non-reactive boot payload (see
+// noticeGate.js), so this is a plain const, not computed().
+const bannerTone = notice.tier === "severe" ? "red" : "amber";
 
 const bannerEl = ref(null);
 const flipStyle = ref({});
@@ -88,10 +93,16 @@ function dismiss() {
 </script>
 
 <template>
-	<!-- Calm info/blue treatment - NOT the alarm amber the hard gate implies.
-	     The wrapper is the FLIP target that minimises into the version pill on
-	     dismiss. -->
-	<div ref="bannerEl" class="jv-updatebanner" :style="flipStyle">
+	<!-- Coloured by severity - amber (soft) or red (severe), matching the
+	     version pill. The banner only ever renders for these two tiers (see
+	     bannerShouldShow in releaseNudge.js). The wrapper is the FLIP target
+	     that minimises into the version pill on dismiss. -->
+	<div
+		ref="bannerEl"
+		class="jv-updatebanner"
+		:class="'jv-tone-' + bannerTone"
+		:style="flipStyle"
+	>
 		<svg
 			class="jv-ub-icon"
 			viewBox="0 0 24 24"
@@ -134,6 +145,17 @@ function dismiss() {
 </template>
 
 <style scoped>
+/* Tone (amber/red) resolves per severity class below; reused by the fill,
+   border, ink AND the action buttons so the whole banner + its controls stay
+   one coherent colour. */
+.jv-tone-amber {
+	--jv-tone: var(--amber);
+	--jv-tone-bg: var(--amber-bg);
+}
+.jv-tone-red {
+	--jv-tone: var(--red);
+	--jv-tone-bg: var(--red-bg);
+}
 .jv-updatebanner {
 	flex: none;
 	display: flex;
@@ -143,9 +165,9 @@ function dismiss() {
 	margin: 8px 12px 0;
 	padding: 12px;
 	border-radius: 14px;
-	background: var(--blue-bg);
-	border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent);
-	color: var(--blue);
+	background: var(--jv-tone-bg);
+	border: 1px solid color-mix(in srgb, var(--jv-tone) 35%, transparent);
+	color: var(--jv-tone);
 }
 .jv-ub-icon {
 	flex: none;
@@ -166,13 +188,13 @@ function dismiss() {
 .jv-ub-btn {
 	height: 30px;
 	padding: 0 11px;
-	border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent);
+	border: 1px solid color-mix(in srgb, var(--jv-tone) 40%, transparent);
 	border-radius: 8px;
 	background: transparent;
 	font-family: inherit;
 	font-size: 12.5px;
 	font-weight: 600;
-	color: var(--blue);
+	color: var(--jv-tone);
 	cursor: pointer;
 	white-space: nowrap;
 }
@@ -181,11 +203,11 @@ function dismiss() {
 	color: var(--ink6);
 }
 .jv-ub-btn:active {
-	background: color-mix(in srgb, var(--blue) 16%, transparent);
+	background: color-mix(in srgb, var(--jv-tone) 16%, transparent);
 }
 .jv-ub-btn:focus-visible,
 .jv-ub-x:focus-visible {
-	outline: 2px solid var(--blue);
+	outline: 2px solid var(--jv-tone);
 	outline-offset: 2px;
 }
 .jv-ub-x {
