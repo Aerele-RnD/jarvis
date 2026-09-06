@@ -179,6 +179,20 @@ class TestBootPayload(FrappeTestCase):
 		self.assertTrue(p["active"])
 		self.assertEqual(p["behind"], 4)
 
+	def test_boot_severe_active_false(self):
+		# Slice 3b.1 severity split: "severe" (behind >= release_lag_threshold) is a
+		# red pill + banner but NON-blocking - unlike "hard", it must NOT set active.
+		self._set(
+			release_notice_active=0,
+			latest_jarvis_version=NEWER,
+			release_notice_tier="severe",
+			release_notice_behind=4,
+		)
+		p = release_notice.boot_payload()
+		self.assertEqual(p["tier"], "severe")
+		self.assertEqual(p["behind"], 4)
+		self.assertFalse(p["active"])
+
 	def test_boot_current_zeroes_behind(self):
 		# Bench already at/past target: `behind` reads 0 regardless of a stale stored value.
 		self._set(
@@ -205,8 +219,8 @@ class TestBootPayload(FrappeTestCase):
 
 	def test_active_equals_tier_hard(self):
 		# The load-bearing invariant: active is true exactly when the tier is hard,
-		# across every producible tier.
-		for tier, act in (("hard", 1), ("soft", 0), ("none", 0)):
+		# across every producible tier ("severe" is non-blocking, like "soft").
+		for tier, act in (("hard", 1), ("severe", 0), ("soft", 0), ("none", 0)):
 			release_notice.persist(
 				{"active": act, "tier": tier, "version": NEWER, "message": "m", "behind": 1}
 			)
