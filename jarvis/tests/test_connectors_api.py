@@ -322,7 +322,17 @@ class TestListConnectorsCatalog(_ConnectorApiTestCase):
 		self.assertNotIn("Plaid", names, "a disabled catalog entry is never offered")
 		self.assertNotIn("Custom URL", names, "Custom URL is a flow, not a provider")
 
-		allowed = {"name", "key", "auth", "category", "logo", "help_url", "hint"}
+		allowed = {
+			"name",
+			"key",
+			"auth",
+			"category",
+			"logo",
+			"help_url",
+			"hint",
+			"token_hint",
+			"token_help_url",
+		}
 		for entry in entries:
 			self.assertEqual(set(entry), allowed, entry.get("name"))
 			self.assertIn(entry["auth"], {"dcr", "static", "token", "open"})
@@ -1786,7 +1796,11 @@ class TestListConnectorsMcpOauth(_McpOauthTestCase):
 		frappe.set_user(ADMIN_USER)
 		transport = _ScriptedTransport({})  # GitHub seeds with no network
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
-			out = connectors_api.add_connector(preset="GitHub", scope="Shared", auth_method="OAuth")
+			# An explicit key: a Shared row is unique per key, and a local site may
+			# already carry a real Shared GitHub connector under the pinned "github".
+			out = connectors_api.add_connector(
+				preset="GitHub", scope="Shared", auth_method="OAuth", key="github-shared-peruser"
+			)
 		name = out["name"]
 		self._connectors.append(name)
 		connectors_api.set_oauth_client_credentials(name, "shared-client", "shared-secret")
