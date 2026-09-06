@@ -79,7 +79,22 @@
 							:disabled="applying"
 							@click="go(item.key)"
 						>
-							<FeatherIcon :name="item.icon" class="size-4 shrink-0" />
+							<svg
+								v-if="item.icon === 'plug'"
+								class="size-4 shrink-0"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.7"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<path d="M12 22v-5" />
+								<path d="M9 8V2" />
+								<path d="M15 8V2" />
+								<path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+							</svg>
+							<FeatherIcon v-else :name="item.icon" class="size-4 shrink-0" />
 							<span class="truncate">{{ item.label }}</span>
 						</button>
 					</template>
@@ -148,6 +163,9 @@ const UsageAdminPane = defineAsyncComponent(() =>
 	import("@/components/settings/UsageAdminPane.vue")
 );
 const BrandingPane = defineAsyncComponent(() => import("@/components/settings/BrandingPane.vue"));
+const ConnectorsPane = defineAsyncComponent(() =>
+	import("@/components/settings/ConnectorsPane.vue")
+);
 
 // ACCOUNT AND BILLING is the tenant-admin tier (System Manager OR Jarvis Admin,
 // matching the widened require_jarvis_admin endpoints). ADMINISTRATION is
@@ -160,6 +178,7 @@ const PANES = {
 	usage: UsagePane,
 	activity: ActivityPane,
 	shortcuts: ShortcutsPane,
+	connectors: ConnectorsPane,
 	plan: PlanBillingPane,
 	aimodels: AiModelsPane,
 	branding: BrandingPane,
@@ -178,6 +197,13 @@ const NAV = [
 			{ key: "usage", label: "Usage", icon: "bar-chart-2" },
 			{ key: "activity", label: "Activity", icon: "activity" },
 			{ key: "shortcuts", label: "Shortcuts", icon: "command" },
+			{
+				key: "connectors",
+				label: "Connectors",
+				// A plug (not feather's grid, which the user menu already uses for
+				// Switch to Desk); drawn inline because feather has no plug.
+				icon: "plug",
+			},
 		],
 	},
 	{
@@ -216,7 +242,8 @@ const confirmOpen = computed(() => confirmState.value !== null);
 // together.
 const LEGACY_SECTION_ALIASES = { billing: "usage" };
 
-// A gated section requested by a user without the role falls back to General.
+// A section requested by a user without the role for its group (group gate)
+// falls back to General.
 const section = computed(() => {
 	let s = store.settingsSection;
 	if (LEGACY_SECTION_ALIASES[s]) s = LEGACY_SECTION_ALIASES[s];

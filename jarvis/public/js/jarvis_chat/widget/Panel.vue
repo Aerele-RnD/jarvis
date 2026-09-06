@@ -692,6 +692,7 @@ import { renderReply } from "./panel_markdown.mjs";
 import { resizeFrom } from "./panel_size.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { classifyReadiness, degradedActionable, shouldWarnWorkers } from "./panel_readiness.mjs";
+import { sendRefusalMessage } from "./panel_send_copy.mjs";
 import {
 	emptyStream,
 	applyEvent,
@@ -1580,6 +1581,21 @@ async function send() {
 		const approvalTokens = orderedPending.value.map((p) => p.token);
 		const res = await sendMessage(convId.value, text, props.context, atts, approvalTokens);
 		if (res?.conversation_id) convId.value = res.conversation_id;
+		// A send the server refused outright (e.g. a required app update, via the
+		// same validate_can_send gate as the full chat) starts no turn and returns
+		// no conversation. Surface the reason and STOP — otherwise the fall-through
+		// below flips the panel busy and polls for a run that never comes. The full
+		// nudge (pill/banner) stays off the bubble by design; this is just the
+		// legible reason for the refusal.
+		if (res && res.ok === false && !res.confirmed) {
+			sending.value = false;
+			messages.value = messages.value.filter((m) => !String(m.name).startsWith("local-"));
+			loadError.value =
+				res.reason === "release_update_required"
+					? sendRefusalMessage(res.reason, brandName)
+					: res.error?.message || sendRefusalMessage(res.reason, brandName);
+			return;
+		}
 		// A go-ahead on the parked card ran the confirmation instead of starting a
 		// turn. No run is coming, so marking the panel busy would spin forever, and
 		// nothing was persisted for the typed words. Reload: the durable receipt

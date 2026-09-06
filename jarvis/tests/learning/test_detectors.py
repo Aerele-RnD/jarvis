@@ -14,6 +14,8 @@ engine's table-diff integration test (Wave B engine).
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
@@ -28,6 +30,18 @@ from jarvis.learning.executor import (
 )
 from jarvis.learning.readonly_db import PatternDB
 from jarvis.tests.learning import factory
+
+# The factory seeds fixtures at fixed calendar dates (2025-09-01 onward), but
+# detector windows are computed relative to "now" (window_start = today - N
+# months). Once the real run date advances far enough, the earliest fixtures
+# age out of the shorter windows: e.g. mfg-default-bom-usage (12-month window,
+# n_min=20) seeds 24 Widget Work Orders from 2025-09-01, and once today passes
+# ~2026-09 the first five fall before the cutoff, leaving 19 in-window -- below
+# the gate -- so the detector finds nothing and the test fails. Pin today() to a
+# stable date after the fixtures (comfortably inside even the 12-month window,
+# and after the latest ~2025-11 fixture) so every window covers them
+# deterministically, whatever the real date the suite runs on.
+_FROZEN_NOW = "2026-04-01"
 from jarvis.tests.learning.test_snapshots import seed_print_log, wipe_print_state
 
 
@@ -75,7 +89,11 @@ class TestTier1Detectors(FrappeTestCase):
 		super().tearDownClass()
 
 	def _run(self, detector_id, company):
-		return run_detector(registry.get_detector(detector_id), company, PatternDB())
+		# Pin today() so detector windows deterministically cover the fixed-date
+		# fixtures regardless of the real run date (see _FROZEN_NOW). window_start
+		# reads frappe.utils.today(); patch it with stdlib mock (no freezegun in CI).
+		with patch("frappe.utils.today", return_value=_FROZEN_NOW):
+			return run_detector(registry.get_detector(detector_id), company, PatternDB())
 
 	# --- selling ------------------------------------------------------------
 	def test_customer_price_list_finds_dealer_and_silent_on_sole_value(self):
@@ -744,7 +762,11 @@ class TestTier2Detectors(FrappeTestCase):
 		super().tearDownClass()
 
 	def _run(self, detector_id, company):
-		return run_detector(registry.get_detector(detector_id), company, PatternDB())
+		# Pin today() so detector windows deterministically cover the fixed-date
+		# fixtures regardless of the real run date (see _FROZEN_NOW). window_start
+		# reads frappe.utils.today(); patch it with stdlib mock (no freezegun in CI).
+		with patch("frappe.utils.today", return_value=_FROZEN_NOW):
+			return run_detector(registry.get_detector(detector_id), company, PatternDB())
 
 	# --- S5 realized-vs-master payment terms ---------------------------------
 	def test_customer_payment_terms_divergence_and_master_match_trap(self):

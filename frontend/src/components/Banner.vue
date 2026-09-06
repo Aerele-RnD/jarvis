@@ -26,7 +26,10 @@
   correct (LlmPoolEditor's .jv-status: a bare icon, no chip).
 -->
 <template>
-	<div class="flex items-start gap-2.5 rounded-md p-2.5" :class="variant.fill">
+	<div
+		class="flex gap-2.5 rounded-md p-2.5"
+		:class="[variant.fill, align === 'center' ? 'items-center' : 'items-start']"
+	>
 		<FeatherIcon
 			:name="variant.icon"
 			class="size-4 shrink-0"
@@ -47,7 +50,11 @@
 				 unaffected. -->
 			<slot />
 		</div>
-		<div v-if="$slots.action" class="mt-0.5 flex shrink-0 items-center gap-2">
+		<div
+			v-if="$slots.action"
+			class="flex shrink-0 items-center gap-2"
+			:class="align === 'center' ? '' : 'mt-0.5'"
+		>
 			<slot name="action" />
 		</div>
 	</div>
@@ -61,6 +68,11 @@ const props = defineProps({
 	type: { type: String, default: "error" }, // error | warning | info | success
 	title: { type: String, default: "" },
 	message: { type: String, default: "" },
+	// Vertical alignment of the icon/body/action row. Default "start" keeps the
+	// icon on line 1 for multi-line title+message banners (jarvis#725). A
+	// SINGLE-LINE, message-only banner with tall action buttons (e.g. the update
+	// banner) can opt into "center" so the message sits level with its buttons.
+	align: { type: String, default: "start" }, // start | center
 });
 
 // Typed fill + ink, straight off design.md §3.7's banner recipe and the same
