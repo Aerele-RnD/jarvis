@@ -7,7 +7,7 @@ RFC 9728 protected-resource metadata → RFC 8414 / OIDC authorization-server me
 `probe_sweep.py` (job tmp) to refresh. Classes map 1:1 onto the connection flows the
 engine supports.
 
-## Sign-in, zero setup (DCR: the auth server self-registers): 14
+## Sign-in, zero setup (DCR: the auth server self-registers): 13
 
 Re-verified 2026-09-06 with a REAL registration from an e2e tenant (client name
 `Jarvis (<site host>)`, callback on the tenant's own host): every row below issued a
@@ -15,7 +15,6 @@ client id.
 
 | Provider | MCP endpoint | Auth server | PKCE |
 |---|---|---|---|
-| Asana | `https://mcp.asana.com/mcp` | mcp.asana.com | S256 |
 | Atlassian (Jira, Confluence) | `https://mcp.atlassian.com/v2/mcp` | auth.atlassian.com | S256 |
 | Canva | `https://mcp.canva.com/mcp` | mcp.canva.com | S256 |
 | Cloudflare (bindings) | `https://bindings.mcp.cloudflare.com/mcp` | bindings.mcp.cloudflare.com | S256 |
@@ -40,12 +39,13 @@ Two things the live registration taught the engine (both fixed 2026-09-06):
   declaration (`canonical.resource_covers`), as the reference client SDK does. Asana's
   401 also points at the ROOT well-known document, not `/.well-known/.../mcp`.
 
-## Sign-in advertised, but closed to third-party apps: 4 (listed, `enabled=False`)
+## Sign-in advertised, but closed to third-party apps: 5 (listed, `enabled=False`)
 
 Each advertises a registration endpoint, and each refuses a self-hosted tenant:
 
 | Provider | MCP endpoint | What it answers |
 |---|---|---|
+| Asana | `https://mcp.asana.com/mcp` | `invalid_redirect_uri` ("not allowed") for any public host, port or not; `localhost` callbacks register, so only local assistants and its approved hosted ones can sign in |
 | Square | `https://mcp.squareup.com/mcp` | `invalid_redirect_uri` for any public host; `localhost` callbacks are accepted, so only local assistants and its approved hosted ones can sign in |
 | Figma | `https://mcp.figma.com/mcp` | `403 Forbidden` from `api.figma.com/v1/oauth/mcp/register` for every request shape (public or confidential, any user agent) |
 | Dropbox | `https://mcp.dropbox.com/mcp` | `registration_not_supported`: "only pre-registered MCP trusted partners are allowed" |

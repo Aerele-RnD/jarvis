@@ -278,6 +278,11 @@ PROVIDERS: tuple[Provider, ...] = (
 		logo="asana",
 		help_url=None,
 		hint=None,
+		# Its sign-in service only accepts callback addresses it already
+		# knows: localhost registers, every public tenant host is refused
+		# with invalid_redirect_uri (probed 2026-09-06). Off until Asana
+		# opens registration.
+		enabled=False,
 	),
 	Provider(
 		name="Notion",
