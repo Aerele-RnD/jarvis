@@ -1698,8 +1698,8 @@ def _connector_call_is_safe_read(args) -> bool:
 	    AND is still denied at execution by ``broker``/``policy.action_decision``
 	    - skipping the card is defense-in-depth, never a bypass of the broker's own
 	    allow gate;
-	  * the site kill-switch + not-ready guards in ``call_connector.py`` are
-	    unchanged and still run at execution.
+	  * the not-ready guard in ``call_connector.py`` is unchanged and still runs
+	    at execution.
 
 	Runs at the gate point inside ``_run_tool``, which is itself inside
 	``impersonate(end_user)`` (see ``_dispatch_from_session``), so

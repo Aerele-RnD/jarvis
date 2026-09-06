@@ -144,7 +144,7 @@
 // new list shape.
 //
 // "Shared" rows are admin-managed (Jarvis Settings desk form owns the
-// enabled/allow-custom-urls policy — this pane is deliberately lean); a plain
+// allow-custom-urls policy — this pane is deliberately lean); a plain
 // user sees them read-only (no edit/delete/toggle) but MAY still press Test —
 // connectors_api.test_connector is gated on read, not write, so any tenant
 // user can run a live health probe on a Shared connector. "Mine" rows are

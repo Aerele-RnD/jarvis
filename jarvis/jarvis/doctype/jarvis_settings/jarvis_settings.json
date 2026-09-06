@@ -94,7 +94,6 @@
   "enable_customizations_clause",
   "enable_role_profiles",
   "connectors_section",
-  "connectors_enabled",
   "allow_custom_urls",
   "connectors_col",
   "connector_egress_rules",
@@ -711,13 +710,6 @@
    "fieldtype": "Section Break",
    "label": "Connectors",
    "description": "MCP connectors let the agent call external services (GitHub, Atlassian, Linear, Stripe and custom gateways) on a user's behalf."
-  },
-  {
-   "fieldname": "connectors_enabled",
-   "fieldtype": "Check",
-   "label": "Enable MCP Connectors",
-   "default": "0",
-   "description": "Site-wide kill switch. Off by default: call_connector fast-fails and list_connector_actions returns empty until this is turned on."
   },
   {
    "fieldname": "allow_custom_urls",

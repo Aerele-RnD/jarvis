@@ -77,10 +77,10 @@ connector controller guarantees a key-only row carries no link.
 UI/UX decision #2 puts that admin control on the Jarvis Settings Desk form.
 
 Boot wiring: ``connector_flags()`` (not whitelisted) is also imported by
-``jarvis/www/jarvis.py`` to ship ``connectors_enabled``/
-``connectors_allow_custom_urls`` in the SPA boot payload, so the nav can gate
-the Connectors tab without a round trip. ``list_connectors`` returns the same
-two flags for callers that only have the API (e.g. a stale boot cache).
+``jarvis/www/jarvis.py`` to ship ``connectors_allow_custom_urls`` in the SPA
+boot payload, so the nav can read the Custom URL policy without a round trip.
+``list_connectors`` returns the same flag for callers that only have the API
+(e.g. a stale boot cache).
 """
 
 from __future__ import annotations
@@ -157,25 +157,17 @@ _DESC_MAX = 500
 # settings flags (shared with jarvis/www/jarvis.py boot payload)
 # --------------------------------------------------------------------------- #
 def connector_flags() -> dict:
-	"""``{enabled, allow_custom_urls}`` off ``Jarvis Settings``. NOT whitelisted
-	— called directly by ``list_connectors`` below and by ``www/jarvis.py`` for
-	the boot payload (design section 2's kill switch + custom-URL policy).
+	"""``{allow_custom_urls}`` off ``Jarvis Settings``. NOT whitelisted — called
+	directly by ``list_connectors`` below and by ``www/jarvis.py`` for the boot
+	payload (the custom-URL policy).
 
-	``enabled`` reuses ``_connector_gate.connectors_enabled()`` — the SAME source
-	of truth the chat tools gate on — so the ``jarvis_connectors_enabled``
-	site_config override (an operator's fleet-wide kill switch) is honored here
-	too; otherwise the SPA boot payload could say "on" while chat returns
-	``connectors_disabled``.
 	``allow_custom_urls`` defaults to 1 but — per its own field description —
 	Single defaults are NOT backfilled onto an existing site's ``tabSingles``
 	row on migrate, and ``get_single_value`` coerces a genuinely missing row to
 	0/off via ``cint`` — indistinguishable from an admin explicitly turning it
 	off. So it needs the same tabSingles row-existence probe
 	``personalise_api._single_bool`` uses, treating "no row at all" as ON."""
-	from jarvis.tools._connector_gate import connectors_enabled
-
 	return {
-		"enabled": connectors_enabled(),
 		"allow_custom_urls": _single_bool("allow_custom_urls", True),
 	}
 
@@ -582,7 +574,7 @@ def _replace_allowed_actions(parent_name: str, actions: list[dict]) -> None:
 @frappe.whitelist()
 @require_jarvis_user
 def list_connectors() -> dict:
-	"""``{enabled, allow_custom_urls, oauth_redirect_uri, catalog, shared, mine}``.
+	"""``{allow_custom_urls, oauth_redirect_uri, catalog, shared, mine}``.
 	``frappe.get_list`` (not ``get_all``) so ``connector_query_conditions`` scopes
 	the query the same way the Desk list view is scoped: every Shared row plus the
 	caller's own Personal rows, nothing more. Never selects ``credential``.
@@ -634,7 +626,6 @@ def list_connectors() -> dict:
 		(shared if row["scope"] == "Shared" else mine).append(row)
 
 	return {
-		"enabled": flags["enabled"],
 		"allow_custom_urls": flags["allow_custom_urls"],
 		"oauth_redirect_uri": oauth_redirect_uri(),
 		"catalog": catalog.to_public(),
@@ -1012,11 +1003,8 @@ def test_connector(name: str) -> dict:
 	``last_test_status="Failed"`` (an existing good cache from a PRIOR passing test
 	is left alone, so a transient failure never wipes a working connector's config).
 
-	Two guards run BEFORE the outbound probe:
-	  * the site-wide kill switch (``connectors_enabled``) - an operator's incident
-	    override must stop the outbound probe too, not only ``call_connector``;
-	  * a per-user rate limit - the probe is a real network call to a user-chosen
-	    host, so it must not be spammable.
+	A per-user rate limit guards the outbound probe - it is a real network call
+	to a user-chosen host, so it must not be spammable.
 
 	Read runs the probe, WRITE persists. Any user who can SEE a connector (a Shared
 	one is visible to every tenant user) may run the live health/discovery probe and
@@ -1029,17 +1017,6 @@ def test_connector(name: str) -> dict:
 	rewrite that can only grant a read-only, non-destructive default or preserve an
 	admin's existing choice - never turn ON a write/destructive action.
 	"""
-	from jarvis.tools._connector_gate import connectors_enabled
-
-	if not connectors_enabled():
-		return {
-			"ok": False,
-			"error": {
-				"code": "connectors_disabled",
-				"message": "Connectors are not enabled for this workspace.",
-			},
-		}
-
 	doc = frappe.get_doc(CONNECTOR, name)
 	if not doc.has_permission("read"):
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
@@ -1489,10 +1466,6 @@ def probe_connector_auth(base_url: str) -> dict:
 
 	Gated like the Test button, and for the same reason: it is a real outbound
 	call to a host the caller named."""
-	from jarvis.tools._connector_gate import connectors_enabled
-
-	if not connectors_enabled():
-		return _error("connectors_disabled", "Connectors are not enabled for this workspace.")
 	if not connector_flags()["allow_custom_urls"]:
 		return _error(
 			"custom_urls_disabled",

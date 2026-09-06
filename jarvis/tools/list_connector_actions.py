@@ -23,7 +23,6 @@ from __future__ import annotations
 import frappe
 
 from jarvis.connectors import policy
-from jarvis.tools._connector_gate import connectors_enabled
 
 CONNECTOR_DOCTYPE = "Jarvis Connector"
 
@@ -43,13 +42,9 @@ def list_connector_actions(connector: str | None = None) -> dict:
 	same resolution ``call_connector`` uses.
 
 	Returns ``{"connectors": [{"connector", "label", "scope", "actions":
-	[{"action", "description"}]}]}``. When connectors are turned off for this
-	workspace, or the caller can see none, returns ``{"connectors": []}`` -
-	never an error.
+	[{"action", "description"}]}]}``. When the caller can see no connectors,
+	returns ``{"connectors": []}`` - never an error.
 	"""
-	if not connectors_enabled():
-		return {"connectors": []}
-
 	filters: dict = {"enabled": 1}
 	if connector:
 		filters["key"] = connector

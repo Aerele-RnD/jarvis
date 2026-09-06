@@ -82,8 +82,8 @@ STANDARD_DROP_TOOLS: frozenset[str] = frozenset(
 # sorted (spec §2 evidence capture: ~/.claude/jobs/bce488ac/tmp/postfix-cap.jsonl,
 # plus jarvis__call_connector / jarvis__list_connector_actions added after the
 # MCP connectors feature landed - a standard-tier user gets both like any other
-# jarvis tool; the connectors kill switch and delegate gate are the actual
-# authority, not tier membership). An allow list must be explicit here:
+# jarvis tool; the delegate gate and each connector's own configuration are the
+# actual authority, not tier membership). An allow list must be explicit here:
 # deriving it at runtime from a live agent container is not possible bench-side.
 _STANDARD_TOOLS_ALLOW = [
 	"agents_list",

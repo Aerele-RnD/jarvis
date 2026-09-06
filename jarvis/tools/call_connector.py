@@ -19,14 +19,12 @@ resolution (a Personal row wins over a Shared one of the same key),
 credential decrypt, allowed-actions gate, argument validation, SSRF guard,
 circuit breaker and audit log all apply as them - none of that lives here,
 it is ``jarvis.connectors.broker.call``'s job, and that function never raises
-into this turn. This tool adds exactly two things the broker does not own,
-both checked FIRST so a call that cannot succeed never reaches it at all: the
-site-wide kill switch (``Jarvis Settings.connectors_enabled``, checked via
-``jarvis.tools._connector_gate``), and a readiness check (an enabled
-connector whose configuration has never passed a connection test - the SPA
-clears that status on every credential/base_url edit - gets a clear
-``connector_not_ready`` error instead of a confusing failure deeper in the
-broker or the MCP client).
+into this turn. This tool adds exactly one thing the broker does not own,
+checked FIRST so a call that cannot succeed never reaches it at all: a
+readiness check (an enabled connector whose configuration has never passed a
+connection test - the SPA clears that status on every credential/base_url
+edit - gets a clear ``connector_not_ready`` error instead of a confusing
+failure deeper in the broker or the MCP client).
 
 A delegate / marketplace-agent run must have ``jarvis__call_connector`` named
 explicitly in its snapshotted capability contract to reach this tool at all -
@@ -39,7 +37,6 @@ from __future__ import annotations
 
 from jarvis.connectors import broker
 from jarvis.tools._agent_run_ctx import get_session_key
-from jarvis.tools._connector_gate import connectors_enabled
 
 _NOT_READY_ERROR = {
 	"ok": False,
@@ -70,14 +67,6 @@ def call_connector(connector: str, action: str, args: dict | None = None) -> dic
 	open, at capacity, or the connector's own tool-execution error). Never
 	raises.
 	"""
-	if not connectors_enabled():
-		return {
-			"ok": False,
-			"error": {
-				"code": "connectors_disabled",
-				"message": "Connectors are not enabled for this workspace.",
-			},
-		}
 	row = broker.resolve_for_status(connector)
 	# Only intercept an ENABLED-but-untested row with the more specific
 	# connector_not_ready error. A row that is unknown or explicitly disabled

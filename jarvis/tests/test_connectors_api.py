@@ -87,10 +87,6 @@ class _ConnectorApiTestCase(FrappeTestCase):
 		self._orig_user = frappe.session.user
 		self._connectors: list[str] = []
 		self._saved_singles: dict[str, object] = {}
-		# The feature flag defaults OFF on a fresh DB, and test_connector now refuses
-		# to probe when it is off. Every test here exercises an ENABLED workspace, so
-		# turn it on (tearDown restores the original via _saved_singles).
-		self._set_single("connectors_enabled", 1)
 
 	def tearDown(self):
 		frappe.set_user(self._orig_user)
@@ -459,16 +455,6 @@ class TestTestConnector(_ConnectorApiTestCase):
 		self.assertFalse(bool(row.read_only), "stored read_only flag must not be relabeled by the server")
 		self.assertTrue(bool(row.destructive), "stored destructive flag must survive a re-test")
 		self.assertFalse(bool(row.allowed), "a relabeled action must not become auto-allowed")
-
-	def test_kill_switch_off_blocks_probe(self):
-		name = self._mk("Personal", "killed", owner=PLAIN_A, preset="GitHub")
-		self._set_single("connectors_enabled", 0)
-		frappe.set_user(PLAIN_A)
-		with patch.object(broker, "test_connector") as probe:
-			out = connectors_api.test_connector(name)
-		self.assertFalse(out["ok"])
-		self.assertEqual(out["error"]["code"], "connectors_disabled")
-		probe.assert_not_called()
 
 	def test_failure_marks_failed_without_wiping_prior_cache(self):
 		name = self._mk("Personal", "flaky", owner=PLAIN_A, preset="GitHub")
@@ -1020,15 +1006,6 @@ class TestProbeConnectorAuth(_McpOauthTestCase):
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			out = connectors_api.probe_connector_auth(MCP_BASE_URL)
 		self.assertEqual(out["error"]["code"], "custom_urls_disabled")
-		self.assertEqual(transport.calls, [])
-
-	def test_kill_switch_off_blocks_the_probe(self):
-		self._set_single("connectors_enabled", 0)
-		transport = _ScriptedTransport({})
-		frappe.set_user(PLAIN_A)
-		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
-			out = connectors_api.probe_connector_auth(MCP_BASE_URL)
-		self.assertEqual(out["error"]["code"], "connectors_disabled")
 		self.assertEqual(transport.calls, [])
 
 

@@ -224,8 +224,8 @@ class TestConnectorSafeReadRowLookup(FrappeTestCase):
 	def test_run_tool_safe_read_skips_card_and_is_audited(self):
 		# End-to-end through _run_tool on a REAL safe-read row: no card is parked,
 		# the call dispatches, and it is AUDITED (call_connector stays a _WRITE_TOOL).
-		# dispatch() is patched to a sentinel so the tool's own network/kill-switch
-		# internals do not run - the point here is the GATE decision, not the call.
+		# dispatch() is patched to a sentinel so the tool's own network internals
+		# do not run - the point here is the GATE decision, not the call.
 		key = "gate-e2e-read"
 		self._mk(
 			key,

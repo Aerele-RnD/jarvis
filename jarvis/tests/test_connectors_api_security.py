@@ -1,6 +1,6 @@
 """Hermetic unit tests for the security hardening in
-``jarvis.chat.connectors_api``: the ``test_connector`` write-gate + kill switch,
-and the no-recompute-on-existing-row merge.
+``jarvis.chat.connectors_api``: the ``test_connector`` write-gate, and the
+no-recompute-on-existing-row merge.
 
 Plain ``unittest`` with ``frappe`` mocked at the module boundary - this worktree
 is not installed on a bench, so the permission/merge LOGIC is proven here without
@@ -69,28 +69,12 @@ def _fake_frappe(doc):
 	return fake
 
 
-class TestTestConnectorKillSwitch(unittest.TestCase):
-	def test_disabled_returns_error_without_probing(self):
-		fake = _fake_frappe(_Doc("conn-1"))
-		with (
-			mock.patch.object(connectors_api, "frappe", fake),
-			mock.patch("jarvis.tools._connector_gate.connectors_enabled", return_value=False),
-			mock.patch.object(connectors_api.broker, "test_connector") as probe,
-		):
-			out = _test_connector("conn-1")
-		self.assertFalse(out["ok"])
-		self.assertEqual(out["error"]["code"], "connectors_disabled")
-		probe.assert_not_called()
-		fake.get_doc.assert_not_called()
-
-
 class TestTestConnectorWriteGate(unittest.TestCase):
 	def _run(self, doc, probe_result):
 		fake = _fake_frappe(doc)
 		with (
 			mock.patch.object(connectors_api, "frappe", fake),
 			mock.patch.object(connectors_api, "now_datetime", return_value="now"),
-			mock.patch("jarvis.tools._connector_gate.connectors_enabled", return_value=True),
 			mock.patch.object(connectors_api.broker, "test_connector", return_value=probe_result) as probe,
 			# The child-table rewrite has its own coverage (the merge tests below and
 			# the FrappeTestCase suite); here we only assert whether it is REACHED.

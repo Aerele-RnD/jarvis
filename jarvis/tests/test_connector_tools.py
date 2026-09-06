@@ -1,27 +1,20 @@
 """Unit tests for the two agent-facing connector tools
-(``jarvis.tools.call_connector`` / ``jarvis.tools.list_connector_actions``) and
-their shared kill switch (``jarvis.tools._connector_gate``).
+(``jarvis.tools.call_connector`` / ``jarvis.tools.list_connector_actions``).
 
 Plain ``unittest`` with ``frappe`` mocked out at the call boundary - this
 worktree is not installed on any bench (MCP_CONNECTORS_PLAN.md P0/P1 rule), so
 these run with no site. What is proven here:
 
-  * the kill switch (``connectors_enabled``) reads the site_config override
-    first, falls back to ``Jarvis Settings.connectors_enabled``, and fails
-    CLOSED (False) on any read error - never a silent fall-open;
-  * ``call_connector`` fast-fails with a ``connectors_disabled`` error and
-    NEVER calls the broker when the switch is off;
-  * ``call_connector`` fast-fails with ``connector_not_ready`` - again without
+  * ``call_connector`` fast-fails with ``connector_not_ready`` - without
     calling the broker - for an ENABLED connector that has never passed a
     connection test (or lost that pass to a later credential/URL edit, which
     clears ``last_test_status``/``tools_cache``), but lets an unknown or an
     explicitly disabled connector fall through unchanged so the model sees
     the broker's own, more specific error instead;
-  * when the switch is on and the connector is ready, ``call_connector``
-    delegates to ``jarvis.connectors.broker.call`` verbatim (result
-    unmodified);
-  * ``list_connector_actions`` returns an EMPTY (not an error) structure when
-    the switch is off, without ever touching ``frappe.get_list``.
+  * when the connector is ready, ``call_connector`` delegates to
+    ``jarvis.connectors.broker.call`` verbatim (result unmodified);
+  * ``list_connector_actions`` dedupes Personal-over-Shared by key and
+    surfaces only the actions ``policy.action_decision`` currently allows.
 
 Real broker dispatch (row resolution, credential decrypt, the allowed-actions
 gate, SSRF, the circuit breaker, the audit log) is exercised by
@@ -39,74 +32,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from jarvis.tools import _connector_gate, call_connector, list_connector_actions
-
-
-class TestConnectorGate(unittest.TestCase):
-	def test_site_config_override_true_wins(self):
-		fake_frappe = mock.MagicMock()
-		fake_frappe.conf.get.return_value = True
-		with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-			self.assertTrue(_connector_gate.connectors_enabled())
-		fake_frappe.db.get_single_value.assert_not_called()
-
-	def test_site_config_override_false_wins_even_if_settings_on(self):
-		fake_frappe = mock.MagicMock()
-		fake_frappe.conf.get.return_value = False
-		fake_frappe.db.get_single_value.return_value = 1
-		with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-			self.assertFalse(_connector_gate.connectors_enabled())
-
-	def test_falls_back_to_jarvis_settings_when_unset(self):
-		fake_frappe = mock.MagicMock()
-		fake_frappe.conf.get.return_value = None
-		fake_frappe.db.get_single_value.return_value = 1
-		with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-			self.assertTrue(_connector_gate.connectors_enabled())
-		fake_frappe.db.get_single_value.assert_called_once_with(
-			_connector_gate.SETTINGS_DOCTYPE, "connectors_enabled"
-		)
-
-	def test_settings_falsy_default_is_off(self):
-		fake_frappe = mock.MagicMock()
-		fake_frappe.conf.get.return_value = None
-		fake_frappe.db.get_single_value.return_value = 0
-		with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-			self.assertFalse(_connector_gate.connectors_enabled())
-
-	def test_read_error_fails_closed(self):
-		fake_frappe = mock.MagicMock()
-		fake_frappe.conf.get.return_value = None
-		fake_frappe.db.get_single_value.side_effect = RuntimeError("db down")
-		with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-			self.assertFalse(_connector_gate.connectors_enabled())
-
-	def test_string_override_is_not_inverted(self):
-		# ``bench set-config`` writes JSON strings, so the override commonly arrives
-		# as "true"/"false"/"1"/"0" (or ""), not a native bool. A plain bool() would
-		# make "false"/"0" truthy and INVERT the kill switch - sbool must not.
-		# sbool recognizes true/false/1/0 (case-insensitive); any OTHER string is
-		# unrecognized and must fail closed (OFF) for a kill switch.
-		off_values = ["false", "False", "0", "", "yes", "no", "off", "on", "enabled"]
-		on_values = ["true", "True", "1"]
-		for val in off_values:
-			fake_frappe = mock.MagicMock()
-			fake_frappe.conf.get.return_value = val
-			with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-				self.assertFalse(_connector_gate.connectors_enabled(), f"{val!r} should read OFF")
-			fake_frappe.db.get_single_value.assert_not_called()
-		for val in on_values:
-			fake_frappe = mock.MagicMock()
-			fake_frappe.conf.get.return_value = val
-			with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-				self.assertTrue(_connector_gate.connectors_enabled(), f"{val!r} should read ON")
-
-	def test_int_override_coerces(self):
-		for val, expected in ((1, True), (0, False)):
-			fake_frappe = mock.MagicMock()
-			fake_frappe.conf.get.return_value = val
-			with mock.patch.object(_connector_gate, "frappe", fake_frappe):
-				self.assertEqual(_connector_gate.connectors_enabled(), expected)
+from jarvis.tools import call_connector, list_connector_actions
 
 
 class _ConnectorRow(dict):
@@ -120,31 +46,10 @@ def _ready_row(**overrides) -> _ConnectorRow:
 	return _ConnectorRow(row)
 
 
-class TestCallConnectorKillSwitch(unittest.TestCase):
-	def test_disabled_fast_fails_without_calling_broker(self):
-		with (
-			mock.patch.object(call_connector, "connectors_enabled", return_value=False),
-			mock.patch.object(call_connector.broker, "call") as broker_call,
-			mock.patch.object(call_connector.broker, "resolve_for_status") as resolve,
-		):
-			result = call_connector.call_connector("github", "create_issue", {"title": "x"})
-		broker_call.assert_not_called()
-		resolve.assert_not_called()
-		self.assertEqual(
-			result,
-			{
-				"ok": False,
-				"error": {
-					"code": "connectors_disabled",
-					"message": "Connectors are not enabled for this workspace.",
-				},
-			},
-		)
-
+class TestCallConnectorDelegation(unittest.TestCase):
 	def test_enabled_and_ready_delegates_to_broker_verbatim(self):
 		broker_result = {"ok": True, "result": {"content": [{"type": "text", "text": "done"}]}}
 		with (
-			mock.patch.object(call_connector, "connectors_enabled", return_value=True),
 			mock.patch.object(call_connector, "get_session_key", return_value="sess-1"),
 			mock.patch.object(call_connector.broker, "resolve_for_status", return_value=_ready_row()),
 			mock.patch.object(call_connector.broker, "call", return_value=broker_result) as broker_call,
@@ -156,7 +61,6 @@ class TestCallConnectorKillSwitch(unittest.TestCase):
 	def test_broker_error_result_passed_through_unmodified(self):
 		broker_result = {"ok": False, "error": {"code": "action_denied", "message": "nope"}}
 		with (
-			mock.patch.object(call_connector, "connectors_enabled", return_value=True),
 			mock.patch.object(call_connector, "get_session_key", return_value=None),
 			mock.patch.object(call_connector.broker, "resolve_for_status", return_value=_ready_row()),
 			mock.patch.object(call_connector.broker, "call", return_value=broker_result),
@@ -170,7 +74,6 @@ class TestCallConnectorKillSwitch(unittest.TestCase):
 		different one when it cannot even resolve the row."""
 		broker_result = {"ok": False, "error": {"code": "connector_not_found", "message": "nope"}}
 		with (
-			mock.patch.object(call_connector, "connectors_enabled", return_value=True),
 			mock.patch.object(call_connector, "get_session_key", return_value=None),
 			mock.patch.object(call_connector.broker, "resolve_for_status", return_value=None),
 			mock.patch.object(call_connector.broker, "call", return_value=broker_result) as broker_call,
@@ -186,7 +89,6 @@ class TestCallConnectorKillSwitch(unittest.TestCase):
 		broker_result = {"ok": False, "error": {"code": "connector_disabled", "message": "off"}}
 		row = _ready_row(enabled=0, last_test_status="", tools_cache=None)
 		with (
-			mock.patch.object(call_connector, "connectors_enabled", return_value=True),
 			mock.patch.object(call_connector, "get_session_key", return_value=None),
 			mock.patch.object(call_connector.broker, "resolve_for_status", return_value=row),
 			mock.patch.object(call_connector.broker, "call", return_value=broker_result) as broker_call,
@@ -199,7 +101,6 @@ class TestCallConnectorKillSwitch(unittest.TestCase):
 class TestCallConnectorReadiness(unittest.TestCase):
 	def _not_ready(self, row):
 		with (
-			mock.patch.object(call_connector, "connectors_enabled", return_value=True),
 			mock.patch.object(call_connector.broker, "resolve_for_status", return_value=row),
 			mock.patch.object(call_connector.broker, "call") as broker_call,
 		):
@@ -230,31 +131,12 @@ class TestCallConnectorReadiness(unittest.TestCase):
 	def test_enabled_and_passed_with_cache_is_ready(self):
 		broker_result = {"ok": True, "result": {}}
 		with (
-			mock.patch.object(call_connector, "connectors_enabled", return_value=True),
 			mock.patch.object(call_connector.broker, "resolve_for_status", return_value=_ready_row()),
 			mock.patch.object(call_connector.broker, "call", return_value=broker_result) as broker_call,
 		):
 			result = call_connector.call_connector("github", "create_issue")
 		broker_call.assert_called_once()
 		self.assertEqual(result, broker_result)
-
-
-class TestListConnectorActionsKillSwitch(unittest.TestCase):
-	def test_disabled_returns_empty_without_touching_frappe(self):
-		fake_frappe = mock.MagicMock()
-		with (
-			mock.patch.object(list_connector_actions, "connectors_enabled", return_value=False),
-			mock.patch.object(list_connector_actions, "frappe", fake_frappe),
-		):
-			result = list_connector_actions.list_connector_actions()
-		self.assertEqual(result, {"connectors": []})
-		fake_frappe.get_list.assert_not_called()
-		fake_frappe.get_doc.assert_not_called()
-
-	def test_disabled_returns_empty_even_when_connector_named(self):
-		with mock.patch.object(list_connector_actions, "connectors_enabled", return_value=False):
-			result = list_connector_actions.list_connector_actions(connector="github")
-		self.assertEqual(result, {"connectors": []})
 
 
 class _Row(dict):
@@ -300,10 +182,7 @@ class TestListConnectorActionsShape(unittest.TestCase):
 			[self._action("read_issue", read_only=1)],
 		)
 		fake_frappe.get_doc.return_value = personal_doc
-		with (
-			mock.patch.object(list_connector_actions, "connectors_enabled", return_value=True),
-			mock.patch.object(list_connector_actions, "frappe", fake_frappe),
-		):
+		with mock.patch.object(list_connector_actions, "frappe", fake_frappe):
 			result = list_connector_actions.list_connector_actions()
 		self.assertEqual(len(result["connectors"]), 1)
 		self.assertEqual(result["connectors"][0]["scope"], "Personal")
@@ -326,10 +205,7 @@ class TestListConnectorActionsShape(unittest.TestCase):
 			],
 		)
 		fake_frappe.get_doc.return_value = doc
-		with (
-			mock.patch.object(list_connector_actions, "connectors_enabled", return_value=True),
-			mock.patch.object(list_connector_actions, "frappe", fake_frappe),
-		):
+		with mock.patch.object(list_connector_actions, "frappe", fake_frappe):
 			result = list_connector_actions.list_connector_actions()
 		actions = {a["action"] for a in result["connectors"][0]["actions"]}
 		self.assertEqual(actions, {"read_issue", "create_issue"})

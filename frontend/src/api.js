@@ -784,7 +784,7 @@ export const fileboxDeleteBulk = (conversations) =>
 // row permissions server-side (jarvis.chat.connector_permissions) regardless
 // of what the client believes about scope/role. ---
 const CN = "jarvis.chat.connectors_api.";
-// {enabled, allow_custom_urls, shared:[row], mine:[row]}.
+// {allow_custom_urls, shared:[row], mine:[row]}.
 export const listConnectors = () => call(CN + "list_connectors");
 // p = {label, preset, base_url, scope, credential, auth_method?, enabled?,
 // key?}. Presets other than "Custom URL" ignore base_url server-side (pinned
