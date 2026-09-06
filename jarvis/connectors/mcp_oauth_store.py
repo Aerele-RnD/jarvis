@@ -94,6 +94,55 @@ def _claim(cache, key: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# 1b. parked sign-in error (one-shot, self-expiring)
+# --------------------------------------------------------------------------- #
+#: A failed sign-in callback lands in a NEW browser tab that closes itself, so the
+#: original tab never sees why. The reason is parked here, keyed per (connector,
+#: user), for the status poll to pick up ONCE and clear. Redis, not a DocType: it
+#: is transient, single-read, and must vanish on its own if never polled. Set via
+#: ``frappe.cache().set_value``, which namespaces the key per site exactly as
+#: ``_state_key`` relies on for the auth state above.
+_SIGNIN_ERROR_PREFIX = "jarvis:mcp_oauth_signin_error:"
+SIGNIN_ERROR_TTL_S = 600
+_SIGNIN_ERROR_MAX_CHARS = 300
+
+
+def _signin_error_key(connector: str, user: str) -> str:
+	return f"{_SIGNIN_ERROR_PREFIX}{connector}:{user}"
+
+
+def park_signin_error(connector: str, user: str, message: str) -> None:
+	"""Park the friendly reason a sign-in callback failed for ``(connector, user)``,
+	so the status poll in the original tab can surface it after the callback tab has
+	closed. Capped at 300 chars and self-expiring at 10 minutes. A blank connector or
+	user is a no-op - there is nothing a poll could key on to read it back."""
+	import frappe
+
+	if not connector or not user:
+		return
+	frappe.cache().set_value(
+		_signin_error_key(connector, user),
+		(message or "")[:_SIGNIN_ERROR_MAX_CHARS],
+		expires_in_sec=SIGNIN_ERROR_TTL_S,
+	)
+
+
+def take_signin_error(connector: str, user: str) -> str:
+	"""Read and clear the parked sign-in error for ``(connector, user)``. ONE-SHOT:
+	the second read returns ``""``, so a surfaced error never sticks to the pane
+	after the user has seen it. ``""`` when nothing is parked."""
+	import frappe
+
+	if not connector or not user:
+		return ""
+	cache = frappe.cache()
+	key = _signin_error_key(connector, user)
+	message = cache.get_value(key, expires=True)
+	cache.delete_value(key)
+	return message if isinstance(message, str) else ""
+
+
+# --------------------------------------------------------------------------- #
 # 2. MCP OAuth Client
 # --------------------------------------------------------------------------- #
 def client_for(connector: str):

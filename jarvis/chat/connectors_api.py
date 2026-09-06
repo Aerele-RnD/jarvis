@@ -85,15 +85,18 @@ two flags for callers that only have the API (e.g. a stale boot cache).
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import secrets
 import time
+from datetime import timezone
 from urllib.parse import quote, urlparse
+from zoneinfo import ZoneInfo
 
 import frappe
 from frappe import _
-from frappe.utils import cint, get_url, now_datetime
+from frappe.utils import cint, get_datetime, get_system_timezone, get_url, now_datetime
 
 from jarvis.connectors import broker, catalog, mcp_oauth, mcp_oauth_store, oauth
 from jarvis.permissions import has_jarvis_admin_access, require_jarvis_user
@@ -298,6 +301,22 @@ def _error(code: str, message: str) -> dict:
 
 def _host(url: str | None) -> str:
 	return (urlparse(url or "").hostname or "").strip()
+
+
+def _utc_iso(dt) -> str | None:
+	"""A frappe-stored, system-timezone-naive datetime (``now_datetime()``'s shape,
+	and a document's ``modified``) rendered as a UTC ISO-8601 string ending in
+	``+00:00``. The SPA opens the sign-in tab with ``connect_oauth``'s ``started_at``
+	and then polls ``oauth_signin_status`` for ``connected_at``; both go through here
+	so ``connected_at > started_at`` compares in ONE frame no matter what timezone
+	the site itself runs in. ``None`` in, ``None`` out."""
+	if not dt:
+		return None
+	if isinstance(dt, str):
+		dt = get_datetime(dt)
+	if dt.tzinfo is None:
+		dt = dt.replace(tzinfo=ZoneInfo(get_system_timezone()))
+	return dt.astimezone(timezone.utc).isoformat()
 
 
 # Stable engine error code -> friendly copy. NO protocol words: the person
@@ -1368,7 +1387,12 @@ def _connect_mcp_oauth(doc) -> dict:
 		state=state,
 		code_challenge=mcp_oauth.pkce_challenge(code_verifier),
 	)
-	return {"ok": True, "url": url}
+	# ``started_at`` is the server clock at the moment this sign-in began, in the same
+	# UTC frame ``oauth_signin_status`` reports ``connected_at`` in. The SPA opens the
+	# sign-in tab, then treats the poll as landed only once the stored token's
+	# ``connected_at`` is at or after this - so a pre-existing token from an earlier
+	# sign-in is never mistaken for the one the user just completed.
+	return {"ok": True, "url": url, "started_at": _utc_iso(now_datetime())}
 
 
 @frappe.whitelist()
@@ -1384,6 +1408,45 @@ def disconnect_oauth(name: str) -> dict:
 	if doc.get("mcp_oauth_client") and mcp_oauth_store.delete_token(doc.name, frappe.session.user):
 		frappe.db.commit()
 	return {"ok": True}
+
+
+@frappe.whitelist()
+@require_jarvis_user
+def oauth_signin_status(name: str) -> dict:
+	"""Poll the CURRENT user's sign-in state for an OAuth connector. The SPA opens the
+	provider sign-in in a NEW tab that renders :func:`mcp_oauth_callback`'s page and
+	closes itself, so the original tab learns the outcome only by polling here.
+
+	``{ok: True, connected, connected_at, error}``:
+	  * ``connected`` - the current user holds an access token for this connector;
+	  * ``connected_at`` - that token document's ``modified`` as a UTC ISO string (the
+	    same frame as :func:`connect_oauth`'s ``started_at``), or ``null`` when there is
+	    no token or no access token on it;
+	  * ``error`` - the friendly reason the LAST callback failed for this (user,
+	    connector), read ONCE and cleared (``mcp_oauth_store.take_signin_error``), so a
+	    surfaced error never sticks once the pane has shown it.
+
+	Access posture matches :func:`connect_oauth`: read permission on the row is enough,
+	so a plain user may poll their own Personal row or a Shared one, and a permission
+	failure returns through :func:`_error` rather than raising (a poll gets a clean
+	answer, not a 403 to catch). Deliberately NOT metered: this is a cheap read that
+	mints nothing and makes no outbound call, and the SPA polls it every couple of
+	seconds - sharing ``connect_oauth``'s per-minute bucket would lock the user out of
+	Test/Connect mid-flow. A non-sign-in row (key or open) answers a plain
+	``connected: false`` with no error."""
+	doc = frappe.get_doc(CONNECTOR, name)
+	if not doc.has_permission("read"):
+		return _error("forbidden", "Not permitted.")
+
+	if not oauth.is_oauth(doc):
+		return {"ok": True, "connected": False, "connected_at": None, "error": ""}
+
+	user = frappe.session.user
+	error = mcp_oauth_store.take_signin_error(doc.name, user)
+	token = mcp_oauth_store.load_token(doc.name, user)
+	has_token = bool(token and token.get_password("access_token", raise_exception=False))
+	connected_at = _utc_iso(token.get("modified")) if has_token else None
+	return {"ok": True, "connected": has_token, "connected_at": connected_at, "error": error}
 
 
 # --------------------------------------------------------------------------- #
@@ -1539,27 +1602,45 @@ def mcp_oauth_callback(
 	     ``error_description`` is accepted so the URL parses and is then dropped
 	     unread - it is attacker-influenced text and is never echoed.
 
-	Nothing secret is ever put in the redirect or a log line: the browser is sent
-	back with a connector name or a one-word reason, never a token, code or state.
-	And the whole body is wrapped, because an exception escaping into Frappe's
-	error page would render a stack trace for a URL that carries a live
-	authorization code."""
+	This lands in the NEW tab the SPA opened for the provider, so it renders a small
+	self-closing page (:func:`_callback_page`) rather than redirecting into the SPA;
+	the SPA learns the real outcome by polling :func:`oauth_signin_status` in the
+	original tab. The success and token-exchange-failure pages name the connector and
+	the reason; the state / iss / provider-error paths stay generic (RFC 9207: a mix-up
+	response MUST NOT be shown), and only the token-exchange failure parks a reason for
+	the poll to surface.
+
+	Nothing secret is ever put in the page or a log line: it carries a connector label
+	and a friendly reason, never a token, code or state. And the whole body is wrapped,
+	because an exception escaping into Frappe's error page would render a stack trace
+	for a URL that carries a live authorization code."""
 	try:
 		record = mcp_oauth_store.consume_state(state)
 		if record is None:
-			return _callback_redirect(reason="expired")
+			return _callback_page(reason="expired")
 		if record.get("user") != frappe.session.user:
-			return _callback_redirect(reason="denied")
+			return _callback_page(reason="denied")
 		mcp_oauth.validate_iss(iss, record.get("issuer") or "", bool(record.get("iss_param_supported")))
 		if error or not code:
-			return _callback_redirect(reason="denied")
-		_exchange_and_store(record, code)
-		return _callback_redirect(connector=record.get("connector"))
+			return _callback_page(reason="denied")
+		try:
+			_exchange_and_store(record, code)
+		except mcp_oauth.OAuthError as exc:
+			# The one failure the user can act on: the provider answered and refused the
+			# exchange. Show its friendly sentence with the provider's own reason folded
+			# in (escaped), and park the SAME sentence so the original tab's poll can
+			# surface it once this tab has closed.
+			message = _oauth_error_message(exc.code, exc.detail)
+			mcp_oauth_store.park_signin_error(
+				record.get("connector") or "", record.get("user") or "", message
+			)
+			return _callback_page(reason="token_failed", message=message)
+		return _callback_page(connector=record.get("connector"))
 	except mcp_oauth.OAuthError:
-		return _callback_redirect(reason="denied")
+		return _callback_page(reason="denied")
 	except Exception:
 		frappe.logger("jarvis.connectors").warning("connector sign-in callback failed", exc_info=True)
-		return _callback_redirect(reason="denied")
+		return _callback_page(reason="denied")
 
 
 def _exchange_and_store(record: dict, code: str) -> None:
@@ -1596,14 +1677,64 @@ def _exchange_and_store(record: dict, code: str) -> None:
 	frappe.db.commit()
 
 
-def _callback_redirect(connector: str | None = None, reason: str | None = None) -> None:
-	"""Send the browser back to the connectors pane. A bare path, never an
-	absolute URL: Frappe's own redirect sanitizer only trusts a redirect whose
-	host matches the CURRENT request's, and a path has no host to disagree."""
-	location = _SPA_CONNECTORS_PATH
-	if connector:
-		location += "&oauth=" + quote(connector, safe="")
-	elif reason:
-		location += "&oauth_error=" + quote(reason, safe="")
-	frappe.local.response["type"] = "redirect"
-	frappe.local.response["location"] = location
+#: Generic, protocol-free copy for the failure pages that name no provider reason
+#: (an ``expired`` state names no connector; the ``denied`` paths - stolen state,
+#: iss mismatch, provider ``error`` - must stay generic). A token-exchange failure
+#: overrides this with the provider's own escaped sentence.
+_SIGNIN_FAILURE_COPY = {
+	"denied": "We could not finish signing you in. Please try connecting again.",
+	"expired": "This sign-in took too long to finish. Please start it again.",
+}
+
+
+def _signin_failure_body(reason: str | None, message: str | None) -> str:
+	"""The escaped body sentence for a failed-sign-in page. A token-exchange failure
+	carries the provider's own reason (already folded in by ``_oauth_error_message``);
+	every other path uses a fixed generic sentence, so no attacker-influenced text is
+	ever shown. The whole sentence is HTML-escaped - the message template renders it
+	raw."""
+	if reason == "token_failed" and message:
+		text = message
+	else:
+		text = _SIGNIN_FAILURE_COPY.get(reason or "", _SIGNIN_FAILURE_COPY["denied"])
+	return html.escape(text)
+
+
+def _callback_page(
+	connector: str | None = None, reason: str | None = None, message: str | None = None
+) -> None:
+	"""Render the sign-in outcome as a small self-closing web page in the tab the SPA
+	opened for the provider, instead of redirecting into the SPA. The SPA polls
+	:func:`oauth_signin_status` in the original tab for the real result; this page just
+	tells the person what happened and offers a link back.
+
+	Success (``connector`` set, no ``reason``) is green and appends a script that closes
+	the tab; a failure (any ``reason``) is red and its back link drops the ``oauth``
+	param. EVERYTHING interpolated - the connector label, the brand name, a provider
+	detail - is HTML-escaped, because the message template renders the body raw; the
+	back link is the fixed ``_SPA_CONNECTORS_PATH`` with the connector name
+	percent-encoded, never a value taken from the callback's own query string."""
+	back_label = f"Back to {html.escape(_brand_name())}"
+	if reason is None and connector:
+		label = html.escape(frappe.db.get_value(CONNECTOR, connector, "label") or connector)
+		body = (
+			f"You're connected to {label}. You can close this tab."
+			# Closes the tab the SPA opened. A no-op when the tab is not script-closable
+			# (one the user opened by hand), which is why the back link still ships.
+			"<script>setTimeout(function(){window.close()},800)</script>"
+		)
+		frappe.respond_as_web_page(
+			"Connected",
+			body,
+			indicator_color="green",
+			primary_action=_SPA_CONNECTORS_PATH + "&oauth=" + quote(connector, safe=""),
+			primary_label=back_label,
+		)
+		return
+	frappe.respond_as_web_page(
+		"Sign-in didn't finish",
+		_signin_failure_body(reason, message),
+		indicator_color="red",
+		primary_action=_SPA_CONNECTORS_PATH,
+		primary_label=back_label,
+	)

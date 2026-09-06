@@ -180,6 +180,7 @@ class TestToPublic(unittest.TestCase):
 			"logo",
 			"help_url",
 			"hint",
+			"description",
 			"token_hint",
 			"token_help_url",
 		}
@@ -196,6 +197,11 @@ class TestToPublic(unittest.TestCase):
 	def test_count_matches_enabled_providers(self):
 		enabled_count = sum(1 for p in catalog.PROVIDERS if p.enabled)
 		self.assertEqual(len(catalog.to_public()), enabled_count)
+
+	def test_every_public_entry_ships_a_non_empty_description(self):
+		# The SPA renders one line under each name; a blank one would look broken.
+		for row in catalog.to_public():
+			self.assertTrue((row["description"] or "").strip(), row["name"])
 
 
 class TestDocTypeSelectOptionsDrift(unittest.TestCase):
@@ -267,6 +273,11 @@ class TestValidate(unittest.TestCase):
 		with self.assertRaises(ValueError):
 			catalog.validate((bad,))
 
+	def test_blank_description_raises(self):
+		bad = replace(catalog.PROVIDERS[0], name="Bad", key="bad", description="  ")
+		with self.assertRaises(ValueError):
+			catalog.validate((bad,))
+
 
 class TestApplyOverlay(unittest.TestCase):
 	def test_disable_existing_entry(self):
@@ -285,6 +296,7 @@ class TestApplyOverlay(unittest.TestCase):
 				"auth": catalog.AUTH_TOKEN,
 				"category": "data",
 				"hint": "Paste an Acme API key.",
+				"description": "Widgets and orders",
 			}
 		]
 		result = catalog.apply_overlay(overlay)
@@ -441,6 +453,7 @@ class TestTokenGuidanceFields(unittest.TestCase):
 				"authorization_endpoint": "https://auth.acme.example/authorize",
 				"token_endpoint": "https://auth.acme.example/token",
 				"scopes": "read write",
+				"description": "Widgets and orders",
 			}
 		]
 		result = catalog.apply_overlay(overlay)

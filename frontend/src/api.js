@@ -803,9 +803,12 @@ export const setConnectorAllowedActions = (name, actions) =>
 // one" - the SPA never round-trips the real secret back to resubmit it.
 export const updateConnector = (name, p) => call(CN + "update_connector", { name, ...(p || {}) });
 export const deleteConnector = (name) => call(CN + "delete_connector", { name });
-// OAuth tier: {ok, url} to redirect the browser to, or {ok:false, error}.
+// OAuth tier: {ok, url, started_at} to redirect the browser to, or {ok:false, error}.
 // The return trip is handled by connectors_api.mcp_oauth_callback for every row.
 export const connectOauth = (name) => call(CN + "connect_oauth", { name });
+// Poll target for oauthSignin.js's tab flow: {ok, connected, connected_at, error}.
+// `error` is one-shot - the server clears it once this has read it.
+export const oauthSigninStatus = (name) => call(CN + "oauth_signin_status", { name });
 // Deletes the CURRENT user's sign-in for this connector. Idempotent.
 export const disconnectOauth = (name) => call(CN + "disconnect_oauth", { name });
 // Checks whether an address needs a sign-in, WITHOUT creating anything - call it

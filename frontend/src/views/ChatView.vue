@@ -11217,10 +11217,12 @@ function setConnectorFocus(row) {
 	connectorFocusOpen.value = false;
 	_saveConnectorFocusFor(currentId.value, connectorFocus.value);
 }
-// Enabled connectors (shared + mine) — fetched once per component lifetime
-// (onMounted below, so the toolbar button's own visibility is known before
-// the composer first paints); the picker re-invokes this too but the
-// `connectorFocusLoaded` guard makes every call after the first a no-op.
+// Enabled connectors (shared + mine) usable by THIS user right now - an OAuth
+// row they haven't signed in to isn't usable yet even though it's `enabled`
+// for the workspace - fetched once per component lifetime (onMounted below,
+// so the toolbar button's own visibility is known before the composer first
+// paints); the picker re-invokes this too but the `connectorFocusLoaded`
+// guard makes every call after the first a no-op.
 async function loadConnectorFocusOptions() {
 	if (connectorFocusLoaded.value) return;
 	try {
@@ -11229,7 +11231,9 @@ async function loadConnectorFocusOptions() {
 		connectorsEnabled.value = !!(res && res.enabled);
 		connectorFocusOptions.value =
 			res && res.enabled
-				? [...(res.shared || []), ...(res.mine || [])].filter((r) => r.enabled)
+				? [...(res.shared || []), ...(res.mine || [])].filter(
+						(r) => r.enabled && (r.auth_method !== "OAuth" || r.oauth_connected)
+				  )
 				: [];
 	} catch (e) {
 		// Best-effort: the picker just shows its empty state.

@@ -334,6 +334,7 @@ class TestListConnectorsCatalog(_ConnectorApiTestCase):
 			"logo",
 			"help_url",
 			"hint",
+			"description",
 			"token_hint",
 			"token_help_url",
 		}
@@ -923,6 +924,21 @@ class _McpOauthTestCase(_ConnectorApiTestCase):
 		connectors_api.mcp_oauth_callback(**params)
 		return frappe.local.response
 
+	def _page(self) -> dict:
+		"""The web page the callback last rendered, flattened for assertions: the
+		response type, the title/body ``respond_as_web_page`` stashed on
+		``frappe.local``, and the indicator/back-link from its context."""
+		resp = frappe.local.response
+		ctx = resp.get("context") or {}
+		return {
+			"type": resp.get("type"),
+			"title": getattr(frappe.local, "message_title", None),
+			"body": getattr(frappe.local, "message", None),
+			"indicator": ctx.get("indicator_color"),
+			"primary_action": ctx.get("primary_action"),
+			"primary_label": ctx.get("primary_label"),
+		}
+
 	def _reload_doc(self, name: str):
 		frappe.clear_document_cache(CONNECTOR, name)
 		return frappe.get_doc(CONNECTOR, name)
@@ -1475,8 +1491,23 @@ class TestConnectOauthMcp(_McpOauthTestCase):
 
 
 class TestMcpOauthCallback(_McpOauthTestCase):
+	"""The callback renders a small self-closing web page in the tab the SPA opened,
+	NOT a redirect into the SPA. Every test asserts on ``frappe.local.response``
+	carrying a page (``type == "page"``, never ``"redirect"``) plus the title/body/
+	indicator/back-link the page was built from."""
+
 	def _script(self, **kw):
 		return _ScriptedTransport({MCP_TOKEN: _token_response(**kw)})
+
+	def _assert_failure_page(self, response, *, back=connectors_api._SPA_CONNECTORS_PATH):
+		self.assertEqual(response["type"], "page")
+		self.assertNotEqual(response["type"], "redirect")
+		page = self._page()
+		self.assertEqual(page["title"], "Sign-in didn't finish")
+		self.assertEqual(page["indicator"], "red")
+		# The failure back link drops the oauth param entirely.
+		self.assertEqual(page["primary_action"], back)
+		return page
 
 	def test_happy_path_stores_the_token_for_the_right_user(self):
 		name = self._mk_mcp_connector("cb-happy")
@@ -1486,8 +1517,17 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			response = self._callback(code="the-code", state=state, iss=MCP_AS_URL)
 
-		self.assertEqual(response["type"], "redirect")
-		self.assertEqual(response["location"], f"/jarvis?settings=connectors&oauth={name}")
+		# A page, not a redirect.
+		self.assertEqual(response["type"], "page")
+		self.assertNotEqual(response["type"], "redirect")
+		page = self._page()
+		self.assertEqual(page["title"], "Connected")
+		self.assertEqual(page["indicator"], "green")
+		self.assertEqual(page["primary_action"], f"/jarvis?settings=connectors&oauth={name}")
+		self.assertTrue(page["primary_label"].startswith("Back to "))
+		self.assertIn("You're connected to", page["body"])
+		# The tab closes itself on success; the back link is the fallback.
+		self.assertIn("window.close", page["body"])
 
 		token = frappe.get_doc(TOKEN_DT, f"{name}-{PLAIN_A}")
 		self.assertEqual(token.user, PLAIN_A)
@@ -1501,9 +1541,31 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		self.assertEqual(form["resource"], MCP_RESOURCE)
 		self.assertEqual(form["redirect_uri"], connectors_api.oauth_redirect_uri())
 		self.assertIn("code_verifier", form)
-		# Nothing secret rode back in the redirect.
+		# Nothing secret rode back in the page or its link.
 		for secret in ("fresh-access", "fresh-refresh", "the-code", state):
-			self.assertNotIn(secret, response["location"])
+			self.assertNotIn(secret, page["body"])
+			self.assertNotIn(secret, page["primary_action"])
+
+	def test_success_page_escapes_the_connector_label(self):
+		name = self._mk(
+			"Personal",
+			"cb-escape",
+			owner=PLAIN_A,
+			base_url=MCP_BASE_URL,
+			auth_method="OAuth",
+			label="<b>Ev&il</b>",
+		)
+		self._mk_client(name)
+		frappe.set_user(PLAIN_A)
+		_url, state = self._connect(name)
+		transport = self._script()
+		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
+			self._callback(code="the-code", state=state, iss=MCP_AS_URL)
+
+		page = self._page()
+		self.assertEqual(page["type"], "page")
+		self.assertIn("&lt;b&gt;Ev&amp;il&lt;/b&gt;", page["body"])
+		self.assertNotIn("<b>Ev&il</b>", page["body"])
 
 	def test_replayed_callback_cannot_mint_a_second_token(self):
 		name = self._mk_mcp_connector("cb-replay")
@@ -1514,7 +1576,8 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 			self._callback(code="the-code", state=state, iss=MCP_AS_URL)
 			replay = self._callback(code="the-code", state=state, iss=MCP_AS_URL)
 
-		self.assertEqual(replay["location"], "/jarvis?settings=connectors&oauth_error=expired")
+		# The second callback finds no state - a generic "expired" page, no token.
+		self._assert_failure_page(replay)
 		self.assertEqual(transport.hits(MCP_TOKEN), 1, "the replay must not reach the token endpoint")
 
 	def test_rejects_a_state_minted_by_a_different_user(self):
@@ -1527,7 +1590,7 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			response = self._callback(code="the-code", state=state, iss=MCP_AS_URL)
 
-		self.assertEqual(response["location"], "/jarvis?settings=connectors&oauth_error=denied")
+		self._assert_failure_page(response)
 		self.assertEqual(transport.calls, [], "no token is ever requested for a stolen state")
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_B}"))
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_A}"))
@@ -1540,9 +1603,12 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			response = self._callback(code="the-code", state=state, iss="https://evil.invalid")
 
-		self.assertEqual(response["location"], "/jarvis?settings=connectors&oauth_error=denied")
+		# RFC 9207: a mix-up response MUST NOT be shown - generic page, nothing parked.
+		page = self._assert_failure_page(response)
+		self.assertNotIn("evil.invalid", page["body"])
 		self.assertEqual(transport.calls, [])
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_A}"))
+		self.assertEqual(mcp_oauth_store.take_signin_error(name, PLAIN_A), "")
 
 	def test_rejects_a_missing_issuer_when_the_service_declared_one(self):
 		name = self._mk_mcp_connector("cb-noiss")
@@ -1551,7 +1617,7 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 		transport = self._script()
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			response = self._callback(code="the-code", state=state)
-		self.assertEqual(response["location"], "/jarvis?settings=connectors&oauth_error=denied")
+		self._assert_failure_page(response)
 		self.assertEqual(transport.calls, [])
 
 	def test_provider_error_is_never_echoed_back(self):
@@ -1566,29 +1632,102 @@ class TestMcpOauthCallback(_McpOauthTestCase):
 				error="access_denied",
 				error_description="<script>alert(1)</script>",
 			)
-		self.assertEqual(response["location"], "/jarvis?settings=connectors&oauth_error=denied")
-		self.assertNotIn("script", response["location"])
+		page = self._assert_failure_page(response)
+		# The attacker-influenced error_description is dropped unread, never rendered.
+		self.assertNotIn("alert(1)", page["body"])
+		self.assertNotIn("script", page["body"])
 		self.assertEqual(transport.calls, [])
 
-	def test_unknown_state_redirects_without_touching_anything(self):
+	def test_unknown_state_renders_a_generic_page_without_touching_anything(self):
 		transport = self._script()
 		frappe.set_user(PLAIN_A)
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			response = self._callback(code="the-code", state="never-minted", iss=MCP_AS_URL)
-		self.assertEqual(response["location"], "/jarvis?settings=connectors&oauth_error=expired")
+		self._assert_failure_page(response)
 		self.assertEqual(transport.calls, [])
 
-	def test_a_failed_exchange_redirects_instead_of_raising(self):
+	def test_a_failed_exchange_renders_the_reason_and_parks_it(self):
 		name = self._mk_mcp_connector("cb-fail")
 		frappe.set_user(PLAIN_A)
 		_url, state = self._connect(name)
+		# The provider answers the exchange with a refusal carrying HTML in its detail.
 		transport = _ScriptedTransport(
-			{MCP_TOKEN: HttpResult(status=400, headers={}, json={"error": "invalid_grant"}, text="")}
+			{
+				MCP_TOKEN: HttpResult(
+					status=400,
+					headers={},
+					json={"error": "invalid_grant", "error_description": "<b>bad</b>"},
+					text="",
+				)
+			}
 		)
 		with patch.object(connectors_api, "MCP_OAUTH_TRANSPORT", transport):
 			response = self._callback(code="the-code", state=state, iss=MCP_AS_URL)
-		self.assertEqual(response["location"], "/jarvis?settings=connectors&oauth_error=denied")
+
+		page = self._assert_failure_page(response)
+		# The friendly sentence with the provider's own reason folded in - and escaped.
+		self.assertIn("The sign-in service rejected the sign-in", page["body"])
+		self.assertIn("&lt;b&gt;bad&lt;/b&gt;", page["body"])
+		self.assertNotIn("<b>bad</b>", page["body"])
 		self.assertFalse(frappe.db.exists(TOKEN_DT, f"{name}-{PLAIN_A}"))
+
+		# The SAME sentence is parked (unescaped, for the SPA to render) for the poll to
+		# surface once, then cleared.
+		first = connectors_api.oauth_signin_status(name)
+		self.assertFalse(first["connected"])
+		self.assertIn("The sign-in service rejected the sign-in", first["error"])
+		self.assertIn("<b>bad</b>", first["error"])
+		second = connectors_api.oauth_signin_status(name)
+		self.assertEqual(second["error"], "")
+
+
+class TestOauthSigninStatus(_McpOauthTestCase):
+	def test_connect_returns_started_at_in_utc(self):
+		name = self._mk_mcp_connector("st-started")
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.connect_oauth(name)
+		self.assertTrue(out["ok"], out)
+		self.assertTrue(out["url"].startswith(MCP_AUTHORIZE))
+		self.assertTrue(out["started_at"].endswith("+00:00"), out["started_at"])
+
+	def test_connected_at_reflects_the_token(self):
+		name = self._mk_mcp_connector("st-conn")
+		self._mk_mcp_token(name, PLAIN_A, access_token="live-token")
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.oauth_signin_status(name)
+		self.assertEqual(out["ok"], True)
+		self.assertTrue(out["connected"])
+		self.assertTrue(out["connected_at"].endswith("+00:00"), out["connected_at"])
+		self.assertEqual(out["error"], "")
+
+	def test_unconnected_oauth_row_reports_not_connected(self):
+		name = self._mk_mcp_connector("st-none")
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.oauth_signin_status(name)
+		self.assertEqual(out, {"ok": True, "connected": False, "connected_at": None, "error": ""})
+
+	def test_non_signin_row_reports_not_connected(self):
+		# An API-key (non sign-in) row answers a plain not-connected, no error.
+		name = self._mk("Personal", "st-key", owner=PLAIN_A)
+		frappe.set_user(PLAIN_A)
+		out = connectors_api.oauth_signin_status(name)
+		self.assertEqual(out, {"ok": True, "connected": False, "connected_at": None, "error": ""})
+
+	def test_parked_error_is_returned_once_then_cleared(self):
+		name = self._mk_mcp_connector("st-parked")
+		mcp_oauth_store.park_signin_error(name, PLAIN_A, "The sign-in service rejected the sign-in.")
+		frappe.set_user(PLAIN_A)
+		first = connectors_api.oauth_signin_status(name)
+		self.assertEqual(first["error"], "The sign-in service rejected the sign-in.")
+		second = connectors_api.oauth_signin_status(name)
+		self.assertEqual(second["error"], "")
+
+	def test_stranger_cannot_poll_someone_elses_personal_row(self):
+		name = self._mk_mcp_connector("st-private", owner=PLAIN_A)
+		frappe.set_user(PLAIN_B)
+		out = connectors_api.oauth_signin_status(name)
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "forbidden")
 
 
 class TestBrokerMcpOauthToken(_McpOauthTestCase):

@@ -100,7 +100,13 @@ class Provider:
 	picks "use a token instead" of a sign-in. They are display copy allowed on ANY
 	auth class (`validate` only requires `token_help_url` be https), kept separate
 	from `hint` / `help_url` because on a sign-in preset those now carry the
-	register-your-own-app guide, not token guidance."""
+	register-your-own-app guide, not token guidance.
+
+	`description` is one short plain line naming what the app is for (its data, not
+	a protocol), shown under the name in the SPA's preset picker. `validate` requires
+	it non-empty, and `to_public` ships it. It has a `""` default only so `replace`
+	and an overlay's new-entry branch have a value to fall back to; a shipped entry
+	that left it blank would fail `validate` at import."""
 
 	name: str
 	key: str
@@ -110,6 +116,7 @@ class Provider:
 	logo: str | None
 	help_url: str | None
 	hint: str | None
+	description: str = ""
 	enabled: bool = True
 	issuer: str | None = None
 	authorization_endpoint: str | None = None
@@ -148,6 +155,9 @@ def validate(providers: tuple[Provider, ...]) -> None:
 		if provider.category not in _ALLOWED_CATEGORIES:
 			raise ValueError(f"invalid category for {provider.name!r}: {provider.category!r}")
 
+		if not (provider.description or "").strip():
+			raise ValueError(f"description is required for {provider.name!r}")
+
 		declared_endpoints = [f for f in _ENDPOINT_FIELDS if getattr(provider, f)]
 		if declared_endpoints and provider.auth not in _ENDPOINT_AUTHS:
 			raise ValueError(
@@ -182,6 +192,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="GitHub",
 		key="github",
+		description="Repositories, issues and pull requests",
 		base_url="https://api.githubcopilot.com/mcp/",
 		auth=AUTH_STATIC,
 		category="dev",
@@ -205,6 +216,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Atlassian",
 		key="atlassian",
+		description="Jira issues and Confluence pages",
 		base_url="https://mcp.atlassian.com/v2/mcp",
 		auth=AUTH_DCR,
 		category="work",
@@ -215,6 +227,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Linear",
 		key="linear",
+		description="Issues, projects and cycles",
 		base_url="https://mcp.linear.app/mcp",
 		auth=AUTH_DCR,
 		category="work",
@@ -225,6 +238,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Stripe",
 		key="stripe",
+		description="Payments, customers and invoices",
 		base_url="https://mcp.stripe.com/",
 		auth=AUTH_TOKEN,
 		category="payments",
@@ -236,6 +250,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Razorpay",
 		key="razorpay",
+		description="Payments, orders and settlements",
 		base_url="https://mcp.razorpay.com/mcp",
 		auth=AUTH_DCR,
 		category="payments",
@@ -246,6 +261,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="PayPal",
 		key="paypal",
+		description="Payments and invoices",
 		base_url="https://mcp.paypal.com/mcp",
 		auth=AUTH_DCR,
 		category="payments",
@@ -256,6 +272,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Square",
 		key="square",
+		description="Payments, orders and catalog",
 		base_url="https://mcp.squareup.com/mcp",
 		auth=AUTH_DCR,
 		category="payments",
@@ -272,6 +289,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Asana",
 		key="asana",
+		description="Tasks and projects",
 		base_url="https://mcp.asana.com/mcp",
 		auth=AUTH_DCR,
 		category="work",
@@ -287,6 +305,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Notion",
 		key="notion",
+		description="Pages and databases",
 		base_url="https://mcp.notion.com/mcp",
 		auth=AUTH_DCR,
 		category="work",
@@ -297,6 +316,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Monday.com",
 		key="monday",
+		description="Boards and items",
 		base_url="https://mcp.monday.com/mcp",
 		auth=AUTH_STATIC,
 		category="work",
@@ -307,6 +327,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Slack",
 		key="slack",
+		description="Channels and messages",
 		base_url="https://mcp.slack.com/mcp",
 		auth=AUTH_STATIC,
 		category="work",
@@ -318,6 +339,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Dropbox",
 		key="dropbox",
+		description="Files and folders",
 		base_url="https://mcp.dropbox.com/mcp",
 		auth=AUTH_DCR,
 		category="files",
@@ -332,6 +354,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Box",
 		key="box",
+		description="Files and folders",
 		base_url="https://mcp.box.com/mcp",
 		auth=AUTH_STATIC,
 		category="files",
@@ -343,6 +366,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Canva",
 		key="canva",
+		description="Designs and templates",
 		base_url="https://mcp.canva.com/mcp",
 		auth=AUTH_DCR,
 		category="design",
@@ -353,6 +377,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Figma",
 		key="figma",
+		description="Files and comments",
 		base_url="https://mcp.figma.com/mcp",
 		auth=AUTH_DCR,
 		category="design",
@@ -368,6 +393,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Intercom",
 		key="intercom",
+		description="Conversations and tickets",
 		base_url="https://mcp.intercom.com/mcp",
 		auth=AUTH_TOKEN,
 		category="support",
@@ -378,6 +404,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Zendesk",
 		key="zendesk",
+		description="Conversations and tickets",
 		base_url="https://mcp.zendesk.com/mcp",
 		auth=AUTH_TOKEN,
 		category="support",
@@ -389,6 +416,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Supabase",
 		key="supabase",
+		description="Databases and projects",
 		base_url="https://mcp.supabase.com/mcp",
 		auth=AUTH_DCR,
 		category="data",
@@ -399,6 +427,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Neon",
 		key="neon",
+		description="Databases and projects",
 		base_url="https://mcp.neon.tech/mcp",
 		auth=AUTH_DCR,
 		category="data",
@@ -409,6 +438,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Airtable",
 		key="airtable",
+		description="Bases and records",
 		base_url="https://mcp.airtable.com/mcp",
 		auth=AUTH_STATIC,
 		category="data",
@@ -419,6 +449,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Sentry",
 		key="sentry",
+		description="Errors and releases",
 		base_url="https://mcp.sentry.dev/mcp",
 		auth=AUTH_DCR,
 		category="data",
@@ -429,6 +460,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Cloudflare",
 		key="cloudflare",
+		description="Workers, KV and DNS",
 		base_url="https://bindings.mcp.cloudflare.com/mcp",
 		auth=AUTH_DCR,
 		category="data",
@@ -439,6 +471,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Vercel",
 		key="vercel",
+		description="Sites and deployments",
 		base_url="https://mcp.vercel.com/",
 		auth=AUTH_DCR,
 		category="data",
@@ -453,6 +486,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Netlify",
 		key="netlify",
+		description="Sites and deployments",
 		base_url="https://netlify-mcp.netlify.app/mcp",
 		auth=AUTH_DCR,
 		category="data",
@@ -463,6 +497,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Plaid",
 		key="plaid",
+		description="Bank accounts and transactions",
 		base_url="https://api.dashboard.plaid.com/mcp/sse",
 		auth=AUTH_TOKEN,
 		category="data",
@@ -480,6 +515,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Webflow",
 		key="webflow",
+		description="Sites, pages and content",
 		base_url="https://mcp.webflow.com/mcp",
 		auth=AUTH_DCR,
 		category="web",
@@ -490,6 +526,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Wix",
 		key="wix",
+		description="Sites, pages and content",
 		base_url="https://mcp.wix.com/mcp",
 		auth=AUTH_DCR,
 		category="web",
@@ -501,6 +538,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Zapier",
 		key="zapier",
+		description="Your Zaps and automations",
 		base_url="https://mcp.zapier.com/api/mcp/mcp",
 		auth=AUTH_TOKEN,
 		category="automation",
@@ -512,6 +550,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Microsoft Learn",
 		key="microsoft_learn",
+		description="Official documentation",
 		base_url="https://learn.microsoft.com/api/mcp",
 		auth=AUTH_OPEN,
 		category="docs",
@@ -522,6 +561,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Cloudflare Docs",
 		key="cloudflare_docs",
+		description="Official documentation",
 		base_url="https://docs.mcp.cloudflare.com/mcp",
 		auth=AUTH_OPEN,
 		category="docs",
@@ -532,6 +572,7 @@ PROVIDERS: tuple[Provider, ...] = (
 	Provider(
 		name="Hugging Face",
 		key="huggingface",
+		description="Models and datasets",
 		base_url="https://huggingface.co/mcp",
 		auth=AUTH_OPEN,
 		category="docs",
@@ -597,11 +638,12 @@ def auth_of(name: str, *, providers: tuple[Provider, ...] = PROVIDERS) -> str | 
 
 def to_public(*, providers: tuple[Provider, ...] = PROVIDERS) -> list[dict]:
 	"""The fields the SPA may see, enabled entries only, catalog order: name,
-	key, auth, category, logo, help_url, hint, token_hint, token_help_url. Never
-	`base_url`, the endpoint is server-pinned and never client input, and never
-	`enabled` (a disabled entry is simply absent instead). `token_hint` /
-	`token_help_url` are public strings (paste-a-token guidance) the SPA shows on
-	the "use a token instead" fallback."""
+	key, auth, category, logo, help_url, hint, description, token_hint,
+	token_help_url. Never `base_url`, the endpoint is server-pinned and never client
+	input, and never `enabled` (a disabled entry is simply absent instead).
+	`token_hint` / `token_help_url` are public strings (paste-a-token guidance) the
+	SPA shows on the "use a token instead" fallback. `description` is the one-line
+	summary of what the app is for, shown under its name in the picker."""
 	return [
 		{
 			"name": provider.name,
@@ -611,6 +653,7 @@ def to_public(*, providers: tuple[Provider, ...] = PROVIDERS) -> list[dict]:
 			"logo": provider.logo,
 			"help_url": provider.help_url,
 			"hint": provider.hint,
+			"description": provider.description,
 			"token_hint": provider.token_hint,
 			"token_help_url": provider.token_help_url,
 		}
@@ -650,6 +693,7 @@ def apply_overlay(
 		"logo",
 		"help_url",
 		"hint",
+		"description",
 		"issuer",
 		"authorization_endpoint",
 		"token_endpoint",
@@ -681,6 +725,7 @@ def apply_overlay(
 				logo=entry.get("logo"),
 				help_url=entry.get("help_url"),
 				hint=entry.get("hint"),
+				description=entry.get("description", ""),
 				enabled=entry.get("enabled", True),
 				issuer=entry.get("issuer"),
 				authorization_endpoint=entry.get("authorization_endpoint"),
