@@ -37,6 +37,7 @@ import { ref } from "vue";
 import Banner from "@/components/Banner.vue";
 import { FeatherIcon } from "frappe-ui";
 import { agentName } from "@/branding";
+import { bannerToneFor } from "@/releaseNudge";
 import { notice, snoozeBanner, openWhatsNew } from "@/noticeGate";
 
 const props = defineProps({
@@ -47,11 +48,14 @@ const props = defineProps({
 
 const message = `A new version of ${agentName} is available — ask your administrator to update.`;
 
-// Severity drives the Banner's colour, mirroring the pill: soft -> amber
-// (warning), severe -> red (error). `notice` is the stable, non-reactive boot
-// payload (see noticeGate.js), so these are plain consts, not computed().
-const bannerType = notice.tier === "severe" ? "error" : "warning";
-const toneClass = bannerType === "error" ? "jv-tone-red" : "jv-tone-amber";
+// Severity drives the Banner's colour, mirroring the pill - single-sourced via
+// bannerToneFor (releaseNudge.js) so the pill and banner can never disagree, and
+// an unknown future tier lands amber, not a wrong colour. Tone "red" -> Banner
+// type="error", else "warning". `notice` is the stable, non-reactive boot payload
+// (see noticeGate.js), so these are plain consts, not computed().
+const bannerTone = bannerToneFor(notice);
+const bannerType = bannerTone === "red" ? "error" : "warning";
+const toneClass = bannerTone === "red" ? "jv-tone-red" : "jv-tone-amber";
 
 const bannerEl = ref(null);
 const flipStyle = ref({});

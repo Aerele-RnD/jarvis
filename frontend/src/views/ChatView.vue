@@ -549,10 +549,11 @@
 				</div>
 			</div>
 
-			<!-- Release-nudge soft banner (Slice 3b): calm info/blue, top-of-chat.
-			     Yields to the greeting/welcome/booting states and to any urgent
-			     billing/readiness alert (updateBannerVisible); dismiss minimises it
-			     into the version pill. Never stacks, never hides chat. -->
+			<!-- Release-nudge banner (Slice 3b): severity-coloured (amber for soft,
+			     red for severe), top-of-chat. Shows over the welcome screen; yields
+			     to the greeting/booting states and to any urgent billing/readiness
+			     alert, including a stuck apply (updateBannerVisible). Dismiss
+			     minimises it into the version pill. Never stacks, never hides chat. -->
 			<UpdateBanner v-if="updateBannerVisible" :pill="versionPillRef" />
 
 			<!-- initial load: a quiet spinner so the welcome screen doesn't flash
@@ -4689,10 +4690,13 @@ function dismissBillingAlert() {
 const versionPillRef = ref(null);
 // Composer-region alerts that make the chat genuinely UNUSABLE or paused - a
 // "please update" nudge on top of one of these is noise, so the soft banner
-// yields to them. It does NOT yield to the soft, chat-still-works heads-ups
-// (workersWarnNotice, llmApplying, llmApplyStuck): those render above the
-// composer, don't visually conflict with the top-of-chat banner, and are common
-// (a bench low on workers would otherwise NEVER show the update banner).
+// yields to them. llmApplyStuck is one of these: its own ref comment says chat
+// "genuinely cannot answer" (an aged-out apply, not a still-converging one), so
+// the update banner yields to it too. It does NOT yield to the soft,
+// chat-still-works heads-ups - workersWarnNotice (a bench low on workers, which
+// would otherwise NEVER show the update banner) and llmApplying (a quiet "still
+// converging" heads-up): those render above the composer, don't visually
+// conflict with the top-of-chat banner, and chat still works under them.
 const hasUrgentAlert = computed(
 	() =>
 		!!(
@@ -4701,6 +4705,7 @@ const hasUrgentAlert = computed(
 			suspendedNotice.value ||
 			noAiConnected.value ||
 			containerUnavailable.value ||
+			llmApplyStuck.value ||
 			notReadyNotice.value
 		)
 );

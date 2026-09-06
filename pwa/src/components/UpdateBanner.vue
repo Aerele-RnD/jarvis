@@ -15,14 +15,16 @@
 // caller's v-if in App.vue.
 import { ref } from "vue";
 import { agentName } from "@/branding";
+import { bannerToneFor } from "@shared/releaseNudge";
 import { notice, pillHandle, snoozeBanner, openWhatsNew } from "../noticeGate";
 
 const message = `A new version of ${agentName} is available — ask your administrator to update.`;
 
-// Severity drives the banner's colour, mirroring the pill: soft -> amber,
-// severe -> red. `notice` is the stable, non-reactive boot payload (see
-// noticeGate.js), so this is a plain const, not computed().
-const bannerTone = notice.tier === "severe" ? "red" : "amber";
+// Severity drives the banner's colour, mirroring the pill - single-sourced via
+// bannerToneFor (releaseNudge.js) so the pill and banner can never disagree, and
+// an unknown future tier lands amber. `notice` is the stable, non-reactive boot
+// payload (see noticeGate.js), so this is a plain const, not computed().
+const bannerTone = bannerToneFor(notice);
 
 const bannerEl = ref(null);
 const flipStyle = ref({});

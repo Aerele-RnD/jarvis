@@ -17,16 +17,26 @@ export const SNOOZE_KEY = "jarvis-release-banner-snooze";
 // `agentName` is a PARAMETER (default "Jarvis"), not an import, so this module stays
 // node-testable and single-sourced - the caller passes the branded agent name in.
 //   - no notice / no target version -> hidden (never a false "on the latest").
+//   - tier "none" (a known version we're level with) -> green (current). This is
+//     the ONLY green: it is a positive all-clear, so it must never double as the
+//     catch-all fallback - an unrecognised future tier that carries a version is
+//     a real nudge, not proof we're up to date.
 //   - tier "hard" -> red   (N versions behind, or "Update required"). "hard" is
 //     block-only (critical release / below the floor version) and is normally
 //     hidden behind the full-page gate, so in practice the visible red pill is
 //     "severe" below - both render identically.
 //   - tier "severe" -> red (N versions behind, or "Update available"; NON-blocking:
 //     behind >= release_lag_threshold, chat stays open).
-//   - tier "soft" -> amber (N versions behind, or "Update available").
-//   - otherwise (tier "none", with a known version) -> green (current).
+//   - tier "soft" OR any unknown-but-versioned future tier -> amber (N versions
+//     behind, or "Update available"). Amber is the safe default for "there's a
+//     newer version, urgency unknown": a nudge, never a false green all-clear.
 export function pillFor(notice, agentName = "Jarvis") {
 	if (!notice || !notice.version) return { show: false };
+	// The ONE green case: a known target version we are level with. Green is a
+	// positive claim, so it is gated to "none" alone and never the fallback.
+	if (notice.tier === "none") {
+		return { show: true, tone: "green", label: `On the latest ${agentName}` };
+	}
 	const behind = Number(notice.behind) || 0;
 	if (notice.tier === "hard") {
 		return {
@@ -48,27 +58,39 @@ export function pillFor(notice, agentName = "Jarvis") {
 					: "Update available",
 		};
 	}
-	if (notice.tier === "soft") {
-		return {
-			show: true,
-			tone: "amber",
-			label:
-				behind >= 1
-					? `${behind} version${behind === 1 ? "" : "s"} behind`
-					: "Update available",
-		};
-	}
-	return { show: true, tone: "green", label: `On the latest ${agentName}` };
+	// soft OR any unknown-but-versioned future tier -> amber. Forward-compatible:
+	// a tier this build doesn't recognise still nudges (amber), never a false
+	// green "on the latest".
+	return {
+		show: true,
+		tone: "amber",
+		label:
+			behind >= 1
+				? `${behind} version${behind === 1 ? "" : "s"} behind`
+				: "Update available",
+	};
 }
 
-// The soft banner shows for the "soft" and "severe" tiers - both are non-blocking
-// nudges (chat stays open; "hard" is the only blocking tier and has no banner, it
-// gets the full-page gate instead) - and only when not currently snoozed: no
-// snooze, a snooze for a different (older) target version, or a snooze that has
-// expired. `now` and `snooze` are passed in so this stays pure and testable.
+// The banner's tone, single-sourced from pillFor so the pill and the banner can
+// never disagree on colour - whatever pillFor would paint the pill, the banner
+// matches ("green"/"amber"/"red"). In practice only called once bannerShouldShow
+// has cleared the notice (soft/severe/unknown, all versioned), so it returns
+// "amber" or "red"; the SPA maps "red" -> Banner type="error", else "warning",
+// and both frontends map the tone to their jv-tone-* class.
+export function bannerToneFor(notice) {
+	return pillFor(notice).tone;
+}
+
+// The banner shows for any versioned tier that is NOT the all-clear ("none") or
+// the blocking full-page gate ("hard") - so soft, severe, AND any unknown future
+// tier (which pillFor colours amber). Mirrors pillFor: it fires exactly when the
+// pill would be amber/red, never green and never the "hard" full-page path. Shows
+// only when not currently snoozed: no snooze, a snooze for a different (older)
+// target version, or a snooze that has expired. `now` and `snooze` are passed in
+// so this stays pure and testable.
 export function bannerShouldShow(notice, now, snooze) {
 	if (!notice || !notice.version) return false;
-	if (notice.tier !== "soft" && notice.tier !== "severe") return false;
+	if (notice.tier === "none" || notice.tier === "hard") return false;
 	return !snooze || snooze.version !== notice.version || now > snooze.until;
 }
 

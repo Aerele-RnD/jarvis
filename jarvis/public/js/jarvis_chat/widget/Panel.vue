@@ -692,6 +692,7 @@ import { renderReply } from "./panel_markdown.mjs";
 import { resizeFrom } from "./panel_size.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { classifyReadiness, degradedActionable, shouldWarnWorkers } from "./panel_readiness.mjs";
+import { sendRefusalMessage } from "./panel_send_copy.mjs";
 import {
 	emptyStream,
 	applyEvent,
@@ -1591,8 +1592,8 @@ async function send() {
 			messages.value = messages.value.filter((m) => !String(m.name).startsWith("local-"));
 			loadError.value =
 				res.reason === "release_update_required"
-					? `A new ${brandName} version is required. Please ask your administrator to update.`
-					: res.error?.message || "That couldn't be sent. Please try again.";
+					? sendRefusalMessage(res.reason, brandName)
+					: res.error?.message || sendRefusalMessage(res.reason, brandName);
 			return;
 		}
 		// A go-ahead on the parked card ran the confirmation instead of starting a
