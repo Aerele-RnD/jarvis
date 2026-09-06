@@ -236,7 +236,9 @@
 
 				<div class="flex max-h-96 flex-col gap-4 overflow-y-auto">
 					<div v-if="filteredReadOnly.length">
-						<div class="mb-1 text-xs-medium uppercase tracking-wide text-ink-gray-5">
+						<div
+							class="mb-1 text-xs font-medium uppercase tracking-wide text-ink-gray-5"
+						>
 							Read-only
 						</div>
 						<div class="flex flex-col gap-1">
@@ -264,7 +266,9 @@
 					</div>
 
 					<div v-if="filteredWrites.length">
-						<div class="mb-1 text-xs-medium uppercase tracking-wide text-ink-gray-5">
+						<div
+							class="mb-1 text-xs font-medium uppercase tracking-wide text-ink-gray-5"
+						>
 							Writes
 						</div>
 						<div class="flex flex-col gap-1">
