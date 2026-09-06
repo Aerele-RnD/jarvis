@@ -351,7 +351,7 @@ def _oauth_error_message(code: str, detail: str = "") -> str:
 	own - whatever text follows is the provider's, passed through as-is."""
 	message = _OAUTH_ERROR_MESSAGES.get(code, "We could not set up sign-in for this address.")
 	if detail and code in _OAUTH_ERROR_DETAIL_CODES:
-		return f"{message.rstrip('.')} ({detail})."
+		return f"{message.rstrip('.')} ({detail.rstrip('.')})."
 	return message
 
 
