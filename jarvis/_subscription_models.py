@@ -35,13 +35,13 @@ import frappe
 # discontinued consumer login-with-Google for Gemini). Gemini stays available via
 # API key, which is served from the api_key-tier catalog, not this subscription seed.
 _SEED_SUBSCRIPTION_MODELS: dict[str, list[str]] = {
-	"OpenAI": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
+	"OpenAI": ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
 	"xAI Grok": ["grok-4.3", "grok-build-0.1"],
 	"Kimi (Moonshot)": ["kimi-k2.7-code", "kimi-k2.6"],
 }
 
 _SEED_DEFAULT_MODEL: dict[str, str] = {
-	"OpenAI": "gpt-5.6-sol",
+	"OpenAI": "gpt-5.6-terra",
 	"xAI Grok": "grok-4.3",
 	"Kimi (Moonshot)": "kimi-k2.7-code",
 }

@@ -34,8 +34,8 @@ BUNDLED_MODEL_CATALOG: list[dict] = [
 				"sort_order": 0,
 			},
 			{
-				"model_id": "gpt-5.6-sol",
-				"label": "gpt-5.6-sol",
+				"model_id": "gpt-5.6-terra",
+				"label": "gpt-5.6-terra",
 				"tier": "subscription",
 				"is_default": True,
 				"sort_order": 0,
@@ -48,8 +48,8 @@ BUNDLED_MODEL_CATALOG: list[dict] = [
 				"sort_order": 1,
 			},
 			{
-				"model_id": "gpt-5.6-terra",
-				"label": "gpt-5.6-terra",
+				"model_id": "gpt-5.6-sol",
+				"label": "gpt-5.6-sol",
 				"tier": "subscription",
 				"is_default": False,
 				"sort_order": 1,

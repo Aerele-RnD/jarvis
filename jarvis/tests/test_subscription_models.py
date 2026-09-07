@@ -31,9 +31,9 @@ class TestSubscriptionCatalogue(unittest.TestCase):
 		# upstream and fail inside cliproxy, so they are gone from this tier.
 		self.assertEqual(
 			cat._SEED_SUBSCRIPTION_MODELS["OpenAI"],
-			["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
+			["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
 		)
-		self.assertEqual(cat._SEED_DEFAULT_MODEL["OpenAI"], "gpt-5.6-sol")
+		self.assertEqual(cat._SEED_DEFAULT_MODEL["OpenAI"], "gpt-5.6-terra")
 
 	def test_bundled_openai_subscription_tier_mirrors_the_seed(self):
 		from jarvis._model_catalog import BUNDLED_MODEL_CATALOG
@@ -43,7 +43,7 @@ class TestSubscriptionCatalogue(unittest.TestCase):
 			(m for m in openai["models"] if m["tier"] == "subscription"), key=lambda m: m["sort_order"]
 		)
 		self.assertEqual([m["model_id"] for m in rows], cat._SEED_SUBSCRIPTION_MODELS["OpenAI"])
-		self.assertEqual([m["model_id"] for m in rows if m["is_default"]], ["gpt-5.6-sol"])
+		self.assertEqual([m["model_id"] for m in rows if m["is_default"]], ["gpt-5.6-terra"])
 
 	def test_coerce_falls_back_to_default_for_bogus_and_empty(self):
 		from unittest.mock import patch
@@ -55,8 +55,8 @@ class TestSubscriptionCatalogue(unittest.TestCase):
 		self.addCleanup(_clear_sub_model_cache)
 		with patch.object(admin_client, "get_model_catalog", return_value=BUNDLED_MODEL_CATALOG):
 			_clear_sub_model_cache()
-			self.assertEqual(_coerce_subscription_model("OpenAI", "nope"), "gpt-5.6-sol")
-			self.assertEqual(_coerce_subscription_model("OpenAI", ""), "gpt-5.6-sol")
+			self.assertEqual(_coerce_subscription_model("OpenAI", "nope"), "gpt-5.6-terra")
+			self.assertEqual(_coerce_subscription_model("OpenAI", ""), "gpt-5.6-terra")
 
 	def test_google_gemini_has_no_subscription_seed(self):
 		# Google's chat subscription was removed 2026-08-19 (Google discontinued

@@ -148,15 +148,15 @@ class TestBeginPasteSignin(_OAuthApiBase):
 		jarvis-pool-05b704 (2026-06-11)."""
 		out = oauth_api.begin_paste_signin("OpenAI", "gpt-4o")
 		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
-		self.assertEqual(entry["model"], "gpt-5.6-sol")
+		self.assertEqual(entry["model"], "gpt-5.6-terra")
 
 	def test_empty_model_coerced_to_default(self):
 		out = oauth_api.begin_paste_signin("OpenAI", "")
 		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
-		self.assertEqual(entry["model"], "gpt-5.6-sol")
+		self.assertEqual(entry["model"], "gpt-5.6-terra")
 
 	def test_valid_codex_model_passed_through(self):
-		for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"):
+		for model in ("gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"):
 			out = oauth_api.begin_paste_signin("OpenAI", model)
 			entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
 			self.assertEqual(
@@ -533,7 +533,7 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 
 		self.assertEqual(
 			mock_save.call_args.kwargs["model"],
-			"gpt-5.6-sol",
+			"gpt-5.6-terra",
 			"complete_paste_signin must re-coerce a stale-cached non-codex model",
 		)
 		# Blob doesn't carry the model field today, but the push provider id
