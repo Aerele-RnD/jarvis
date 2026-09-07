@@ -42,6 +42,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
+from jarvis.connectors.mcp_oauth.flow import RESERVED_AUTHORIZE_PARAMS
+
 AUTH_DCR = "dcr"
 AUTH_STATIC = "static"
 AUTH_TOKEN = "token"
@@ -67,23 +69,12 @@ _SCOPES_AUTHS = frozenset({AUTH_STATIC, AUTH_DCR})
 
 #: `authorize_params` are extra fixed query parameters for the authorize request.
 #: Like `scopes` they only mean anything on a provider that HAS a sign-in. The
-#: reserved set is every parameter the flow itself sets (mirrors
-#: ``mcp_oauth.flow.RESERVED_AUTHORIZE_PARAMS``; a test keeps the two equal): a
-#: catalog entry may add to the request, never override what PKCE / RFC 8707 /
-#: the redirect binding put there.
+#: reserved set is the flow's own (``mcp_oauth.flow.RESERVED_AUTHORIZE_PARAMS``,
+#: every parameter it sets itself), imported rather than copied so the two can
+#: never drift: a catalog entry may add to the request, never override what
+#: PKCE / RFC 8707 / the redirect binding put there.
 _AUTHORIZE_PARAMS_AUTHS = frozenset({AUTH_STATIC, AUTH_DCR})
-_RESERVED_AUTHORIZE_PARAMS = frozenset(
-	{
-		"response_type",
-		"client_id",
-		"redirect_uri",
-		"state",
-		"resource",
-		"code_challenge",
-		"code_challenge_method",
-		"scope",
-	}
-)
+_RESERVED_AUTHORIZE_PARAMS = RESERVED_AUTHORIZE_PARAMS
 
 _ALLOWED_CATEGORIES = frozenset(
 	{
@@ -105,6 +96,21 @@ _ALLOWED_CATEGORIES = frozenset(
 )
 
 _KEY_RE = re.compile(r"^[a-z0-9_-]+$")
+
+# Google Workspace's MCP servers (Gmail, Calendar, Drive, Sheets, Docs) share one
+# sign-in service. Every one of them answers an unauthenticated initialize with
+# HTTP 200 (no 401 challenge), so discovery's first gate would refuse it; the
+# endpoints are pinned here instead and each preset's client is seeded from them,
+# exactly like GitHub. And Google issues NO refresh token unless the authorize
+# request carries access_type=offline and prompt=consent, so those ride on every
+# Google preset's `authorize_params`. Declared ONCE so the five entries cannot
+# drift from each other.
+_GOOGLE_ISSUER = "https://accounts.google.com"
+_GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+_GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+_GOOGLE_AUTHORIZE_PARAMS = (("access_type", "offline"), ("prompt", "consent"))
+_GOOGLE_HELP_URL = "https://console.cloud.google.com/apis/credentials"
+_GOOGLE_HINT = "Register your own Google Cloud OAuth client, then paste its details here."
 
 # The free-form path: a caller's own base_url, gated separately by the
 # `allow_custom_urls` site setting. Not a Provider, so it can never end up in
@@ -524,19 +530,13 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="communication",
 		logo="gmail",
-		help_url="https://console.cloud.google.com/apis/credentials",
-		hint="Register your own Google Cloud OAuth client, then paste its details here.",
-		# Google's sign-in service publishes metadata, but every Workspace MCP server
-		# answers an unauthenticated initialize with HTTP 200 (no 401 challenge), so
-		# discovery's first gate would refuse it. Endpoints are pinned here instead
-		# and the client is seeded from them, exactly like GitHub.
-		issuer="https://accounts.google.com",
-		authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
-		token_endpoint="https://oauth2.googleapis.com/token",
+		help_url=_GOOGLE_HELP_URL,
+		hint=_GOOGLE_HINT,
+		issuer=_GOOGLE_ISSUER,
+		authorization_endpoint=_GOOGLE_AUTHORIZATION_ENDPOINT,
+		token_endpoint=_GOOGLE_TOKEN_ENDPOINT,
 		scopes="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-		# Without these Google issues NO refresh token and the connector stops
-		# working an hour after sign-in.
-		authorize_params=(("access_type", "offline"), ("prompt", "consent")),
+		authorize_params=_GOOGLE_AUTHORIZE_PARAMS,
 	),
 	Provider(
 		name="Google Calendar",
@@ -546,19 +546,13 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="communication",
 		logo="google_calendar",
-		help_url="https://console.cloud.google.com/apis/credentials",
-		hint="Register your own Google Cloud OAuth client, then paste its details here.",
-		# Google's sign-in service publishes metadata, but every Workspace MCP server
-		# answers an unauthenticated initialize with HTTP 200 (no 401 challenge), so
-		# discovery's first gate would refuse it. Endpoints are pinned here instead
-		# and the client is seeded from them, exactly like GitHub.
-		issuer="https://accounts.google.com",
-		authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
-		token_endpoint="https://oauth2.googleapis.com/token",
+		help_url=_GOOGLE_HELP_URL,
+		hint=_GOOGLE_HINT,
+		issuer=_GOOGLE_ISSUER,
+		authorization_endpoint=_GOOGLE_AUTHORIZATION_ENDPOINT,
+		token_endpoint=_GOOGLE_TOKEN_ENDPOINT,
 		scopes="https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.events.freebusy",
-		# Without these Google issues NO refresh token and the connector stops
-		# working an hour after sign-in.
-		authorize_params=(("access_type", "offline"), ("prompt", "consent")),
+		authorize_params=_GOOGLE_AUTHORIZE_PARAMS,
 	),
 	Provider(
 		name="Calendly",
@@ -633,19 +627,13 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="files",
 		logo="google_drive",
-		help_url="https://console.cloud.google.com/apis/credentials",
-		hint="Register your own Google Cloud OAuth client, then paste its details here.",
-		# Google's sign-in service publishes metadata, but every Workspace MCP server
-		# answers an unauthenticated initialize with HTTP 200 (no 401 challenge), so
-		# discovery's first gate would refuse it. Endpoints are pinned here instead
-		# and the client is seeded from them, exactly like GitHub.
-		issuer="https://accounts.google.com",
-		authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
-		token_endpoint="https://oauth2.googleapis.com/token",
+		help_url=_GOOGLE_HELP_URL,
+		hint=_GOOGLE_HINT,
+		issuer=_GOOGLE_ISSUER,
+		authorization_endpoint=_GOOGLE_AUTHORIZATION_ENDPOINT,
+		token_endpoint=_GOOGLE_TOKEN_ENDPOINT,
 		scopes="https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
-		# Without these Google issues NO refresh token and the connector stops
-		# working an hour after sign-in.
-		authorize_params=(("access_type", "offline"), ("prompt", "consent")),
+		authorize_params=_GOOGLE_AUTHORIZE_PARAMS,
 	),
 	Provider(
 		name="Google Sheets",
@@ -655,19 +643,13 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="files",
 		logo="google_sheets",
-		help_url="https://console.cloud.google.com/apis/credentials",
-		hint="Register your own Google Cloud OAuth client, then paste its details here.",
-		# Google's sign-in service publishes metadata, but every Workspace MCP server
-		# answers an unauthenticated initialize with HTTP 200 (no 401 challenge), so
-		# discovery's first gate would refuse it. Endpoints are pinned here instead
-		# and the client is seeded from them, exactly like GitHub.
-		issuer="https://accounts.google.com",
-		authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
-		token_endpoint="https://oauth2.googleapis.com/token",
+		help_url=_GOOGLE_HELP_URL,
+		hint=_GOOGLE_HINT,
+		issuer=_GOOGLE_ISSUER,
+		authorization_endpoint=_GOOGLE_AUTHORIZATION_ENDPOINT,
+		token_endpoint=_GOOGLE_TOKEN_ENDPOINT,
 		scopes="https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/spreadsheets",
-		# Without these Google issues NO refresh token and the connector stops
-		# working an hour after sign-in.
-		authorize_params=(("access_type", "offline"), ("prompt", "consent")),
+		authorize_params=_GOOGLE_AUTHORIZE_PARAMS,
 	),
 	Provider(
 		name="Google Docs",
@@ -677,19 +659,13 @@ PROVIDERS: tuple[Provider, ...] = (
 		auth=AUTH_STATIC,
 		category="files",
 		logo="google_docs",
-		help_url="https://console.cloud.google.com/apis/credentials",
-		hint="Register your own Google Cloud OAuth client, then paste its details here.",
-		# Google's sign-in service publishes metadata, but every Workspace MCP server
-		# answers an unauthenticated initialize with HTTP 200 (no 401 challenge), so
-		# discovery's first gate would refuse it. Endpoints are pinned here instead
-		# and the client is seeded from them, exactly like GitHub.
-		issuer="https://accounts.google.com",
-		authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
-		token_endpoint="https://oauth2.googleapis.com/token",
+		help_url=_GOOGLE_HELP_URL,
+		hint=_GOOGLE_HINT,
+		issuer=_GOOGLE_ISSUER,
+		authorization_endpoint=_GOOGLE_AUTHORIZATION_ENDPOINT,
+		token_endpoint=_GOOGLE_TOKEN_ENDPOINT,
 		scopes="https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/documents",
-		# Without these Google issues NO refresh token and the connector stops
-		# working an hour after sign-in.
-		authorize_params=(("access_type", "offline"), ("prompt", "consent")),
+		authorize_params=_GOOGLE_AUTHORIZE_PARAMS,
 	),
 	# --- design ------------------------------------------------------------
 	Provider(

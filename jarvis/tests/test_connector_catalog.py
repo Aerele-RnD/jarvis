@@ -525,8 +525,12 @@ class TestAuthorizeParams(unittest.TestCase):
 			provider = catalog.by_name(name)
 			self.assertEqual(provider.auth, catalog.AUTH_STATIC, name)
 			self.assertEqual(provider.issuer, "https://accounts.google.com", name)
+			self.assertEqual(
+				provider.authorization_endpoint, "https://accounts.google.com/o/oauth2/v2/auth", name
+			)
 			self.assertEqual(provider.token_endpoint, "https://oauth2.googleapis.com/token", name)
 			self.assertTrue(provider.scopes, name)
+			self.assertEqual(provider.help_url, "https://console.cloud.google.com/apis/credentials", name)
 
 	def test_only_google_declares_authorize_params(self):
 		declaring = {p.name for p in catalog.PROVIDERS if p.authorize_params}
@@ -558,12 +562,13 @@ class TestAuthorizeParams(unittest.TestCase):
 			with self.assertRaises(ValueError, msg=repr(bad_params)):
 				catalog.validate((replace(github, authorize_params=bad_params),))
 
-	def test_reserved_set_matches_the_flow_module(self):
-		# The catalog validates at import, the flow guards at request time; the two
-		# lists must never drift or one would let through what the other blocks.
+	def test_reserved_set_is_the_flow_module_s_own(self):
+		# The catalog validates at import, the flow guards at request time; the
+		# catalog imports the flow's set rather than copying it, so they are one
+		# object and cannot drift.
 		from jarvis.connectors.mcp_oauth import flow
 
-		self.assertEqual(catalog._RESERVED_AUTHORIZE_PARAMS, flow.RESERVED_AUTHORIZE_PARAMS)
+		self.assertIs(catalog._RESERVED_AUTHORIZE_PARAMS, flow.RESERVED_AUTHORIZE_PARAMS)
 
 	def test_not_shipped_by_to_public(self):
 		for row in catalog.to_public():
