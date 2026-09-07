@@ -1097,6 +1097,25 @@ class TestOnboardingClient(FrappeTestCase):
 			},
 		)
 
+	def test_get_connection_omits_unknown_source_but_sends_confirmed_blanks(self):
+		"""None means Git did not answer (the admin keeps its stored value); an empty
+		string means Git confirmed there is no tag (the admin clears its stored value)."""
+		from jarvis import __version__
+
+		_settings_for_admin()
+		captured = {}
+
+		def _fake_post(url, headers=None, json=None, timeout=None):
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {}}})
+
+		with (
+			patch("requests.post", side_effect=_fake_post),
+			patch("jarvis.source_version.source_details", return_value={"branch": None, "tag": ""}),
+		):
+			admin_client.get_connection()
+		self.assertEqual(captured["body"], {"jarvis_version": __version__, "jarvis_tag": ""})
+
 	def test_renew_posts_to_renew_and_unwraps_order(self):
 		_settings_for_admin(api_key="renew-key", api_secret="renew-secret")
 		captured = {}

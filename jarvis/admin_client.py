@@ -914,19 +914,16 @@ def get_connection(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	from jarvis import __version__
 	from jarvis.source_version import source_details
 
+	body = {"jarvis_version": __version__}
 	source = source_details()
+	# A value Git confirmed is sent even when empty, so a checkout that moved off a
+	# branch or tag clears stale metadata upstream. A value Git could not give in
+	# time is left out, and the control plane keeps what it already has.
+	for key, value in (("jarvis_branch", source["branch"]), ("jarvis_tag", source["tag"])):
+		if value is not None:
+			body[key] = value
 
-	return _post(
-		path=_m("api.tenant.get_connection"),
-		body={
-			"jarvis_version": __version__,
-			# Empty is intentional: it lets a checkout that moves off a branch/tag
-			# clear stale source metadata in the control plane.
-			"jarvis_branch": source["branch"] or "",
-			"jarvis_tag": source["tag"] or "",
-		},
-		timeout_s=timeout_s,
-	)
+	return _post(path=_m("api.tenant.get_connection"), body=body, timeout_s=timeout_s)
 
 
 def get_role_profile_config(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
