@@ -326,7 +326,7 @@ class TestListConnectorsCatalog(_ConnectorApiTestCase):
 		entries = connectors_api.list_connectors()["catalog"]
 
 		self.assertEqual(len(entries), sum(1 for p in catalog.PROVIDERS if p.enabled))
-		self.assertEqual(len(entries), 25, "the SPA is built against this count")
+		self.assertEqual(len(entries), 40, "the SPA is built against this count")
 
 		names = {e["name"] for e in entries}
 		self.assertIn("Razorpay", names)
