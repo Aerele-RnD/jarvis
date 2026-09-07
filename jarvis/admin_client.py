@@ -907,14 +907,24 @@ def get_connection(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	finished the apply (F2). Pass a short ``timeout_s`` for those hot status
 	probes so a slow admin can't stretch a convergence loop past its job budget.
 
-	Also reports this bench's jarvis version so the control plane can close out a
-	release rollout; an older admin ignores the key.
+	Also reports this bench's Jarvis version, checked-out branch and exact release
+	tag. The control plane uses the version to close release rollouts and exposes
+	the source details to support; an older admin ignores the extra keys.
 	"""
 	from jarvis import __version__
+	from jarvis.source_version import source_details
+
+	source = source_details()
 
 	return _post(
 		path=_m("api.tenant.get_connection"),
-		body={"jarvis_version": __version__},
+		body={
+			"jarvis_version": __version__,
+			# Empty is intentional: it lets a checkout that moves off a branch/tag
+			# clear stale source metadata in the control plane.
+			"jarvis_branch": source["branch"] or "",
+			"jarvis_tag": source["tag"] or "",
+		},
 		timeout_s=timeout_s,
 	)
 
