@@ -33,6 +33,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from jarvis.connectors import action_rows
 from jarvis.tools import call_connector, list_connector_actions
 
 
@@ -144,7 +145,7 @@ class TestListConnectorActionsShape(unittest.TestCase):
 	"""Enabled path: dedupe-by-key (Personal wins), child rows fetched in ONE
 	``get_all`` bounded to the surviving parent names, and only policy-allowed
 	actions are surfaced. Exercises the real ``jarvis.connectors.policy`` gate
-	(frappe-free), with ``frappe.get_list``/``get_all`` mocked."""
+	(frappe-free), with ``frappe.get_list`` and the shared ``action_rows`` fetch mocked."""
 
 	def _action(self, parent, action, allowed=0, read_only=0, destructive=0, description="d"):
 		return {
@@ -165,7 +166,10 @@ class TestListConnectorActionsShape(unittest.TestCase):
 		return fake
 
 	def _run(self, fake_frappe, connector=None):
-		with mock.patch.object(list_connector_actions, "frappe", fake_frappe):
+		with (
+			mock.patch.object(list_connector_actions, "frappe", fake_frappe),
+			mock.patch.object(action_rows, "frappe", fake_frappe),
+		):
 			return list_connector_actions.list_connector_actions(connector)
 
 	def test_personal_wins_over_shared_same_key(self):

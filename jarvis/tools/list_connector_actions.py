@@ -8,11 +8,11 @@ query ALONE: connectors come from ``frappe.get_list`` (permission-checked,
 unlike ``get_all``) under the caller's impersonated identity, never
 hand-filtered by owner, so it cannot leak a row the permission hook would have
 denied. The child rows then come from ONE ``frappe.get_all`` on ``Jarvis
-Connector Action`` bounded to exactly those surviving parent names (plus
-``parenttype``/``parentfield``, so it reads only this table field's own rows).
-``get_all`` skips Frappe's permission check and a child DocType has no
-permission hook of its own, so that bounding is load-bearing: it is safe only
-because ``names`` never holds a row the caller could not list.
+Connector Action`` (``jarvis.connectors.action_rows``, shared with the
+Settings list) bounded to exactly those surviving parent names. ``get_all``
+skips Frappe's permission check and a child DocType has no permission hook of
+its own, so that bounding is load-bearing: it is safe only because ``names``
+never holds a row the caller could not list.
 
 Why not ``frappe.get_doc`` per connector: nothing here mutates a document or
 needs a Document method, and a full load pulls every parent column (the whole
@@ -32,11 +32,10 @@ from __future__ import annotations
 
 import frappe
 
-from jarvis.connectors import policy
+from jarvis.connectors import action_rows, policy
+from jarvis.connectors.action_rows import ACTIONS_FIELD, CONNECTOR_DOCTYPE
 
-CONNECTOR_DOCTYPE = "Jarvis Connector"
-ACTION_DOCTYPE = "Jarvis Connector Action"
-ACTIONS_FIELD = "allowed_actions"
+_ACTION_FIELDS = ["action", "allowed", "read_only", "destructive", "description"]
 
 _MAX_CONNECTORS = 30
 _MAX_ACTIONS_PER_CONNECTOR = 50
@@ -74,7 +73,7 @@ def list_connector_actions(connector: str | None = None) -> dict:
 	for row in rows:
 		by_key.setdefault(row["key"], row)
 
-	actions_by_parent = _actions_by_parent([row["name"] for row in by_key.values()])
+	actions_by_parent = action_rows.by_parent([row["name"] for row in by_key.values()], _ACTION_FIELDS)
 	return {
 		"connectors": [
 			{
@@ -86,24 +85,6 @@ def list_connector_actions(connector: str | None = None) -> dict:
 			for row in by_key.values()
 		]
 	}
-
-
-def _actions_by_parent(names: list[str]) -> dict[str, list[dict]]:
-	"""One query for every surviving connector's ``allowed_actions`` rows,
-	grouped by parent in stored (``idx``) order. ``names`` must come from the
-	permission-checked parent query (see the module docstring)."""
-	if not names:
-		return {}
-	children = frappe.get_all(
-		ACTION_DOCTYPE,
-		filters={"parent": ["in", names], "parenttype": CONNECTOR_DOCTYPE, "parentfield": ACTIONS_FIELD},
-		fields=["parent", "action", "allowed", "read_only", "destructive", "description"],
-		order_by="parent asc, idx asc",
-	)
-	grouped: dict[str, list[dict]] = {}
-	for child in children:
-		grouped.setdefault(child["parent"], []).append(child)
-	return grouped
 
 
 def _allowed_actions(children: list[dict]) -> list[dict]:
