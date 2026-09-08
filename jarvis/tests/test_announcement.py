@@ -173,3 +173,53 @@ class TestAnnouncementBoot(FrappeTestCase):
 			p = announcement.boot_payload()
 		self.assertTrue(p["active"])
 		self.assertEqual(p["id"], "ANN-9")
+
+
+class TestAnnouncementWiring(FrappeTestCase):
+	"""The daily sync forwards the announcement to persist, and a reset clears the
+	mirror (H6). The chat-gate persist site is covered in test_account's
+	TestAdminChatGate, beside the release-notice precedent."""
+
+	def test_sync_connection_forwards_announcement_to_persist(self):
+		# The recurring scheduled sync must forward the backend-sent announcement to
+		# announcement.persist (co-located with the release_notice.persist precedent).
+		from jarvis import onboarding
+
+		conn = {
+			"announcement": {"active": True, "id": "ANN-1"},
+			"release_notice": {},
+			"redaction_patterns": [],
+			"agent_url": "",
+		}
+		with (
+			patch("jarvis.onboarding.require_jarvis_admin"),
+			patch("jarvis.onboarding.frappe.get_single") as gs,
+			patch("jarvis.onboarding.admin_client.get_connection", return_value=conn),
+			patch("jarvis.onboarding.release_notice.persist"),
+			patch("jarvis.onboarding.announcement.persist") as persist,
+			patch("jarvis.chat.egress_rules.persist"),
+		):
+			gs.return_value.get_password.return_value = "x"  # api key/secret present
+			onboarding.sync_connection()
+		persist.assert_called_once_with({"active": True, "id": "ANN-1"})
+
+	def test_settings_reset_clears_announcement_mirror(self):
+		# H6: a reset must clear the previous tenancy's announcement mirror. The
+		# string fields blank, the scalars zero, and the Datetime NULLs.
+		from jarvis import settings_reset
+
+		for f in (
+			"announcement_id",
+			"announcement_title",
+			"announcement_message",
+			"announcement_severity",
+			"announcement_link_url",
+			"announcement_link_label",
+		):
+			self.assertIn(f, settings_reset.CONNECTION.blank)
+		self.assertIn("announcement_active", settings_reset.CONNECTION.zero)
+		self.assertIn("announcement_interval_days", settings_reset.CONNECTION.zero)
+		self.assertIn("announcement_expires_on", settings_reset.CONNECTION.null)
+		# FULL composes CONNECTION | LLM, so the parity carries into the CLI reset too.
+		self.assertIn("announcement_active", settings_reset.FULL.zero)
+		self.assertIn("announcement_expires_on", settings_reset.FULL.null)
