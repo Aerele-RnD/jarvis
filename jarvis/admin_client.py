@@ -1827,6 +1827,20 @@ def push_chat_feedback(item: dict) -> dict:
 	return _post(path=_m("api.tenant.ingest_chat_feedback"), body={"item": item})
 
 
+def push_session_feedback(item: dict) -> dict:
+	"""Push one once-per-session popup response to admin. Called best-effort
+	from jarvis.chat.feedback._forward_session, which swallows failures -- a
+	lost response is acceptable, a blocked popup is not.
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
+	return _post(path=_m("api.tenant.ingest_session_feedback"), body={"item": item})
+
+
+def push_pulse_feedback(item: dict) -> dict:
+	"""Push one periodic business-pulse response to admin. Same best-effort
+	contract as push_session_feedback."""
+	return _post(path=_m("api.tenant.ingest_pulse_feedback"), body={"item": item})
+
+
 def pair_chat_device(public_key: str, device_id: str, *, request_timeout_s: int = 30) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
 	to write a PairedDevice record into the customer's agent container and
