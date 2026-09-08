@@ -20,5 +20,8 @@ export function sendRefusalMessage(reason, brandName = "Jarvis") {
   if (reason === "release_update_required") {
     return `A new ${brand} version is required. Please ask your administrator to update.`;
   }
+  if (reason === "maintenance") {
+    return `${brand} is upgrading and will be back shortly.`;
+  }
   return "That couldn't be sent. Please try again.";
 }

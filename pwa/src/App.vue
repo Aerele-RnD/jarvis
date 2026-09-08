@@ -11,6 +11,7 @@ import { store } from "./store";
 import { sessionUser } from "./router";
 import { showBanner, showNotice } from "./noticeGate";
 import { showAnnouncement } from "./announcementGate";
+import { holdActive, holdText } from "./maintenanceGate";
 import { installBannerVisible } from "./lib/installBanner";
 import { prefs } from "./lib/prefs";
 import { agentName } from "@/branding";
@@ -119,6 +120,20 @@ onUnmounted(() => {
 
 <template>
 	<div class="jv-app">
+		<!-- Upgrade maintenance hold (Stream E): a persistent "back shortly" strip
+		     while this tenant's agent is being upgraded. Top-of-app on every route
+		     (before the install strip), like the desktop banner; the composer stays
+		     enabled and the send-gate self-heals when the roll clears. Shown only to
+		     a signed-in user - nothing to hold on the login screen. Amber tokens flip
+		     with the theme. role/aria-live announce it to screen readers. -->
+		<div
+			v-if="holdActive && sessionUser()"
+			class="jv-maint-strip"
+			role="status"
+			aria-live="polite"
+		>
+			{{ holdText }}
+		</div>
 		<!-- First child, in the flow: the install strip pushes the app down rather
 		     than covering any part of it. -->
 		<InstallBanner />
@@ -134,7 +149,13 @@ onUnmounted(() => {
 		     minimises it into whichever VersionPill is currently mounted (ChatView's
 		     header; see noticeGate.js's pillHandle). -->
 		<UpdateBanner
-			v-if="showBanner && !installBannerVisible && sessionUser() && !showAnnouncement"
+			v-if="
+				showBanner &&
+				!installBannerVisible &&
+				sessionUser() &&
+				!showAnnouncement &&
+				!holdActive
+			"
 		/>
 		<router-view v-slot="{ Component }">
 			<component :is="Component" />
@@ -149,3 +170,21 @@ onUnmounted(() => {
 		<WhatsNewSheet />
 	</div>
 </template>
+
+<style scoped>
+/* Upgrade maintenance hold strip - an amber card matching the InstallBanner /
+   UpdateBanner idiom (rounded + margin), not a full-bleed bar. Amber tokens flip
+   with the theme (see index.css). */
+.jv-maint-strip {
+	margin: 10px 12px 0;
+	padding: 10px 14px;
+	background: var(--amber-bg);
+	color: var(--amber);
+	border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+	border-radius: 12px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.35;
+	text-align: center;
+}
+</style>

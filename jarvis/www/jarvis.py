@@ -1,6 +1,6 @@
 import frappe
 
-from jarvis import announcement, release_notice
+from jarvis import announcement, maintenance_notice, release_notice
 from jarvis.permissions import (
 	has_jarvis_access,
 	has_jarvis_admin_access,
@@ -121,6 +121,7 @@ def get_context(context):
 	# Release notice (operator-authored): the SPA shows a full-page interstitial
 	# when this bench is behind the latest jarvis version. Up-to-date => no gate.
 	context.boot["release_notice"] = release_notice.boot_payload()
+	context.boot["maintenance"] = maintenance_notice.boot_payload()
 
 	# Customer announcement (operator-authored): a soft, dismissible banner shown
 	# fleet-wide. Empty/inactive => the SPA renders nothing.
