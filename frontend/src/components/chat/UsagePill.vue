@@ -27,9 +27,14 @@
 				class="my-2 w-64 rounded-lg bg-surface-modal p-3 shadow-2xl ring-1 ring-black ring-opacity-5"
 			>
 				<div class="flex items-baseline justify-between">
-					<h3 class="text-base font-semibold text-ink-gray-9">Usage limit</h3>
+					<h3 class="text-base font-semibold text-ink-gray-9">{{ agentName }} usage</h3>
 					<span class="text-p-sm text-ink-gray-6">{{ reading.pct }}%</span>
 				</div>
+				<!-- Named so nobody reads it as their ChatGPT / API-provider usage. -->
+				<p class="mt-1 text-p-sm text-ink-gray-5">
+					Your allowance in {{ agentName }}, set by your admin. Not your model provider's
+					usage.
+				</p>
 				<div class="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-gray-3">
 					<div
 						class="h-full rounded-full"
