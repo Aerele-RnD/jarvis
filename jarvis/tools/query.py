@@ -558,7 +558,13 @@ def _reset_acl_memo() -> None:
 	switch). Called once at the top of ``query()``. Deliberately per-CALL, not
 	per-request: a permission mutation earlier in the same request (share_doc,
 	update_doc) must not let a later query() read a stale ACL. Resetting at entry
-	means each call starts clean and nothing else ever reads this attribute."""
+	means each call starts clean and nothing else ever reads this attribute.
+
+	(This is why ``frappe.request_cache`` is NOT used: it lives for the whole
+	request and would serve that stale ACL to a later query() in the same request;
+	it also keys on args only, so a user-in-key would be needed regardless. The
+	hand-rolled per-call reset keeps this behaviour-identical to get_list, which
+	recomputes the field ACL uncached every call.)"""
 	setattr(frappe.local, _ACL_MEMO_ATTR, {} if _acl_memo_enabled() else None)
 
 
