@@ -25,6 +25,18 @@ test("sendRefusalMessage: a blank/missing brand falls back to 'Jarvis'", () => {
   assert.equal(sendRefusalMessage("release_update_required"), expected);
 });
 
+test("sendRefusalMessage: maintenance -> branded back-shortly line", () => {
+  assert.equal(
+    sendRefusalMessage("maintenance", "Aida"),
+    "Aida is upgrading and will be back shortly."
+  );
+  // white-label brand honoured; a blank brand falls back to 'Jarvis'
+  assert.equal(
+    sendRefusalMessage("maintenance", ""),
+    "Jarvis is upgrading and will be back shortly."
+  );
+});
+
 test("sendRefusalMessage: any other refusal -> the generic try-again line", () => {
   assert.equal(
     sendRefusalMessage("something_else", "Aida"),

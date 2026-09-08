@@ -60,10 +60,13 @@ def _submit_one(doctype: str, name: str) -> "frappe.model.document.Document":
 			f"actions available to you."
 		)
 
-	if not frappe.has_permission(doctype, ptype="submit", doc=name):
+	# Load once, then check permission on the loaded object (has_permission with a
+	# name string would lazy-load the parent row this get_doc already fetches).
+	# The check runs before doc.submit() below; the docstatus reads don't mutate.
+	doc = frappe.get_doc(doctype, name)  # raises DoesNotExistError if missing
+	if not frappe.has_permission(doctype, ptype="submit", doc=doc):
 		raise PermissionDeniedError(f"no submit permission on {doctype} '{name}'")
 
-	doc = frappe.get_doc(doctype, name)  # raises DoesNotExistError if missing
 	if doc.docstatus == 1:
 		raise InvalidArgumentError(f"{doctype} '{name}' is already submitted (docstatus=1)")
 	if doc.docstatus == 2:

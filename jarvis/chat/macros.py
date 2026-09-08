@@ -102,6 +102,7 @@ _BLOCK_MESSAGE = {
 	"subscription_suspended": "Your subscription does not currently include chat, so this macro cannot run.",
 	"release_update_required": "A Jarvis update is rolling out. Try this macro again in a few minutes.",
 	"workspace_resetting": "Your workspace is being rebuilt. Try this macro again in a few minutes.",
+	"maintenance": "Jarvis is being upgraded. Try this macro again in a few minutes.",
 	"llm_not_configured": "Connect an AI model before running a macro.",
 	BLOCK_STEP_BUDGET: "This month's budget for scheduled macro runs is used up.",
 	BLOCK_DISPATCH_FAILED: "This macro could not be started. Please try again in a few minutes.",

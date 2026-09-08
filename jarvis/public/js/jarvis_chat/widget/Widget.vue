@@ -14,6 +14,7 @@
 				'jvw-fab--faded': faded && !dragging,
 				'jvw-fab--dock-left': side === 'left',
 				'jvw-fab--peek': autoPeek,
+				'jvw-fab--maint': maintenanceActive,
 			}"
 			:style="fabStyle"
 			:aria-label="panelOpen ? `Close ${brandName}` : `Ask ${brandName}`"
@@ -44,6 +45,9 @@
 			<span v-if="!brandLogoUrl" class="jvw-face" aria-hidden="true">
 				<i class="jvw-eye"></i><i class="jvw-eye"></i>
 			</span>
+			<span v-if="!brandLogoUrl && maintenanceActive" class="jvw-zzz" aria-hidden="true"
+				><i>z</i><i>z</i><i>z</i></span
+			>
 		</button>
 
 		<!-- Dimming backdrop for the expand-into-the-big-chat handoff: fades the
@@ -77,6 +81,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
+import { maintenance, startPollIfHeld } from "./maintenance_state.mjs";
 import { FULL_CHAT_URL, conversationUrl, PANEL_MIN_VIEWPORT_PX } from "./config.mjs";
 import { contextFromRoute } from "./desk_context.mjs";
 import { panelLayout } from "./panel_anchor.mjs";
@@ -160,6 +165,11 @@ const hasAccess = Boolean(window.frappe?.boot?.jarvis_has_access);
 // Whitelabel FAB label + mark (set_jarvis_boot); blank => Jarvis defaults.
 const brandName = (window.frappe?.boot?.jarvis_agent_name || "").trim() || "Jarvis";
 const brandLogoUrl = (window.frappe?.boot?.jarvis_brand_logo_url || "").trim();
+// Upgrade maintenance hold (Stream E): the FAB rests with sleepy lids + z z z during a
+// hold, mirroring the panel avatar. Reactive off the SHARED state (maintenance_state.mjs) so
+// the FAB and the open panel never disagree, and a 60s poll (armed in onMounted) lifts it
+// when the roll finishes - even if the panel is never opened (whitelabel logo -> no face).
+const maintenanceActive = computed(() => maintenance.active);
 
 // ---- Side chat panel: open state and the Desk record it is looking at. ----
 const panelRef = ref(null);
@@ -486,6 +496,9 @@ function onResize() {
 }
 
 onMounted(() => {
+	// Arm the maintenance lift-poll (the module self-arms at load too); the always-mounted FAB
+	// drives it so a held bubble self-heals even when the panel is never opened.
+	startPollIfHeld();
 	// The Desk's dark flag is read in JS, not CSS: this component's
 	// `:global([data-theme=dark]) .jvw-root` compiled to a bare
 	// `[data-theme=dark]` rule, so its custom properties landed on <html> and
@@ -704,6 +717,69 @@ onBeforeUnmount(() => {
 .jvw-fab--peek .jvw-face {
 	opacity: 1;
 }
+/* Upgrade maintenance hold (Stream E): the FAB rests permanently sleepy - spark
+   hidden, sleepy lids, a soft "z z z" in the corner. No transform on the eyes
+   (the dock-scale owns child transforms); the lid is a height animation. */
+.jvw-fab--maint > svg {
+	opacity: 0;
+}
+.jvw-fab--maint .jvw-face {
+	opacity: 1;
+}
+.jvw-fab--maint .jvw-eye {
+	height: 3px;
+	animation: jvw-lid 4.6s ease-in-out infinite;
+}
+.jvw-zzz {
+	position: absolute;
+	top: 12%;
+	right: 12%;
+	display: flex;
+	align-items: flex-end;
+	gap: 1px;
+	line-height: 1;
+	pointer-events: none;
+}
+.jvw-zzz i {
+	font-style: normal;
+	font-weight: 800;
+	color: #fff;
+	opacity: 0;
+}
+.jvw-zzz i:nth-child(1) {
+	font-size: 8px;
+	animation: jvw-zfloat 3.2s ease-out infinite;
+}
+.jvw-zzz i:nth-child(2) {
+	font-size: 10px;
+	animation: jvw-zfloat 3.2s ease-out 0.6s infinite;
+}
+.jvw-zzz i:nth-child(3) {
+	font-size: 13px;
+	animation: jvw-zfloat 3.2s ease-out 1.2s infinite;
+}
+@keyframes jvw-lid {
+	0%,
+	100% {
+		height: 3px;
+	}
+	50% {
+		height: 1.5px;
+	}
+}
+@keyframes jvw-zfloat {
+	0% {
+		opacity: 0;
+		transform: translateY(20%) scale(0.7);
+	}
+	30% {
+		opacity: 0.9;
+	}
+	100% {
+		opacity: 0;
+		transform: translateY(-30%) scale(1.05);
+	}
+}
 
 @keyframes jvw-blink {
 	0%,
@@ -770,6 +846,18 @@ onBeforeUnmount(() => {
 	}
 	.jvw-grip {
 		transition: none;
+	}
+}
+
+/* Freeze the FAB maintenance sleeping frame under reduced-motion (the FAB's other
+   animations are gated behind no-preference; these were added unconditionally). */
+@media (prefers-reduced-motion: reduce) {
+	.jvw-fab--maint .jvw-eye,
+	.jvw-zzz i {
+		animation: none;
+	}
+	.jvw-zzz i {
+		opacity: 0.85;
 	}
 }
 </style>

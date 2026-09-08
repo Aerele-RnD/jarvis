@@ -11,7 +11,7 @@ from __future__ import annotations
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
-from jarvis.tools.find_skills import _require_system_user, _visible
+from jarvis.tools.find_skills import _maybe_prefetch_children, _require_system_user, _visible
 
 SKILL = "Jarvis Custom Skill"
 _CUSTOM_PREFIX = "custom-"
@@ -69,6 +69,10 @@ def get_skill(skill_name: str) -> dict:
 		raise InvalidArgumentError(f"unknown skill: {skill_name}")
 
 	user_roles = frappe.get_roles(user)
+	# Batch child tables only when more than one row matched the slug (a single
+	# row - the common case, unique per owner - short-circuits or fallback-reads
+	# at most once, so batching would only add queries).
+	_maybe_prefetch_children(rows, user, user_roles)
 	usable = [r for r in rows if _visible(r, user, user_roles)]
 	if not usable:
 		_audit_learned_miss(raw, user, "denied")

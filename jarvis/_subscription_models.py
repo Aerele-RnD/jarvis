@@ -15,11 +15,14 @@ oauth/api.py:_coerce_subscription_model and oauth/providers.py both key off the
 subscription form; emitting the other one silently coerces every Kimi model to
 "" and defaults the picker to gpt-5.5.
 
-Subscription model ids MUST exist in the pinned cli-proxy-api image's embedded
-catalogue: the ids are COMPILED INTO its Go binary and the image is
-digest-pinned, so a model absent from it cannot be served whatever the catalog
-says. jarvis_admin_v2 enforces that at save time. Verified 2026-07-22 against
-v7.2.35: "grok-4.5" and "gpt-5.6" are ABSENT; "kimi-k2.7-code" is present.
+xAI and Kimi subscription ids MUST exist in the pinned cli-proxy-api image
+(compiled in; verified 2026-07-22 against v7.2.35: "grok-4.5" is ABSENT,
+"kimi-k2.7-code" is present) and jarvis_admin_v2 enforces that at save time.
+OpenAI is different: the Codex channel serves whatever OpenAI exposes to the
+signed-in account. Verified live 2026-09-06 on that same pinned binary: the
+suffixed gpt-5.6 ids and gpt-6-astra serve (bare "gpt-5.6" is an API-only
+alias), while gpt-5.4 and gpt-5.4-mini were retired upstream and fail inside
+cliproxy, so they are gone from this tier.
 """
 
 from __future__ import annotations
@@ -32,13 +35,13 @@ import frappe
 # discontinued consumer login-with-Google for Gemini). Gemini stays available via
 # API key, which is served from the api_key-tier catalog, not this subscription seed.
 _SEED_SUBSCRIPTION_MODELS: dict[str, list[str]] = {
-	"OpenAI": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+	"OpenAI": ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
 	"xAI Grok": ["grok-4.3", "grok-build-0.1"],
 	"Kimi (Moonshot)": ["kimi-k2.7-code", "kimi-k2.6"],
 }
 
 _SEED_DEFAULT_MODEL: dict[str, str] = {
-	"OpenAI": "gpt-5.5",
+	"OpenAI": "gpt-5.6-terra",
 	"xAI Grok": "grok-4.3",
 	"Kimi (Moonshot)": "kimi-k2.7-code",
 }

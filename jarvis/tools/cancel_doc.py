@@ -59,10 +59,13 @@ def _cancel_one(doctype: str, name: str) -> "frappe.model.document.Document":
 			f"available to you."
 		)
 
-	if not frappe.has_permission(doctype, ptype="cancel", doc=name):
+	# Load once, then check permission on the loaded object (has_permission with a
+	# name string would lazy-load the parent row this get_doc already fetches).
+	# The check runs before doc.cancel() below; the docstatus reads don't mutate.
+	doc = frappe.get_doc(doctype, name)
+	if not frappe.has_permission(doctype, ptype="cancel", doc=doc):
 		raise PermissionDeniedError(f"no cancel permission on {doctype} '{name}'")
 
-	doc = frappe.get_doc(doctype, name)
 	if doc.docstatus == 0:
 		raise InvalidArgumentError(
 			f"{doctype} '{name}' is in Draft (docstatus=0); only Submitted "
