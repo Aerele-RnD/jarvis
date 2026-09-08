@@ -21,7 +21,7 @@ import hashlib
 
 import frappe
 
-from jarvis import admin_client, compat, onboarding_contract, release_notice
+from jarvis import admin_client, announcement, compat, onboarding_contract, release_notice
 from jarvis.exceptions import (
 	AdminAuthError,
 	AdminRateLimitedError,
@@ -565,6 +565,8 @@ def _admin_chat_gate() -> dict:
 	# Refresh the locally-mirrored release notice on this gate's cadence so an
 	# active user sees an activate/clear without waiting for the daily sync.
 	release_notice.persist(conn.get("release_notice") or {})
+	# Same cadence: mirror the fleet-wide operator announcement for the soft banner.
+	announcement.persist(conn.get("announcement") or {})
 	# Same cadence: mirror the backend-owned egress redaction rules for the chat backstop.
 	from jarvis.chat import egress_rules
 

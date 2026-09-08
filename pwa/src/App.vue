@@ -4,11 +4,13 @@ import { useRouter } from "vue-router";
 import AppDrawer from "./components/AppDrawer.vue";
 import InstallBanner from "./components/InstallBanner.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
+import AnnouncementBanner from "./components/AnnouncementBanner.vue";
 import UpdateNoticeGate from "./components/UpdateNoticeGate.vue";
 import WhatsNewSheet from "./components/WhatsNewSheet.vue";
 import { store } from "./store";
 import { sessionUser } from "./router";
 import { showBanner, showNotice } from "./noticeGate";
+import { showAnnouncement } from "./announcementGate";
 import { installBannerVisible } from "./lib/installBanner";
 import { prefs } from "./lib/prefs";
 import { agentName } from "@/branding";
@@ -120,12 +122,20 @@ onUnmounted(() => {
 		<!-- First child, in the flow: the install strip pushes the app down rather
 		     than covering any part of it. -->
 		<InstallBanner />
+		<!-- Customer announcement banner (Slice B): the fleet-wide operator notice.
+		     Yields to InstallBanner (only one top slot at a time) and to a signed-out
+		     visitor, and WINS the slot over the update banner below (which yields via
+		     !showAnnouncement). Dismiss snoozes it per-device. -->
+		<AnnouncementBanner v-if="showAnnouncement && sessionUser() && !installBannerVisible" />
 		<!-- Release-nudge soft banner (Slice 3b): top-of-app, next to the install
 		     strip. Yields to InstallBanner (installBannerVisible - only one top
-		     slot shows at a time) and to a signed-out visitor (nothing to nudge on
-		     the login screen). Dismiss minimises it into whichever VersionPill is
-		     currently mounted (ChatView's header; see noticeGate.js's pillHandle). -->
-		<UpdateBanner v-if="showBanner && !installBannerVisible && sessionUser()" />
+		     slot shows at a time), to a signed-out visitor (nothing to nudge on
+		     the login screen), and to the announcement banner above. Dismiss
+		     minimises it into whichever VersionPill is currently mounted (ChatView's
+		     header; see noticeGate.js's pillHandle). -->
+		<UpdateBanner
+			v-if="showBanner && !installBannerVisible && sessionUser() && !showAnnouncement"
+		/>
 		<router-view v-slot="{ Component }">
 			<component :is="Component" />
 		</router-view>

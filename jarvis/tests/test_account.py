@@ -208,14 +208,23 @@ class TestAdminChatGate(FrappeTestCase):
 	is specifically about the never-ready one, so a verdict never depends on
 	whatever state the site happens to carry."""
 
-	# The gate now mirrors the release notice onto Jarvis Settings as a side
-	# effect (persist({}) when the mock carries none), and stamps the ready
-	# marker, so snapshot/restore those fields to avoid clobbering a real site's
-	# operator state.
+	# The gate now mirrors the release notice AND the announcement onto Jarvis
+	# Settings as a side effect (persist({}) when the mock carries none), and
+	# stamps the ready marker, so snapshot/restore those fields to avoid
+	# clobbering a real site's operator state.
 	_RELEASE_FIELDS = (
 		"release_notice_active",
 		"latest_jarvis_version",
 		"release_notice_message",
+		"announcement_active",
+		"announcement_id",
+		"announcement_title",
+		"announcement_message",
+		"announcement_severity",
+		"announcement_link_url",
+		"announcement_link_label",
+		"announcement_interval_days",
+		"announcement_expires_on",
 	)
 
 	def setUp(self):
@@ -275,6 +284,41 @@ class TestAdminChatGate(FrappeTestCase):
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.release_notice_active, 0)
 		self.assertEqual(s.release_notice_message, "")
+
+	def test_announcement_persisted_on_gate(self):
+		# The gate mirrors an active announcement so boot can read it; the returned
+		# verdict shape is unchanged (the announcement never rides the gate reply).
+		ann = {
+			"active": True,
+			"id": "ANN-00007",
+			"title": "Scheduled maintenance",
+			"message": "We update Sunday 02:00 UTC.",
+			"severity": "Warning",
+		}
+		with patch.object(
+			admin_client,
+			"get_connection",
+			return_value={"chat_readiness": "Ready", "announcement": ann},
+		):
+			out = account._admin_chat_gate()
+		self.assertEqual(out, {"ready": True, "reason": None, "billing_notice": {}})
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.announcement_active, 1)
+		self.assertEqual(s.announcement_id, "ANN-00007")
+		self.assertEqual(s.announcement_message, "We update Sunday 02:00 UTC.")
+
+	def test_announcement_cleared_on_gate(self):
+		# Admin stops sending an announcement -> the mirror zeroes so the banner drops.
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("announcement_active", 1)
+		s.db_set("announcement_id", "ANN-stale")
+		s.db_set("announcement_message", "stale")
+		frappe.db.commit()
+		with patch.object(admin_client, "get_connection", return_value={"chat_readiness": "Ready"}):
+			account._admin_chat_gate()
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.announcement_active, 0)
+		self.assertEqual(s.announcement_message, "")
 
 	def test_blocks_when_admin_not_ready(self):
 		with patch.object(
