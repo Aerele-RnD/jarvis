@@ -122,8 +122,14 @@ export const getPromptSuggestions = () => call(US + "get_prompt_suggestions");
 // Jarvis Admin (or System Manager) only — server re-checks independently of
 // the client's window.is_jarvis_admin gate.
 export const adminListUserUsage = () => call(US + "admin_list_user_usage");
-export const adminSetUserLimit = (user, monthlyTokenLimit) =>
-	call(US + "admin_set_user_limit", { user, monthly_token_limit: monthlyTokenLimit });
+// limitPeriod: "All time" | "Daily" | "Weekly" | "Monthly"; omitted = unchanged.
+// Switching it restarts the user's window server-side.
+export const adminSetUserLimit = (user, monthlyTokenLimit, limitPeriod) =>
+	call(US + "admin_set_user_limit", {
+		user,
+		monthly_token_limit: monthlyTokenLimit,
+		...(limitPeriod ? { limit_period: limitPeriod } : {}),
+	});
 export const adminSetUserModelLimit = (user, model, monthlyTokenLimit) =>
 	call(US + "admin_set_user_model_limit", {
 		user,

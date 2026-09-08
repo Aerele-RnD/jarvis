@@ -28,8 +28,9 @@
 					<div class="h-full bg-surface-gray-7" :style="{ width: measuredPct + '%' }" />
 				</div>
 				<p class="mt-2 text-p-sm text-ink-gray-5">
-					{{ fmtTokens(measured.total_tokens) }} of
-					{{ fmtTokens(measured.monthly_token_limit) }} all time, {{ measuredPct }}%
+					{{ fmtTokens(limitUsage.used) }} of
+					{{ fmtTokens(measured.monthly_token_limit) }} {{ limitUsage.label }},
+					{{ measuredPct }}%
 				</p>
 			</template>
 			<p v-else class="mt-2 text-p-sm text-ink-gray-5">
@@ -307,7 +308,7 @@ import JvChart from "@/charts/JvChart.vue";
 import EChart from "@/charts/EChart.vue";
 import { budgetGaugeOption, perModelBarSpec, formatUsd } from "@/charts/usageCharts.js";
 import { humaniseSyncStatus } from "@/lib/syncStatus";
-import { fmtTokens, contextReading } from "@/lib/tokens.js";
+import { fmtTokens, contextReading, limitWindow } from "@/lib/tokens.js";
 import { connectionModeLabel } from "@/llm/pool";
 import { useJarvisTheme } from "@/theme";
 import * as api from "@/api";
@@ -346,14 +347,15 @@ const hasMeasured = computed(() => !!(measured.value && Number(measured.value.to
 // per-conversation block), independent of hasMeasured - see the "Context"
 // section above, which renders whenever usage itself has loaded.
 const context = computed(() => contextReading(usage.value));
-// All-time: compares against total_tokens (the cumulative, never-reset
-// counter), not month_tokens. See jarvis.chat.policy._over_total_limit.
+// The cap reads against its window: the all-time total, or this
+// day/week/month's period_tokens. See jarvis.chat.policy._over_total_limit.
+const limitUsage = computed(() => limitWindow(measured.value));
 const measuredPct = computed(() => {
 	const m = measured.value;
 	if (!m || !m.monthly_token_limit) return 0;
 	return Math.min(
 		100,
-		Math.round((Number(m.total_tokens || 0) / Number(m.monthly_token_limit)) * 100)
+		Math.round((limitUsage.value.used / Number(m.monthly_token_limit)) * 100)
 	);
 });
 

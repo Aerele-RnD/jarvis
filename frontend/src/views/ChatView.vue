@@ -3687,6 +3687,7 @@
 								:compacted="compactedChip"
 								@compact="openCompactDialog('')"
 							/>
+							<UsagePill :usage="myUsage" />
 							<ModelEffortPicker
 								:model-override="modelOverride"
 								:default-model="ui.llm_model || ''"
@@ -4466,6 +4467,8 @@ import {
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
 import { Dropdown } from "frappe-ui";
 import ContextRing from "@/components/chat/ContextRing.vue";
+import UsagePill from "@/components/chat/UsagePill.vue";
+import { myUsage, loadMyUsage, takeUsage } from "@/stores/usage";
 import CompactDialog from "@/components/chat/CompactDialog.vue";
 import { parseCompactCommand, compactFailureCopy } from "@/lib/compact";
 import * as api from "@/api";
@@ -4528,6 +4531,7 @@ import WhatsNewDialog from "@/components/chat/WhatsNewDialog.vue";
 import { showBanner } from "@/noticeGate";
 import { showAnnouncement } from "@/announcementGate";
 import { parseAsk } from "@/lib/chatAsk";
+import { sendRejectionCopy } from "@/lib/sendRejectionCopy";
 import { shouldHideActivityTool, isCustomerFacingTool } from "@/lib/activityTools";
 import { parseGoto, gotoFiredKey, parseFiredStamp, claimGotoFire } from "@/lib/chatGoto";
 import { normaliseAction } from "@/lib/chatAction";
@@ -5077,6 +5081,7 @@ const supportMenuOptions = computed(() => [
 // otherwise be unhandled (the real store already catches its own errors, so
 // this is belt-and-braces).
 onMounted(() => {
+	loadMyUsage();
 	if (supportOn) supportStore.refreshAwaiting().catch(() => {});
 });
 // One-shot "ground on wiki": when armed, the NEXT message carries a
@@ -5442,6 +5447,7 @@ async function loadContext({ applyCompacting = false } = {}) {
 	}
 	try {
 		const c = await api.getConversationContext(id);
+		takeUsage(c);
 		// Stale-response guard (mirrors loadConversation): a slow response for a
 		// chat the user has since left must not stamp ITS compacting/context state
 		// onto whichever chat is on screen now.
@@ -9422,12 +9428,11 @@ async function send(textArg, resendAck) {
 				return;
 			}
 			notify(
-				// Period-neutral copy: "usage_limit" fires from BOTH the all-time
-				// aggregate cap (jarvis.chat.policy._over_total_limit) and the
-				// still-monthly per-model cap (_over_model_limit) - the toast can't
-				// say "monthly" or "all-time" without being wrong for one of them.
+				// "usage_limit" fires from BOTH the aggregate cap and the still-monthly
+				// per-model cap; the envelope names the window (limit_period) only for
+				// the former, so the copy stays period-neutral for the latter.
 				r.reason === "usage_limit"
-					? `You've reached your usage limit. Ask your ${agentName} admin to raise it.`
+					? sendRejectionCopy(r.reason, agentName, r).message
 					: r.reason || "Couldn't send your message.",
 				{ type: "error" }
 			);
