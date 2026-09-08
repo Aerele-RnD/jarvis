@@ -22,6 +22,7 @@ from jarvis.exceptions import (
 	PermissionDeniedError,
 	ResultTooLargeError,
 )
+from jarvis.tools import query as query_mod
 from jarvis.tools.query import ROW_GUARD, query
 
 
@@ -3425,3 +3426,75 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 		self.assertIn("child_restricted", msg)
 		self.assertIn("permission level", msg)
 		self.assertIn(self.SCOPE_PARENT_A, msg)  # the parent that governs the permlevel
+
+	# ---- LANE 1: per-call permitted-field ACL memo -------------------
+
+	def test_acl_memo_cross_user_isolation(self):
+		"""One process, two users back-to-back: the per-call memo must NEVER serve
+		one user's permitted-field set to another. Restricted stays denied and
+		privileged stays allowed regardless of order. This is the guard against an
+		args-only / non-reset cache (the request_cache footgun the plan rejected)."""
+		# Restricted first, then privileged.
+		frappe.set_user(self.USER_RESTRICTED)
+		with self.assertRaises(PermissionDeniedError):
+			query({"from": self.PARENT_DT, "alias": "p", "select": ["p.public_field", "p.restricted_field"]})
+		frappe.set_user(self.USER_PRIVILEGED)
+		res = query(
+			{"from": self.PARENT_DT, "alias": "p", "select": ["p.public_field", "p.restricted_field"]}
+		)
+		self.assertIn("sql", res)  # privileged reads the permlevel field fine
+
+		# Reverse: privileged first POPULATES the memo, then restricted must still
+		# be denied (a leaked/args-only memo would wrongly admit it here).
+		frappe.set_user(self.USER_PRIVILEGED)
+		query({"from": self.PARENT_DT, "alias": "p", "select": ["p.restricted_field"]})
+		frappe.set_user(self.USER_RESTRICTED)
+		with self.assertRaises(PermissionDeniedError):
+			query({"from": self.PARENT_DT, "alias": "p", "select": ["p.public_field", "p.restricted_field"]})
+
+	def test_acl_memo_permitted_fields_computed_once_per_table(self):
+		"""A query referencing a table's fields many times computes the permitted-
+		field ACL ONCE (memoized), not once per column reference."""
+		frappe.set_user(self.USER_PRIVILEGED)
+		with patch.object(query_mod, "get_permitted_fields", wraps=query_mod.get_permitted_fields) as gpf:
+			query(
+				{
+					"from": self.PARENT_DT,
+					"alias": "p",
+					"select": ["p.public_field", "p.restricted_field"],
+					"where": [{"field": "p.public_field", "op": "=", "value": "x"}],
+					"order_by": [{"field": "p.restricted_field", "dir": "asc"}],
+				}
+			)
+		# 4 dotted business-field references, one table -> ACL computed exactly once.
+		self.assertEqual(gpf.call_count, 1)
+
+	def test_acl_memo_reset_between_calls(self):
+		"""The memo is per-CALL: a second query() recomputes rather than reusing the
+		first call's memo, so a permission change mid-request is always honored."""
+		frappe.set_user(self.USER_PRIVILEGED)
+		with patch.object(query_mod, "get_permitted_fields", wraps=query_mod.get_permitted_fields) as gpf:
+			query({"from": self.PARENT_DT, "alias": "p", "select": ["p.restricted_field"]})
+			first = gpf.call_count
+			query({"from": self.PARENT_DT, "alias": "p", "select": ["p.restricted_field"]})
+			second = gpf.call_count
+		self.assertEqual(first, 1)
+		self.assertEqual(second, 2)  # 2nd call recomputed (memo was reset at entry)
+
+	def test_acl_memo_kill_switch_recomputes_per_reference(self):
+		"""With the site-config kill switch set, the memo is bypassed and the ACL is
+		recomputed on every reference (the emergency straight-through fallback)."""
+		frappe.set_user(self.USER_PRIVILEGED)
+		frappe.conf["jarvis_disable_query_acl_memo"] = True
+		try:
+			with patch.object(query_mod, "get_permitted_fields", wraps=query_mod.get_permitted_fields) as gpf:
+				query(
+					{
+						"from": self.PARENT_DT,
+						"alias": "p",
+						"select": ["p.public_field", "p.restricted_field"],
+					}
+				)
+			self.assertEqual(gpf.call_count, 2)  # one per reference, no memo
+		finally:
+			frappe.conf.pop("jarvis_disable_query_acl_memo", None)
