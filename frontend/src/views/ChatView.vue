@@ -4360,6 +4360,7 @@ import FilePreview from "@/components/FilePreview.vue";
 import ModelEffortPicker from "@/components/chat/ModelEffortPicker.vue";
 import AskCard from "@/components/chat/AskCard.vue";
 import { parseAsk } from "@/lib/chatAsk";
+import { sendRejectionCopy } from "@/lib/sendRejectionCopy";
 import { shouldHideActivityTool, isCustomerFacingTool } from "@/lib/activityTools";
 import { parseGoto, gotoFiredKey, parseFiredStamp, claimGotoFire } from "@/lib/chatGoto";
 import { normaliseAction } from "@/lib/chatAction";
@@ -9087,12 +9088,11 @@ async function send(textArg, resendAck) {
 				return;
 			}
 			notify(
-				// Period-neutral copy: "usage_limit" fires from BOTH the all-time
-				// aggregate cap (jarvis.chat.policy._over_total_limit) and the
-				// still-monthly per-model cap (_over_model_limit) - the toast can't
-				// say "monthly" or "all-time" without being wrong for one of them.
+				// "usage_limit" fires from BOTH the aggregate cap and the still-monthly
+				// per-model cap; the envelope names the window (limit_period) only for
+				// the former, so the copy stays period-neutral for the latter.
 				r.reason === "usage_limit"
-					? `You've reached your usage limit. Ask your ${agentName} admin to raise it.`
+					? sendRejectionCopy(r.reason, agentName, r).message
 					: r.reason || "Couldn't send your message.",
 				{ type: "error" }
 			);
