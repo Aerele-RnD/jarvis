@@ -265,9 +265,9 @@ def sync_connection(timeout_s: int | None = None) -> dict:
 	release_notice.persist(data.get("release_notice") or {})
 	# Same cadence: mirror the fleet-wide operator announcement for the soft banner.
 	announcement.persist(data.get("announcement") or {})
-	# Same cadence for the maintenance hold. Present key = authoritative; absent = unknown
-	# -> keep last-known (decision 3).
-	maintenance_notice.persist(data["maintenance"] if "maintenance" in data else None)
+	# Same cadence for the maintenance hold. Marker-aware (see persist_from_connection): an
+	# old/rolled-back CP (no marker) clears; present key = authoritative; absent key = keep.
+	maintenance_notice.persist_from_connection(data)
 	# Same cadence: mirror the backend-owned egress redaction rules for the chat backstop.
 	from jarvis.chat import egress_rules
 

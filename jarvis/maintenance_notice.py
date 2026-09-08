@@ -3,11 +3,13 @@
 The control plane resolves the hold (tenant -> host -> cell) and the bench stores +
 renders it. Pure toggle owned by the CP -- there is NO local TTL / self-clear.
 
-Key discipline (Stream E decision 3): a PRESENT notice dict is authoritative (it sets
-OR clears the mirror); an ABSENT notice (``None``) means the CP could not resolve one
-(a transient / partial payload -- e.g. the destroy+reprovision window) -> KEEP the
-last-known state, so a brief unresolved poll can't flip a live hold off and dump the
-customer into a raw error mid-teardown.
+Key discipline (Stream E, marker-aware -- see ``persist_from_connection``): the CP stamps a
+``maintenance_supported`` capability marker on every payload. Marker ABSENT = an old /
+rolled-back CP -> CLEAR (never strand the bench behind a hold the old CP can't lift). Marker
+present + a PRESENT ``maintenance`` dict = authoritative (sets OR clears). Marker present + an
+ABSENT key = the CP could not resolve one (a transient / partial payload -- e.g. the
+destroy+reprovision window, or a resolver error) -> KEEP the last-known state, so a brief
+unresolved poll can't flip a live hold off and dump the customer into a raw error mid-teardown.
 
 Clearing happens on the CP (operator / roll ``clear_maintenance`` or the fleet-wide
 ``disable_maintenance_hold`` kill-switch); the bench reflects it on the next refresh.
@@ -64,6 +66,30 @@ def boot_payload() -> dict:
 		return {"active": False, "message": ""}
 
 
+def persist_from_connection(conn: dict) -> None:
+	"""Apply the maintenance mirror from a full get_connection payload, honouring the CP
+	capability marker (Stream E review App-1/#1). Three cases:
+
+	- marker ABSENT -> the CP does not speak maintenance (old / rolled back): clear the mirror
+	  authoritatively so a bench is never stranded behind a hold the old CP can no longer lift.
+	- marker present, ``maintenance`` key PRESENT -> authoritative (dict sets or clears).
+	- marker present, ``maintenance`` key ABSENT -> transient / partial payload (destroy window,
+	  or a CP resolver error that omitted the key) -> keep last-known.
+
+	DEPLOY-ORDER GUARDRAIL: a NEW bench must never poll an OLD (un-upgraded) CP while a hold is
+	live, or this clears it every poll -- deploy the CP before the app, and set no hold until both
+	are live. The breadcrumb below is the diagnostic if that ordering is ever violated."""
+	if not conn.get("maintenance_supported"):
+		if boot_payload().get("active"):
+			frappe.logger("jarvis").info(
+				"maintenance: clearing hold -- connection lacks maintenance_supported "
+				"(old/rolled-back control plane); confirm CP-before-app deploy order"
+			)
+		persist({"active": False})  # authoritative clear -- no strand on rollback
+		return
+	persist(conn.get("maintenance"))  # present dict = authoritative; absent -> None -> keep
+
+
 @frappe.whitelist(methods=["POST"])
 def check() -> dict:
 	"""Re-pull the connection from admin and refresh the local maintenance mirror, so an
@@ -79,8 +105,7 @@ def check() -> dict:
 		try:
 			conn = admin_client.get_connection(timeout_s=8) or {}
 			release_notice.persist(conn.get("release_notice") or {})
-			# Present key = authoritative; absent = unknown -> keep last-known (decision 3).
-			persist(conn["maintenance"] if "maintenance" in conn else None)
+			persist_from_connection(conn)
 		except Exception:
 			frappe.log_error(title="maintenance_notice.check failed", message=frappe.get_traceback())
 	return boot_payload()
