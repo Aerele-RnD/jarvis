@@ -58,7 +58,11 @@ describe("UsagePill", () => {
 	it("popover shows the window, the reset and the all-time total", () => {
 		const w = mount(UsagePill, { props: { usage: weekly({ period_tokens: 820000 }) } });
 		const text = w.text();
-		expect(text).toContain("Usage limit");
+		expect(text).toContain("Jarvis usage");
+		expect(text).toContain(
+			"Your allowance in Jarvis, set by your admin. Not your model provider's usage."
+		);
+		expect(text).not.toContain("Usage limit");
 		expect(text).toContain("820k of 1M");
 		expect(text).toContain("Sunday 00:00");
 		expect(text).toContain("4.2M");
