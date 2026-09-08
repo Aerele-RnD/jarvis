@@ -549,6 +549,13 @@
 				</div>
 			</div>
 
+			<!-- Customer announcement banner (Slice B): the fleet-wide operator
+			     notice, coloured by severity (Info/Warning). Same top-of-chat slot
+			     and suppressors as the update banner, but wins the slot when both
+			     want it (the update banner yields via !announcementVisible). Never
+			     stacks, never hides chat. -->
+			<AnnouncementBanner v-if="announcementVisible" />
+
 			<!-- Release-nudge banner (Slice 3b): severity-coloured (amber for soft,
 			     red for severe), top-of-chat. Shows over the welcome screen; yields
 			     to the greeting/booting states and to any urgent billing/readiness
@@ -4516,8 +4523,10 @@ import ModelEffortPicker from "@/components/chat/ModelEffortPicker.vue";
 import AskCard from "@/components/chat/AskCard.vue";
 import VersionPill from "@/components/chat/VersionPill.vue";
 import UpdateBanner from "@/components/chat/UpdateBanner.vue";
+import AnnouncementBanner from "@/components/chat/AnnouncementBanner.vue";
 import WhatsNewDialog from "@/components/chat/WhatsNewDialog.vue";
 import { showBanner } from "@/noticeGate";
+import { showAnnouncement } from "@/announcementGate";
 import { parseAsk } from "@/lib/chatAsk";
 import { shouldHideActivityTool, isCustomerFacingTool } from "@/lib/activityTools";
 import { parseGoto, gotoFiredKey, parseFiredStamp, claimGotoFire } from "@/lib/chatGoto";
@@ -4842,13 +4851,30 @@ const hasUrgentAlert = computed(
 			notReadyNotice.value
 		)
 );
+// The operator announcement banner shares the top-of-chat slot and the same
+// suppressors as the update banner (yield to greeting/booting/urgent alerts),
+// but WINS the slot when both want it (the update banner yields below via
+// `!announcementVisible`) - an operator's fleet-wide notice outranks a version
+// nudge. Shows over the welcome screen too.
+const announcementVisible = computed(
+	() =>
+		showAnnouncement.value &&
+		!booting.value &&
+		!bizGreeting.value.show &&
+		!hasUrgentAlert.value
+);
 // The soft banner shows whenever it's a not-snoozed soft/severe notice AND the
 // top-of-chat region is otherwise clear (no greeting/booting) AND no urgent
-// alert is competing for attention - it also shows over the welcome screen
-// (the highest-traffic surface), which no longer suppresses it. The pill
-// stays regardless.
+// alert is competing for attention AND the announcement banner isn't taking the
+// slot - it also shows over the welcome screen (the highest-traffic surface),
+// which no longer suppresses it. The pill stays regardless.
 const updateBannerVisible = computed(
-	() => showBanner.value && !bizGreeting.value.show && !booting.value && !hasUrgentAlert.value
+	() =>
+		showBanner.value &&
+		!bizGreeting.value.show &&
+		!booting.value &&
+		!hasUrgentAlert.value &&
+		!announcementVisible.value
 );
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
