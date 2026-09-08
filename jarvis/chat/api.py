@@ -2396,7 +2396,30 @@ def get_conversation_context(conversation: str) -> dict:
 	_get_owned_conversation(conversation)
 	from jarvis.chat import compaction
 
-	return compaction.context_payload(conversation)
+	payload = compaction.context_payload(conversation)
+	# The composer's usage pill rides this payload (fetched on open and after
+	# every turn anyway) instead of making a request of its own: one indexed
+	# read of the caller's own settings row, no doc load.
+	payload["usage"] = _cap_reading(frappe.session.user)
+	return payload
+
+
+def _cap_reading(user: str) -> dict:
+	"""The caller's token cap and what counts against it, for the usage pill.
+	No row yet (recording has not started) reads as no cap."""
+	row = frappe.db.get_value(
+		"Jarvis User Settings",
+		{"user": user},
+		["monthly_token_limit", "total_tokens", *period_select_fields()],
+		as_dict=True,
+	)
+	if not row:
+		return {"monthly_token_limit": 0, "total_tokens": 0, "limit_period": "All time", "period_tokens": 0}
+	return {
+		"monthly_token_limit": int(row.monthly_token_limit or 0),
+		"total_tokens": int(row.total_tokens or 0),
+		**user_settings_api._period_fields(row),
+	}
 
 
 @frappe.whitelist()

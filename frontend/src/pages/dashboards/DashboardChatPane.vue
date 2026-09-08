@@ -328,7 +328,7 @@ import AskCard from "@/components/chat/AskCard.vue";
 import CompactDialog from "@/components/chat/CompactDialog.vue";
 import ContextRing from "@/components/chat/ContextRing.vue";
 import UsagePill from "@/components/chat/UsagePill.vue";
-import { myUsage, loadMyUsage } from "@/stores/usage";
+import { myUsage, loadMyUsage, takeUsage } from "@/stores/usage";
 import ModelEffortPicker from "@/components/chat/ModelEffortPicker.vue";
 import { renderMarkdown } from "@/markdown";
 import { parseAsk } from "@/lib/chatAsk";
@@ -476,8 +476,8 @@ async function loadContext({ applyCompacting = false } = {}) {
 		return;
 	}
 	try {
-		loadMyUsage();
 		const c = await getConversationContext(id);
+		takeUsage(c);
 		if (conversation.value !== id) return;
 		if (c && c.fresh) contextInfo.value = c;
 		if (applyCompacting) compacting.value = !!(c && c.compacting);
@@ -1170,6 +1170,7 @@ function startNoSocketLadder() {
 }
 
 onMounted(() => {
+	loadMyUsage();
 	loadDashboardChats();
 	getChatUiSettings()
 		.then((data) => {
