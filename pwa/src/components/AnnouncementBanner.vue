@@ -19,8 +19,30 @@ const showLink = isSafeLink(announcement.link_url);
 <template>
 	<!-- Coloured by severity - accent (Info) or amber (Warning). -->
 	<div class="jv-announcementbanner" :class="'jv-tone-' + tone">
+		<!-- Tone is conveyed by the icon shape (triangle vs circle) as well as colour,
+		     not colour alone. Decorative: the severity is also in the visible prose. -->
 		<svg
+			v-if="tone === 'warning'"
 			class="jv-an-icon"
+			aria-hidden="true"
+			viewBox="0 0 24 24"
+			width="16"
+			height="16"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<path
+				d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+			/>
+			<path d="M12 9v4M12 17h.01" />
+		</svg>
+		<svg
+			v-else
+			class="jv-an-icon"
+			aria-hidden="true"
 			viewBox="0 0 24 24"
 			width="16"
 			height="16"
@@ -103,7 +125,9 @@ const showLink = isSafeLink(announcement.link_url);
 	font-size: 13px;
 	font-weight: 600;
 	line-height: 1.4;
-	color: var(--jv-tone);
+	/* High-contrast neutral ink, not the tone colour: the Info tone (accent) on its
+	   tinted bg misses WCAG AA for text. Tone reads via the icon + border instead. */
+	color: var(--ink9);
 }
 .jv-an-msg {
 	font-size: 13px;
@@ -127,7 +151,8 @@ const showLink = isSafeLink(announcement.link_url);
 	font-family: inherit;
 	font-size: 12.5px;
 	font-weight: 600;
-	color: var(--jv-tone);
+	/* Neutral high-contrast ink (AA), tonal border keeps it on-theme. */
+	color: var(--ink9);
 	text-decoration: none;
 	white-space: nowrap;
 }
