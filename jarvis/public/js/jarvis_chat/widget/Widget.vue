@@ -81,6 +81,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
+import { maintenance, startPollIfHeld } from "./maintenance_state.mjs";
 import { FULL_CHAT_URL, conversationUrl, PANEL_MIN_VIEWPORT_PX } from "./config.mjs";
 import { contextFromRoute } from "./desk_context.mjs";
 import { panelLayout } from "./panel_anchor.mjs";
@@ -164,10 +165,11 @@ const hasAccess = Boolean(window.frappe?.boot?.jarvis_has_access);
 // Whitelabel FAB label + mark (set_jarvis_boot); blank => Jarvis defaults.
 const brandName = (window.frappe?.boot?.jarvis_agent_name || "").trim() || "Jarvis";
 const brandLogoUrl = (window.frappe?.boot?.jarvis_brand_logo_url || "").trim();
-// Upgrade maintenance hold (Stream E): the FAB rests with sleepy lids + z z z during
-// a hold, mirroring the panel avatar. Read from boot at mount (whitelabel logo -> no
-// face, same as the spark branch).
-const maintenanceActive = Boolean(window.frappe?.boot?.jarvis_maintenance?.active);
+// Upgrade maintenance hold (Stream E): the FAB rests with sleepy lids + z z z during a
+// hold, mirroring the panel avatar. Reactive off the SHARED state (maintenance_state.mjs) so
+// the FAB and the open panel never disagree, and a 60s poll (armed in onMounted) lifts it
+// when the roll finishes - even if the panel is never opened (whitelabel logo -> no face).
+const maintenanceActive = computed(() => maintenance.active);
 
 // ---- Side chat panel: open state and the Desk record it is looking at. ----
 const panelRef = ref(null);
@@ -494,6 +496,9 @@ function onResize() {
 }
 
 onMounted(() => {
+	// Arm the maintenance lift-poll (the module self-arms at load too); the always-mounted FAB
+	// drives it so a held bubble self-heals even when the panel is never opened.
+	startPollIfHeld();
 	// The Desk's dark flag is read in JS, not CSS: this component's
 	// `:global([data-theme=dark]) .jvw-root` compiled to a bare
 	// `[data-theme=dark]` rule, so its custom properties landed on <html> and
