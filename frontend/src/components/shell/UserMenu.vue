@@ -19,7 +19,13 @@
 				     exactly what let the chat welcome mark drift to a different colour
 				     (design.md §2.2). idlePeek: this is the one mark that sits resting on
 				     every route, so it's the chosen surface for the designed idle blink. -->
-				<JarvisMark :size="28" :radius="7" :peek="brandPeek" idlePeek />
+				<JarvisMark
+					:size="28"
+					:radius="7"
+					:peek="brandPeek"
+					:mood="holdActive ? 'upgrading' : 'star'"
+					idlePeek
+				/>
 				<div
 					class="flex flex-1 flex-col overflow-hidden text-left duration-300 ease-in-out"
 					:class="isCollapsed ? 'ml-0 w-0 opacity-0' : 'ml-2 w-auto opacity-100'"
@@ -50,6 +56,7 @@ import { useShellStore } from "@/stores/shell";
 import { useSupportStore } from "@/stores/support";
 import { useJarvisTheme } from "@/theme";
 import { agentName } from "@/branding";
+import { holdActive } from "@/maintenanceGate";
 
 const props = defineProps({
 	isCollapsed: { type: Boolean, default: false },

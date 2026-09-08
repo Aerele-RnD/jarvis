@@ -68,6 +68,9 @@ _BLOCK_SENTENCE = {
 	"workspace_resetting": (
 		"Scheduled run deferred: the workspace is being rebuilt. It will retry on the next hourly tick."
 	),
+	"maintenance": (
+		"Scheduled run deferred: this workspace is being upgraded. It will retry on the next hourly tick."
+	),
 	BLOCK_STEP_BUDGET: (
 		"Scheduled run skipped: this month's budget for scheduled macro runs is used up. "
 		"Runs resume next month, or ask an admin to raise the budget in Jarvis Settings."
@@ -85,6 +88,7 @@ _BLOCK_SENTENCE = {
 _TRANSIENT_BLOCKS = {
 	"release_update_required",
 	"workspace_resetting",
+	"maintenance",
 	BLOCK_DISPATCH_FAILED,
 }
 
