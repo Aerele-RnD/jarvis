@@ -203,9 +203,6 @@ def admin_list_user_usage() -> dict:
 		fields=[
 			"user",
 			"monthly_token_limit",
-			"limit_period",
-			"period_key",
-			"period_tokens",
 			"usage_month",
 			"month_tokens",
 			"month_input_tokens",
@@ -213,6 +210,7 @@ def admin_list_user_usage() -> dict:
 			"total_tokens",
 			"last_usage_at",
 			"last_synced_at",
+			*usage.period_select_fields(),
 		],
 	)
 	# One batched query for both "is this user enabled" and full_name, instead
