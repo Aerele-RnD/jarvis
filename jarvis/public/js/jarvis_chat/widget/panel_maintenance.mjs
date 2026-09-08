@@ -18,3 +18,11 @@ export function maintenanceActiveAfterSend(res) {
   }
   return false;
 }
+
+// The shared reactive state (maintenance_state.mjs) folds a send() response through this pure
+// reducer, so the code that actually runs (foldSend) is the code under test. Returns the next
+// {active}: a null from maintenanceActiveAfterSend (unrelated refusal) keeps the current state.
+export function nextFromSend(state, res) {
+  const next = maintenanceActiveAfterSend(res);
+  return next === null ? { active: state.active } : { active: next };
+}

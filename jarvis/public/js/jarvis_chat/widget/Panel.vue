@@ -664,7 +664,7 @@ import { resizeFrom } from "./panel_size.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { classifyReadiness, degradedActionable, shouldWarnWorkers } from "./panel_readiness.mjs";
 import { sendRefusalMessage } from "./panel_send_copy.mjs";
-import { maintenanceActiveAfterSend } from "./panel_maintenance.mjs";
+import { maintenance, foldSend, startPollIfHeld } from "./maintenance_state.mjs";
 import {
 	emptyStream,
 	applyEvent,
@@ -1014,22 +1014,17 @@ const shownMessages = computed(() => visibleMessages(messages.value));
 // synchronously so there's no flash. Blank => Jarvis defaults.
 const brandName = (window.frappe?.boot?.jarvis_agent_name || "").trim() || "Jarvis";
 const brandLogoUrl = (window.frappe?.boot?.jarvis_brand_logo_url || "").trim();
-// Upgrade maintenance hold (Stream E): seeded from boot (jarvis_maintenance =
-// {active, message}, set_jarvis_boot), raised if a send is refused with reason
-// "maintenance" while the bubble is open, and cleared the moment a later send gets
-// through (the roll finished). The composer never blocks - a held send shows the
-// friendly refusal, not a dead box. The custom operator message (brand-scrubbed
-// server-side) wins over the branded default; the server refusal carries only the
-// reason, so the boot message is the source of the custom text.
-const _maint = window.frappe?.boot?.jarvis_maintenance || {};
-const maintenanceActive = ref(!!_maint.active);
-const maintenanceMessage = ref((_maint.message || "").trim());
+// Upgrade maintenance hold (Stream E): the panel + the FAB share ONE reactive source
+// (maintenance_state.mjs, seeded from boot) so they can never disagree, and a 60s poll
+// (armed on mount / on a raised send) lifts the banner when the roll finishes even on an
+// idle open bubble. The composer never blocks - a held send shows the friendly refusal,
+// not a dead box. The custom operator message (brand-scrubbed server-side) wins over the
+// branded default; the server refusal carries only the reason.
+const maintenanceActive = computed(() => maintenance.active);
+const maintenanceMessage = computed(() => maintenance.message);
 const maintenanceText = computed(
-	// Reuse the single-sourced copy (sendRefusalMessage) instead of a 3rd hardcoded copy of
-	// the sentence, so a wording change can't leave this banner out of sync with the inline
-	// refusal / the SPA. NOTE: there is no widget-side recheck()/poll - this desk bundle
-	// cannot import frontend/src (see panel_send_copy.mjs's header), so the hold clears on
-	// the next accepted send (maintenanceActiveAfterSend) or a Desk reload.
+	// Reuse the single-sourced copy (sendRefusalMessage) instead of a 3rd hardcoded copy of the
+	// sentence, so a wording change can't leave this banner out of sync with the inline refusal.
 	() => maintenanceMessage.value || sendRefusalMessage("maintenance", brandName)
 );
 // A turn is in flight from the moment the POST is away until the first token
@@ -1502,10 +1497,9 @@ async function send() {
 		const approvalTokens = orderedPending.value.map((p) => p.token);
 		const res = await sendMessage(convId.value, text, props.context, atts, approvalTokens);
 		if (res?.conversation_id) convId.value = res.conversation_id;
-		// Fold this response into the maintenance banner: raise on a "maintenance"
-		// refusal, clear once any send/confirm gets past the gate (proof it lifted).
-		const maintNext = maintenanceActiveAfterSend(res);
-		if (maintNext !== null) maintenanceActive.value = maintNext;
+		// Fold this response into the shared maintenance state: raise on a "maintenance"
+		// refusal (and arm the lift-poll), clear once any send/confirm gets past the gate.
+		foldSend(res);
 		// A send the server refused outright (e.g. a required app update, via the
 		// same validate_can_send gate as the full chat) starts no turn and returns
 		// no conversation. Surface the reason and STOP — otherwise the fall-through
@@ -1759,6 +1753,9 @@ function startPolling() {
 }
 
 onMounted(() => {
+	// Arm the maintenance lift-poll if the panel opens already held (the FAB self-arms it at
+	// module load too, so an unopened held bubble also self-heals).
+	startPollIfHeld();
 	isDark.value = isDarkNow();
 	unwatchTheme = watchTheme((d) => {
 		isDark.value = d;

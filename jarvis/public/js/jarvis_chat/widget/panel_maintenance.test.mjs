@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { maintenanceActiveAfterSend } from "./panel_maintenance.mjs";
+import {
+  maintenanceActiveAfterSend,
+  nextFromSend,
+} from "./panel_maintenance.mjs";
 
 test("a maintenance refusal raises the banner", () => {
   assert.equal(
@@ -41,4 +44,40 @@ test("a confirmed parked card clears the banner — even a partial one (ok:false
 test("an empty/undefined response clears rather than sticking a stale hold", () => {
   assert.equal(maintenanceActiveAfterSend(undefined), false);
   assert.equal(maintenanceActiveAfterSend(null), false);
+});
+
+test("nextFromSend raises on a maintenance refusal", () => {
+  assert.deepEqual(
+    nextFromSend({ active: false }, { ok: false, reason: "maintenance" }),
+    {
+      active: true,
+    }
+  );
+});
+
+test("nextFromSend clears on an accepted send / confirmed card", () => {
+  assert.deepEqual(nextFromSend({ active: true }, { ok: true }), {
+    active: false,
+  });
+  assert.deepEqual(nextFromSend({ active: true }, { confirmed: true }), {
+    active: false,
+  });
+});
+
+test("nextFromSend keeps the current state on an unrelated refusal (null)", () => {
+  assert.deepEqual(
+    nextFromSend(
+      { active: true },
+      { ok: false, reason: "release_update_required" }
+    ),
+    {
+      active: true,
+    }
+  );
+  assert.deepEqual(
+    nextFromSend({ active: false }, { ok: false, reason: "usage_limit" }),
+    {
+      active: false,
+    }
+  );
 });
