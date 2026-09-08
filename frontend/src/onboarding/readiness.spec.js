@@ -539,3 +539,47 @@ describe("landing step", () => {
 		);
 	});
 });
+
+/**
+ * Slice 3b review wave: the release-nudge banner's visibility is two computeds in
+ * ChatView.vue - hasUrgentAlert (what the soft banner yields to) and
+ * updateBannerVisible (when it renders). Mounting ChatView is not viable (see the
+ * source-slice suites above), so these slice the two computeds and pin the
+ * decision text, the same technique those suites already use on this file.
+ */
+describe("update-banner visibility rules (Slice 3b review wave)", () => {
+	const HERE = path.dirname(fileURLToPath(import.meta.url));
+	const chatSrc = fs.readFileSync(path.join(HERE, "..", "views", "ChatView.vue"), "utf8");
+
+	function sliceComputed(name) {
+		const start = chatSrc.indexOf(`const ${name} = computed(`);
+		expect(start, `ChatView must still define ${name}`).not.toBe(-1);
+		const end = chatSrc.indexOf(");", start);
+		expect(end, `${name} must be a closed computed(...)`).not.toBe(-1);
+		return chatSrc.slice(start, end);
+	}
+
+	it("hasUrgentAlert INCLUDES llmApplyStuck (chat genuinely can't answer, so the nudge yields)", () => {
+		// llmApplyStuck's own ref comment says chat "genuinely cannot answer" - an
+		// aged-out apply, not a still-converging one - so the update banner must
+		// yield to it. Dropping it (the pre-fix state) stacked a "please update"
+		// nudge over a chat that couldn't answer at all.
+		expect(sliceComputed("hasUrgentAlert")).toContain("llmApplyStuck");
+	});
+
+	it("hasUrgentAlert does NOT yield to the soft heads-ups (workersWarnNotice/llmApplying)", () => {
+		// Those keep chat working, so the update banner should show over them - a
+		// bench low on workers, or a routine mid-apply, would otherwise NEVER
+		// surface the nudge. ("llmApplyStuck" is present but does not match the
+		// "llmApplying" substring.)
+		const body = sliceComputed("hasUrgentAlert");
+		expect(body).not.toContain("workersWarnNotice");
+		expect(body).not.toContain("llmApplying");
+	});
+
+	it("updateBannerVisible no longer suppresses on showWelcome (banner shows over the welcome screen)", () => {
+		// The highest-traffic surface. Re-adding showWelcome here would hide the
+		// nudge from the users most likely to see only the welcome screen.
+		expect(sliceComputed("updateBannerVisible")).not.toContain("showWelcome");
+	});
+});

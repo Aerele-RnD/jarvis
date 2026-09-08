@@ -549,10 +549,11 @@
 				</div>
 			</div>
 
-			<!-- Release-nudge soft banner (Slice 3b): calm info/blue, top-of-chat.
-			     Yields to the greeting/welcome/booting states and to any urgent
-			     billing/readiness alert (updateBannerVisible); dismiss minimises it
-			     into the version pill. Never stacks, never hides chat. -->
+			<!-- Release-nudge banner (Slice 3b): severity-coloured (amber for soft,
+			     red for severe), top-of-chat. Shows over the welcome screen; yields
+			     to the greeting/booting states and to any urgent billing/readiness
+			     alert, including a stuck apply (updateBannerVisible). Dismiss
+			     minimises it into the version pill. Never stacks, never hides chat. -->
 			<UpdateBanner v-if="updateBannerVisible" :pill="versionPillRef" />
 
 			<!-- initial load: a quiet spinner so the welcome screen doesn't flash
@@ -4650,33 +4651,34 @@ function dismissBillingAlert() {
 // The version pill (header) exposes { getEl, pulse }; the soft banner reaches
 // for it to minimise-into-pill on dismiss.
 const versionPillRef = ref(null);
-// Any composer-region billing/readiness alert that is live. The soft update
-// banner yields to all of them (never stacks, never competes with something the
-// customer must act on) - it is the least urgent surface here.
+// Composer-region alerts that make the chat genuinely UNUSABLE or paused - a
+// "please update" nudge on top of one of these is noise, so the soft banner
+// yields to them. llmApplyStuck is one of these: its own ref comment says chat
+// "genuinely cannot answer" (an aged-out apply, not a still-converging one), so
+// the update banner yields to it too. It does NOT yield to the soft,
+// chat-still-works heads-ups - workersWarnNotice (a bench low on workers, which
+// would otherwise NEVER show the update banner) and llmApplying (a quiet "still
+// converging" heads-up): those render above the composer, don't visually
+// conflict with the top-of-chat banner, and chat still works under them.
 const hasUrgentAlert = computed(
 	() =>
 		!!(
 			replacedAlert.value ||
 			billingAlert.value ||
 			suspendedNotice.value ||
-			workersWarnNotice.value ||
 			noAiConnected.value ||
 			containerUnavailable.value ||
-			notReadyNotice.value ||
-			llmApplying.value ||
-			llmApplyStuck.value
+			llmApplyStuck.value ||
+			notReadyNotice.value
 		)
 );
-// The soft banner shows only when: it's a not-snoozed soft notice AND the
-// top-of-chat region is otherwise clear (no greeting/welcome/booting) AND no
-// urgent alert is competing for attention. The pill stays regardless.
+// The soft banner shows whenever it's a not-snoozed soft/severe notice AND the
+// top-of-chat region is otherwise clear (no greeting/booting) AND no urgent
+// alert is competing for attention - it also shows over the welcome screen
+// (the highest-traffic surface), which no longer suppresses it. The pill
+// stays regardless.
 const updateBannerVisible = computed(
-	() =>
-		showBanner.value &&
-		!bizGreeting.value.show &&
-		!showWelcome.value &&
-		!booting.value &&
-		!hasUrgentAlert.value
+	() => showBanner.value && !bizGreeting.value.show && !booting.value && !hasUrgentAlert.value
 );
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
