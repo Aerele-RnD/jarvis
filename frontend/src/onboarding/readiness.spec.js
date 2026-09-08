@@ -412,6 +412,69 @@ describe("ChatView banner chain order", () => {
 });
 
 /**
+ * Upgrade maintenance hold (Stream E). Same source-read technique as the suites
+ * above (mounting ChatView is not viable). Pins the four load-bearing wiring
+ * facts: the hold banner outranks the release nudge, the composer stays enabled,
+ * and the send-gate branch mirrors the server's policy order without a reload.
+ */
+describe("maintenance hold banner + send gate", () => {
+	const HERE = path.dirname(fileURLToPath(import.meta.url));
+	const chatSrc = fs.readFileSync(path.join(HERE, "..", "views", "ChatView.vue"), "utf8");
+
+	it("renders the hold banner before (above) the release-nudge update banner", () => {
+		const hold = chatSrc.indexOf('v-if="holdActive"');
+		const update = chatSrc.indexOf('v-if="updateBannerVisible"');
+		expect(hold, "ChatView must render the maintenance hold banner").not.toBe(-1);
+		expect(update, "ChatView must still render the update banner").not.toBe(-1);
+		// The hold is the more urgent state; the two must never stack (holdActive is
+		// also in hasUrgentAlert, which suppresses updateBannerVisible).
+		expect(hold).toBeLessThan(update);
+	});
+
+	it("suppresses the update banner while a hold is active (holdActive in hasUrgentAlert)", () => {
+		const start = chatSrc.indexOf("const hasUrgentAlert = computed(");
+		expect(start, "ChatView must still define hasUrgentAlert").not.toBe(-1);
+		const end = chatSrc.indexOf(");", start);
+		expect(chatSrc.slice(start, end)).toContain("holdActive.value");
+	});
+
+	it("never gates canSend on holdActive (composer stays enabled - soft refusal only)", () => {
+		const start = chatSrc.indexOf("const canSend = computed(");
+		expect(start, "ChatView must still define canSend").not.toBe(-1);
+		const end = chatSrc.indexOf("\n);", start);
+		expect(chatSrc.slice(start, end)).not.toContain("holdActive");
+	});
+
+	it("orders the send-gate maintenance branch between release-update and workspace-resetting", () => {
+		// Searched from send()'s start so retry()'s own maintenance branch (earlier
+		// in the file) doesn't shadow these positions.
+		const sendStart = chatSrc.indexOf("async function send(");
+		expect(sendStart, "ChatView must still define send()").not.toBe(-1);
+		const rel = chatSrc.indexOf('r.reason === "release_update_required"', sendStart);
+		const maint = chatSrc.indexOf('r.reason === "maintenance"', sendStart);
+		const reset = chatSrc.indexOf('r.reason === "workspace_resetting"', sendStart);
+		expect(rel).not.toBe(-1);
+		expect(maint, "send() must handle the maintenance reason").not.toBe(-1);
+		expect(reset).not.toBe(-1);
+		// Mirrors jarvis.chat.policy.validate_can_send: release_update_required ->
+		// maintenance -> workspace_resetting.
+		expect(rel).toBeLessThan(maint);
+		expect(maint).toBeLessThan(reset);
+	});
+
+	it("raises the hold (no reload) in the send-gate maintenance branch", () => {
+		const sendStart = chatSrc.indexOf("async function send(");
+		const maint = chatSrc.indexOf('r.reason === "maintenance"', sendStart);
+		const reset = chatSrc.indexOf('r.reason === "workspace_resetting"', sendStart);
+		const branch = chatSrc.slice(maint, reset);
+		// Self-heal via raiseHold + recheck, NOT a page reload (a hold is transient,
+		// unlike release_update_required which reloads onto the full-page gate).
+		expect(branch).toContain("raiseHold");
+		expect(branch).not.toContain("window.location.reload");
+	});
+});
+
+/**
  * The hard "no workers" block is gone: RQ's worker registry can read zero
  * while every worker is alive (a worker hash that expired during a heartbeat
  * gap comes back without its queues), so the server never refuses a send for

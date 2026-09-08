@@ -1,6 +1,6 @@
 import frappe
 
-from jarvis import announcement, release_notice
+from jarvis import announcement, maintenance_notice, release_notice
 from jarvis.permissions import has_jarvis_access
 
 no_cache = 1
@@ -53,5 +53,6 @@ def get_context(context):
 	context.boot["release_notice"] = release_notice.boot_payload()
 	# Customer announcement (operator-authored) — same soft banner on the PWA path.
 	context.boot["announcement"] = announcement.boot_payload()
+	context.boot["maintenance"] = maintenance_notice.boot_payload()
 	frappe.db.commit()
 	return context
