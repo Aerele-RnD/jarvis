@@ -782,7 +782,21 @@ class TestSkillChildTableBatch(SkillToolsTestCase):
 
 	def test_gate_fires_for_multi_row_normal_user(self):
 		with patch(_PREFETCH) as pf:
-			rows = [{"name": "x"}, {"name": "y"}]
+			rows = [{"name": "x", "owner": "other@example.com"}, {"name": "y", "owner": "other@example.com"}]
+			_maybe_prefetch_children(rows, "u@example.com", ["Jarvis User"])
+		pf.assert_called_once_with(rows)
+
+	def test_gate_skips_when_all_rows_owned_by_caller(self):
+		# Every row the caller owns short-circuits user_can_use_skill before any
+		# child read, so there is nothing to batch.
+		rows = [{"name": "x", "owner": "u@example.com"}, {"name": "y", "owner": "u@example.com"}]
+		with patch(_PREFETCH) as pf:
+			_maybe_prefetch_children(rows, "u@example.com", ["Jarvis User"])
+		pf.assert_not_called()
+
+	def test_gate_fires_when_any_row_owned_by_other(self):
+		rows = [{"name": "x", "owner": "u@example.com"}, {"name": "y", "owner": "other@example.com"}]
+		with patch(_PREFETCH) as pf:
 			_maybe_prefetch_children(rows, "u@example.com", ["Jarvis User"])
 		pf.assert_called_once_with(rows)
 

@@ -57,6 +57,12 @@ def _maybe_prefetch_children(rows: list, user: str, user_roles: list[str]) -> No
 		return
 	if user == "Administrator" or "System Manager" in user_roles:
 		return
+	# Every row the caller OWNS short-circuits user_can_use_skill before any child
+	# read, so if the caller owns them all there is nothing to batch (those rows
+	# cost 0 child queries on the per-row path — batching would only add 2). Fire
+	# only when at least one row belongs to someone else.
+	if not any(r.get("owner") != user for r in rows):
+		return
 	from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
 		prefetch_child_values,
 	)
