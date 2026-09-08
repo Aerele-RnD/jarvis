@@ -101,18 +101,28 @@ defineExpose({ getEl: handle.getEl, pulse });
 	text-overflow: ellipsis;
 }
 
-/* Tone drives the dot AND the label colour, straight off the app palette. */
+/* Tone drives the dot, the label colour, AND a subtle border in the same hue
+   (color-mix'd down so it reads as a tint, not a solid tone-coloured chip). */
+.jv-tone-green {
+	border-color: color-mix(in srgb, var(--green) 40%, transparent);
+}
 .jv-tone-green .jv-pill-dot {
 	background: var(--green);
 }
 .jv-tone-green .jv-pill-label {
 	color: var(--green);
 }
+.jv-tone-amber {
+	border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+}
 .jv-tone-amber .jv-pill-dot {
 	background: var(--amber);
 }
 .jv-tone-amber .jv-pill-label {
 	color: var(--amber);
+}
+.jv-tone-red {
+	border-color: color-mix(in srgb, var(--red) 40%, transparent);
 }
 .jv-tone-red .jv-pill-dot {
 	background: var(--red);
