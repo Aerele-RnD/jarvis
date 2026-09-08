@@ -68,10 +68,14 @@ def _amend_one(doctype: str, name: str) -> "frappe.model.document.Document":
 			f"{doctype} is not submittable - amendment only applies to docstatus-tracked DocTypes"
 		)
 
-	if not frappe.has_permission(doctype, ptype="amend", doc=name):
+	# Load once, then check permission on the loaded source object (has_permission
+	# with a name string would lazy-load the parent row this get_doc already
+	# fetches). The check runs before copy_doc(source) below, which does not
+	# mutate source; the docstatus reads don't either.
+	source = frappe.get_doc(doctype, name)
+	if not frappe.has_permission(doctype, ptype="amend", doc=source):
 		raise PermissionDeniedError(f"no amend permission on {doctype} '{name}'")
 
-	source = frappe.get_doc(doctype, name)
 	if source.docstatus == 0:
 		raise InvalidArgumentError(
 			f"{doctype} '{name}' is in Draft (docstatus=0); amend is for "
