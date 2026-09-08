@@ -24,9 +24,12 @@ from jarvis.chat.custom_skills import (
 	prefixed_slug,
 )
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
+	prefetch_child_values as _real_prefetch,
+)
 from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
 from jarvis.tools.create_custom_skill import create_custom_skill
-from jarvis.tools.find_skills import find_skills
+from jarvis.tools.find_skills import _maybe_prefetch_children, find_skills
 from jarvis.tools.get_skill import (
 	_LEARNED_PREFIX,
 	_MISS_AUDIT_PREFIX,
@@ -734,3 +737,109 @@ class TestReceiptRefStamping(SkillToolsTestCase):
 		self.assertFalse(row.ref_doctype)
 		self.assertFalse(row.ref_name)
 		self.assertEqual(row.tool_status, "error")
+
+
+# Patch target for the lazy import inside _maybe_prefetch_children.
+_PREFETCH = "jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill.prefetch_child_values"
+_CHILD_DTS = ("Jarvis Custom Skill Share", "Jarvis Custom Skill Allowed Role")
+
+
+@contextlib.contextmanager
+def _count_child_get_all():
+	"""Count frappe.get_all calls against the skill child tables, so we can prove
+	the per-row _child_values fallback (an N+1) was replaced by one batch."""
+	counts = {"total": 0}
+	real = frappe.get_all
+
+	def spy(doctype, *a, **k):
+		if doctype in _CHILD_DTS:
+			counts["total"] += 1
+		return real(doctype, *a, **k)
+
+	with patch("frappe.get_all", side_effect=spy):
+		yield counts
+
+
+class TestSkillChildTableBatch(SkillToolsTestCase):
+	"""LANE 2: find_skills/get_skill batch-load the visibility child tables in one
+	query instead of a per-candidate _child_values fallback (N+1)."""
+
+	# --- the prefetch gate (pure unit tests) ---
+	def test_gate_skips_single_row(self):
+		with patch(_PREFETCH) as pf:
+			_maybe_prefetch_children([{"name": "x"}], "u@example.com", ["Jarvis User"])
+		pf.assert_not_called()
+
+	def test_gate_skips_system_manager(self):
+		with patch(_PREFETCH) as pf:
+			_maybe_prefetch_children([{"name": "x"}, {"name": "y"}], "u@example.com", ["System Manager"])
+		pf.assert_not_called()
+
+	def test_gate_skips_administrator(self):
+		with patch(_PREFETCH) as pf:
+			_maybe_prefetch_children([{"name": "x"}, {"name": "y"}], "Administrator", [])
+		pf.assert_not_called()
+
+	def test_gate_fires_for_multi_row_normal_user(self):
+		with patch(_PREFETCH) as pf:
+			rows = [{"name": "x", "owner": "other@example.com"}, {"name": "y", "owner": "other@example.com"}]
+			_maybe_prefetch_children(rows, "u@example.com", ["Jarvis User"])
+		pf.assert_called_once_with(rows)
+
+	def test_gate_skips_when_all_rows_owned_by_caller(self):
+		# Every row the caller owns short-circuits user_can_use_skill before any
+		# child read, so there is nothing to batch.
+		rows = [{"name": "x", "owner": "u@example.com"}, {"name": "y", "owner": "u@example.com"}]
+		with patch(_PREFETCH) as pf:
+			_maybe_prefetch_children(rows, "u@example.com", ["Jarvis User"])
+		pf.assert_not_called()
+
+	def test_gate_fires_when_any_row_owned_by_other(self):
+		rows = [{"name": "x", "owner": "u@example.com"}, {"name": "y", "owner": "other@example.com"}]
+		with patch(_PREFETCH) as pf:
+			_maybe_prefetch_children(rows, "u@example.com", ["Jarvis User"])
+		pf.assert_called_once_with(rows)
+
+	# --- integration: the N+1 is gone, verdicts unchanged ---
+	def test_find_skills_batches_child_reads(self):
+		"""3 Org skills, non-owner caller: child tables read in 2 batched queries,
+		not 2-per-row (6). Also proves []-seeded rows evaluate to the same verdict
+		(all three stay visible)."""
+		for slug in ("sttool-batch-a", "sttool-batch-b", "sttool-batch-c"):
+			_make_skill(OWNER, slug, "batchmatch org skill", scope="Org")
+		with _as(PEER), _count_child_get_all() as counts:
+			res = find_skills("batchmatch")
+		names = {s["skill_name"] for s in res["skills"]}
+		self.assertEqual(names, {"sttool-batch-a", "sttool-batch-b", "sttool-batch-c"})
+		# 2 batched child reads (one per child table) regardless of row count;
+		# the old per-row fallback would be 2 x 3 = 6.
+		self.assertEqual(counts["total"], 2)
+
+	def test_batch_grouping_is_per_parent(self):
+		"""Shares must be grouped strictly by parent: a share on skill A must not
+		leak visibility of a different, unshared skill B."""
+		_make_skill(OWNER, "sttool-grp-a", "grpmatch", scope="User", shared_with=[PEER])
+		_make_skill(OWNER, "sttool-grp-b", "grpmatch", scope="User")  # NOT shared
+		with _as(PEER):
+			res = find_skills("grpmatch")
+		names = {s["skill_name"] for s in res["skills"]}
+		self.assertIn("sttool-grp-a", names)  # shared with PEER
+		self.assertNotIn("sttool-grp-b", names)  # User-scope, unshared -> invisible
+
+	def test_get_skill_single_row_no_batch(self):
+		"""A unique slug matches one row (the common case): no batch, no waste."""
+		_make_skill(OWNER, "sttool-solo", "solo skill", scope="Org")
+		with patch(_PREFETCH) as pf, _as(OWNER):
+			res = get_skill("sttool-solo")
+		self.assertEqual(res["skill_name"], "sttool-solo")
+		pf.assert_not_called()
+
+	def test_get_skill_multi_row_caller_own_wins_and_batches(self):
+		"""Same slug as an Org shared skill AND the caller's own private override:
+		>1 row matches so the batch fires, and the caller's OWN row wins."""
+		_make_skill(OWNER, "sttool-dup", "org-shared-desc", scope="Org")  # visible to all
+		_make_skill(PEER, "sttool-dup", "peer-private-desc", scope="User")  # PEER's own
+		with patch(_PREFETCH, wraps=_real_prefetch) as pf, _as(PEER):
+			res = get_skill("sttool-dup")
+		pf.assert_called_once()  # R>1 -> batched
+		self.assertEqual(res["description"], "peer-private-desc")  # caller's own row wins
