@@ -11,6 +11,7 @@ from urllib.parse import quote
 import frappe
 
 from jarvis.chat import admission, user_settings_api
+from jarvis.chat.usage import LIMIT_PERIOD_ALL_TIME
 from jarvis.chat.usage import current_month_key as _usage_month_key
 from jarvis.permissions import (
 	has_jarvis_access,
@@ -921,9 +922,24 @@ from frappe import _
 from jarvis.chat import role_profiles
 from jarvis.chat.agent_client import AgentSession
 from jarvis.chat.entities import scrub
-from jarvis.chat.policy import validate_can_send
+from jarvis.chat.policy import _over_total_limit, validate_can_send
 
 _INFLIGHT_FRESH_SECONDS = 180
+
+
+def _send_rejection(user: str, reason: str) -> dict:
+	"""The ``{ok: False, reason}`` envelope for a refused send. A ``usage_limit``
+	rejection also names the window (``limit_period``) when the AGGREGATE cap is
+	what blocked, so the toast can say when it resets. A per-model cap (still
+	monthly) fires the same code but leaves the window out, and the SPA keeps
+	its period-neutral copy."""
+	out = {"ok": False, "reason": reason}
+	if reason != "usage_limit" or not _over_total_limit(user):
+		return out
+	period = frappe.db.get_value("Jarvis User Settings", {"user": user}, "limit_period")
+	if period and period != LIMIT_PERIOD_ALL_TIME:
+		out["limit_period"] = period
+	return out
 
 
 def _conversation_busy(conversation: str) -> bool:
@@ -1312,7 +1328,7 @@ def send_message(
 
 	ok, reason = validate_can_send(user)
 	if not ok:
-		return {"ok": False, "reason": reason}
+		return _send_rejection(user, reason)
 	requested_origin = _origin_page_from_context(context)
 
 	# No conversation yet (first send from a fresh chat surface): create or
@@ -1444,7 +1460,7 @@ def send_message(
 		eff_model = ""
 	ok, reason = validate_can_send(user, model=eff_model)
 	if not ok:
-		return {"ok": False, "reason": reason}
+		return _send_rejection(user, reason)
 
 	# A genuine new top-level message ENDS any approved skill run on this conversation
 	# (skill "Approve & run", design §3.4 "Other close-triggers"): it is not a covered

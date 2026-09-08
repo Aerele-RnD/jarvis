@@ -971,7 +971,7 @@ async function send(gotoMessageId = "") {
 			messages.value = messages.value.filter((m) => m.name !== tmpName);
 			if (!draft.value) draft.value = text;
 			forgetGotoClaim(gotoMessageId);
-			const { message, type } = sendRejectionCopy(r.reason, agentName);
+			const { message, type } = sendRejectionCopy(r.reason, agentName, r);
 			(toast[type] || toast.error)(message);
 			return;
 		}
