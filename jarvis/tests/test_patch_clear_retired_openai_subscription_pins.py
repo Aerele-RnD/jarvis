@@ -9,6 +9,7 @@ those ids.
 """
 
 import json
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -61,7 +62,13 @@ class _PinPatchBase(FrappeTestCase):
 		return frappe.db.get_value(POOL_ROW, name, "model")
 
 	def _pinned(self, model):
-		name = create_conversation()
+		# create_conversation commits. Inside a FrappeTestCase that commit would
+		# make this test's Jarvis Settings writes durable while the cleanup
+		# restore below stays uncommitted and is rolled back at class end, so
+		# every later test that saves Jarvis Settings on the legacy path would
+		# hit "API-key auth mode requires llm_api_key".
+		with patch.object(frappe.db, "commit"):
+			name = create_conversation()
 		frappe.db.set_value(CONV, name, "model_override", model)
 		return name
 
@@ -111,8 +118,6 @@ class TestClearRetiredPinsOnSubscriptionSite(_PinPatchBase):
 
 class TestRetiredPinsSurviveOnApiKeySite(_PinPatchBase):
 	def test_api_key_site_is_untouched(self):
-		from unittest.mock import patch
-
 		from jarvis.patches import v2_19_clear_retired_openai_subscription_pins as p
 
 		self._site("api_key", "openai", model="gpt-5.4")
