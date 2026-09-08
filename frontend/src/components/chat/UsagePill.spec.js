@@ -30,24 +30,28 @@ describe("UsagePill", () => {
 		).toBe(false);
 	});
 
-	it("reads quietly under 80%", () => {
+	it("is a bare bar: no text, the fill at the used percentage, the reading on hover", () => {
 		const w = mount(UsagePill, { props: { usage: weekly() } });
 		const pill = w.find("[data-testid=usage-pill]");
-		expect(pill.text()).toBe("40% this week");
+		expect(pill.text()).toBe("");
+		expect(pill.attributes("aria-label")).toBe("400k of 1M this week");
+		expect(pill.attributes("title")).toBe("400k of 1M this week");
+		expect(pill.find("[data-testid=usage-fill]").attributes("style")).toContain("width: 40%");
 		expect(pill.classes()).not.toContain("jv-usage-warn");
 	});
 
 	it("turns amber at 80%", () => {
 		const w = mount(UsagePill, { props: { usage: weekly({ period_tokens: 820000 }) } });
 		const pill = w.find("[data-testid=usage-pill]");
-		expect(pill.text()).toBe("82% this week");
+		expect(pill.find("[data-testid=usage-fill]").attributes("style")).toContain("width: 82%");
 		expect(pill.classes()).toContain("jv-usage-warn");
 	});
 
-	it("says the limit is reached and when it resets", () => {
+	it("says the limit is reached and when it resets, on hover and to screen readers", () => {
 		const w = mount(UsagePill, { props: { usage: weekly({ period_tokens: 1000000 }) } });
 		const pill = w.find("[data-testid=usage-pill]");
-		expect(pill.text()).toBe("Limit reached · resets Sunday");
+		expect(pill.text()).toBe("");
+		expect(pill.attributes("aria-label")).toBe("Limit reached · resets Sunday");
 		expect(pill.classes()).toContain("jv-usage-full");
 	});
 
