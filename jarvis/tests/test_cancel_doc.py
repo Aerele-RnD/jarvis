@@ -49,12 +49,17 @@ class TestCancelDocValidation(FrappeTestCase):
 
 class TestCancelDocPermissions(FrappeTestCase):
 	def test_rejects_when_user_lacks_cancel_perm(self):
+		# get_doc is mocked because the reorder loads the doc BEFORE the perm
+		# check; without it this would hit a real (erpnext) controller load.
 		with patch("frappe.get_meta", return_value=_fake_meta()):
-			with patch("frappe.has_permission", return_value=False):
-				with self.assertRaises(PermissionDeniedError):
-					cancel_doc(doctype="Sales Invoice", name="SINV-001")
+			with patch("frappe.get_doc", return_value=_fake_doc(docstatus=1)):
+				with patch("frappe.has_permission", return_value=False):
+					with self.assertRaises(PermissionDeniedError):
+						cancel_doc(doctype="Sales Invoice", name="SINV-001")
 
-	def test_checks_cancel_ptype_at_record_level(self):
+	def test_checks_cancel_ptype_on_loaded_doc(self):
+		"""Cancel perm is checked on the LOADED Document object (not the name
+		string): passing the object skips has_permission's duplicate lazy load."""
 		called_with = {}
 
 		def fake_perm(doctype, ptype=None, doc=None, **_):
@@ -63,13 +68,14 @@ class TestCancelDocPermissions(FrappeTestCase):
 			called_with["doc"] = doc
 			return True
 
+		doc = _fake_doc(docstatus=1)
 		with patch("frappe.get_meta", return_value=_fake_meta()):
 			with patch("frappe.has_permission", side_effect=fake_perm):
-				with patch("frappe.get_doc", return_value=_fake_doc(docstatus=1)):
+				with patch("frappe.get_doc", return_value=doc):
 					cancel_doc(doctype="Sales Invoice", name="SINV-001")
 
 		self.assertEqual(called_with["ptype"], "cancel")
-		self.assertEqual(called_with["doc"], "SINV-001")
+		self.assertIs(called_with["doc"], doc)
 
 
 class TestCancelDocStateMachine(FrappeTestCase):

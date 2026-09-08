@@ -67,13 +67,18 @@ class TestSubmitDocPermissions(FrappeTestCase):
 	"""Caller needs WRITE-equivalent submit perm on the record itself."""
 
 	def test_rejects_when_user_lacks_submit_perm(self):
+		# get_doc is mocked because the reorder loads the doc BEFORE the perm
+		# check; without it this would hit a real (erpnext) controller load.
 		with patch("frappe.get_meta", return_value=_fake_meta()):
-			with patch("frappe.has_permission", return_value=False):
-				with self.assertRaises(PermissionDeniedError):
-					submit_doc(doctype="Sales Invoice", name="SINV-001")
+			with patch("frappe.get_doc", return_value=_fake_doc(docstatus=0)):
+				with patch("frappe.has_permission", return_value=False):
+					with self.assertRaises(PermissionDeniedError):
+						submit_doc(doctype="Sales Invoice", name="SINV-001")
 
-	def test_checks_submit_ptype_at_record_level(self):
-		"""Like update_doc, submit perm is record-scoped (doc=name passed)."""
+	def test_checks_submit_ptype_on_loaded_doc(self):
+		"""Submit perm is record-scoped and checked on the LOADED Document object
+		(not the name string): passing the object skips has_permission's duplicate
+		lazy load. The check runs after get_doc and before doc.submit()."""
 		called_with = {}
 
 		def fake_perm(doctype, ptype=None, doc=None, **_):
@@ -82,14 +87,15 @@ class TestSubmitDocPermissions(FrappeTestCase):
 			called_with["doc"] = doc
 			return True
 
+		doc = _fake_doc(docstatus=0)
 		with patch("frappe.get_meta", return_value=_fake_meta()):
 			with patch("frappe.has_permission", side_effect=fake_perm):
-				with patch("frappe.get_doc", return_value=_fake_doc(docstatus=0)):
+				with patch("frappe.get_doc", return_value=doc):
 					submit_doc(doctype="Sales Invoice", name="SINV-001")
 
 		self.assertEqual(called_with["doctype"], "Sales Invoice")
 		self.assertEqual(called_with["ptype"], "submit")
-		self.assertEqual(called_with["doc"], "SINV-001")
+		self.assertIs(called_with["doc"], doc)
 
 
 class TestSubmitDocStateMachine(FrappeTestCase):
