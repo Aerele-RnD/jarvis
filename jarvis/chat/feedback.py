@@ -128,16 +128,18 @@ def session_feedback_status(conversation: str) -> dict:
 	is polled after every assistant reply, so a scan here would be the most
 	expensive query the feature adds.
 
-	Not due for a File Box conversation (an unattended drop, never a chat session
-	a human would rate), nor once the popup has already been answered or skipped
-	for this conversation - ``session_feedback_asked_at`` is final, so Skip means
-	"never again in this conversation" and survives a reload or a second tab.
+	Not due for a conversation the user did not start: a File Box drop
+	(``file_box``) or an agent-opened run log (``agent_initiated`` - a macro run,
+	a macro merge, an app-learning run, a scheduled audit, a proactive message,
+	an act-on-a-finding chat). Not due either once the popup has been answered or
+	skipped here - ``session_feedback_asked_at`` is final, so Skip means "never
+	again in this conversation" and survives a reload or a second tab.
 	"""
 	require_jarvis_access()
-	# The canonical ownership gate; it already loads the row, so read the three
+	# The canonical ownership gate; it already loads the row, so read the four
 	# fields off the doc it returns rather than issuing a second query.
 	conv = _get_owned_conversation(conversation)
-	if conv.file_box:
+	if conv.file_box or conv.agent_initiated:
 		return {"due": False}
 	due = int(conv.turn_count or 0) >= SESSION_FEEDBACK_TURN_THRESHOLD and not conv.session_feedback_asked_at
 	return {"due": bool(due)}
@@ -149,14 +151,17 @@ def submit_session_feedback(
 ) -> dict:
 	"""Record the once-per-session popup's answer, or a Skip (``chip_value`` unset).
 
-	Every accepted call stamps ``session_feedback_asked_at``, so the popup can
-	never fire twice for this conversation whichever button was pressed. A Skip
-	records nothing and is never forwarded to admin (there is no response to
-	store); a real reaction is forwarded best-effort. The optional note is kept
-	only on "Okay" or worse - the popup only reveals the field there, and a note
-	typed before switching to a positive reaction must not ride along.
+	The response is recorded AT MOST ONCE per conversation. Claiming the popup and
+	stamping ``session_feedback_asked_at`` is a single compare-and-set (see
+	``_claim_session_feedback``), so two tabs - or a double-click that beats the
+	dialog's own disable - cannot both forward: the loser returns
+	``recorded: False`` and forwards nothing. A Skip claims the popup exactly the
+	same way and is never forwarded to admin (there is no response to store); a
+	real reaction is forwarded best-effort. The optional note is kept only on
+	"Okay" or worse - the popup only reveals the field there, and a note typed
+	before switching to a positive reaction must not ride along.
 
-	A malformed reaction is rejected BEFORE the stamp: the one-shot popup is the
+	A malformed reaction is rejected BEFORE the claim: the one-shot popup is the
 	user's only chance to answer in this conversation, so a broken client must
 	not silently burn it.
 
@@ -164,15 +169,14 @@ def submit_session_feedback(
 	the thumbs tap, a lost response is acceptable and a blocked popup is not.
 	"""
 	require_jarvis_access()
-	_get_owned_conversation(conversation)
+	conv = _get_owned_conversation(conversation)
 	if chip_value and chip_value not in _SESSION_CHIP_VALUES:
 		frappe.throw("chip_value is not one of the preset reactions", frappe.ValidationError)
 
-	# update_modified=False: this is server-set popup metadata, not a user edit of
-	# the conversation - matching every other db.set_value on this doctype.
-	frappe.db.set_value(
-		CONV, conversation, "session_feedback_asked_at", frappe.utils.now(), update_modified=False
-	)
+	# Short-circuit on the already-loaded doc first (the common repeat: a reload or
+	# a second tab opened later), then settle a genuine race with the CAS.
+	if conv.session_feedback_asked_at or not _claim_session_feedback(conversation):
+		return {"ok": True, "recorded": False}
 	if not chip_value:
 		return {"ok": True, "recorded": False}
 
@@ -185,6 +189,32 @@ def submit_session_feedback(
 	}
 	_forward_session(payload)
 	return {"ok": True, "recorded": True}
+
+
+def _claim_session_feedback(conversation: str) -> bool:
+	"""Stamp ``session_feedback_asked_at`` and return True iff THIS call claimed
+	the one-shot popup.
+
+	A conditional UPDATE rather than ``db.set_value``, because a read-then-write
+	leaves a window in which two tabs (or a double-click that beats the dialog's
+	disable) both decide the popup is unanswered and both forward. The admin side
+	upserts on ``(tenant, kind, session_ref)``, so the second push would silently
+	OVERWRITE the user's real first answer rather than duplicate it - a lost
+	response, not just a noisy one. ``session_feedback_asked_at IS NULL`` in the
+	WHERE makes the claim atomic: exactly one caller sees rowcount 1.
+
+	``modified`` is deliberately left alone (the ``update_modified=False``
+	equivalent): this is server-set popup metadata, not a user edit of the
+	conversation, and must not reorder the sidebar."""
+	frappe.db.sql(
+		f"""UPDATE `tab{CONV}` SET session_feedback_asked_at=%(now)s
+		WHERE name=%(c)s AND session_feedback_asked_at IS NULL""",
+		{"now": frappe.utils.now(), "c": conversation},
+	)
+	# Rowcount is read BEFORE any commit (a commit can reset the cursor) - the same
+	# discipline jarvis.chat.turn_state._run_cas and admission._run_cas follow.
+	cursor = getattr(frappe.db, "_cursor", None)
+	return bool(cursor and int(cursor.rowcount) == 1)
 
 
 def _forward_session(payload: dict) -> None:

@@ -163,7 +163,7 @@ def invoke_settlement(
 	# The maintained per-conversation turn counter that drives the once-per-session
 	# feedback popup. Runs BEFORE the terminal publish so the client's
 	# ``session_feedback_status`` call on ``run:end`` already sees this turn counted.
-	_bump_turn_count(conversation)
+	_bump_turn_count(conversation, run_id)
 
 	# S5 — authoritative fenced terminal event, ONLY after the winning commit. CDX-3:
 	# the terminal carries pump_epoch so the client permanently blocks any later
@@ -192,7 +192,31 @@ def invoke_settlement(
 	deps.enqueue_finalize(run_id, relay_target_id)
 
 
-def _bump_turn_count(conversation: str) -> None:
+def _is_hidden_turn(run_id: str) -> bool:
+	"""True when this turn's SEED user message is hidden from the transcript - an
+	internal system prompt rather than something a human typed.
+
+	The confirmation continuation is the case that matters: every human
+	Apply/Confirm click dispatches ``chat.api.enqueue_continuation`` ->
+	``_enqueue_turn(..., hidden=True)``, which rides this same pump path. Without
+	this guard ONE user action (send a message that stages a write, then click
+	Apply) counts as TWO turns and the popup fires at roughly half the intended
+	engagement depth. Macro steps and app-learning prompts are hidden for the same
+	reason and are excluded on the same rule.
+
+	``hidden`` lives on the seed Message, not on the Turn row, so this is a
+	two-table read - one statement via ``frappe.qb`` with an explicit join (the
+	multi-table read rule), two primary-key seeks. A turn with no seed message (a
+	recovered / synthesised terminal) yields no row and counts as a normal turn."""
+	t = frappe.qb.DocType(TURN)
+	m = frappe.qb.DocType(MSG)
+	rows = (
+		frappe.qb.from_(t).inner_join(m).on(m.name == t.seed_message).select(m.hidden).where(t.name == run_id)
+	).run()
+	return bool(rows and rows[0][0])
+
+
+def _bump_turn_count(conversation: str, run_id: str) -> None:
 	"""Advance ``Jarvis Conversation.turn_count`` by one for a settled turn.
 
 	O(1) indexed single-row UPDATE, never a ``COUNT(*)`` over ``tabJarvis Chat
@@ -203,10 +227,18 @@ def _bump_turn_count(conversation: str) -> None:
 	than a read-modify-write, so two settlements racing on one conversation
 	(reconcile + terminal) can never lose an increment.
 
-	``file_box=0`` is part of the WHERE, not a separate read: File Box drops are
-	unattended runs excluded from turn counting (and from popup eligibility), and
-	folding the exclusion into the same indexed lookup costs nothing. A 0-row
-	update is the intended outcome there, so the rowcount is not consulted.
+	Three exclusions, so the counter measures HUMAN engagement and nothing else
+	(spec: File Box and agent-initiated conversations are excluded from turn
+	counting):
+	  * ``file_box=0`` - an unattended drop, never a chat session;
+	  * ``agent_initiated=0`` - a macro / merge / app-learning / scheduled-audit /
+	    proactive / act-on-a-finding run log the user did not open;
+	  * ``_is_hidden_turn`` - a confirmation continuation or macro step, which is
+	    part of the user's PREVIOUS action, not a new turn.
+	The first two ride the same indexed lookup and cost nothing extra; a 0-row
+	update is the intended outcome there, so the rowcount is not consulted. The
+	third is checked FIRST so an excluded turn skips the UPDATE and its commit
+	entirely.
 
 	DELIBERATELY its OWN transaction, AFTER the settlement commit above, NOT
 	inside the fenced settlement txn. ``Jarvis Conversation`` is rank 2 in the
@@ -229,15 +261,23 @@ def _bump_turn_count(conversation: str) -> None:
 	its finalize enqueue, and must not leave an open txn/row lock across the
 	realtime publish that follows."""
 	try:
+		if _is_hidden_turn(run_id):
+			return
 		frappe.db.sql(
-			f"UPDATE `tab{CONV}` SET turn_count = turn_count + 1 WHERE name=%(c)s AND file_box=0",
+			f"""UPDATE `tab{CONV}` SET turn_count = turn_count + 1
+			WHERE name=%(c)s AND file_box=0 AND agent_initiated=0""",
 			{"c": conversation},
 		)
 		# Own short transaction (see above): commit immediately so the conversation
 		# row lock is released before the publish, and is never held across it.
 		frappe.db.commit()
 	except Exception:
-		frappe.db.rollback()
+		# Guarded like turn_state.lease_lost_exit's: on a connection-level fault the
+		# rollback itself can raise, and "never raises" has to hold literally.
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
 		frappe.log_error(title="settlement.bump_turn_count", message=frappe.get_traceback())
 
 

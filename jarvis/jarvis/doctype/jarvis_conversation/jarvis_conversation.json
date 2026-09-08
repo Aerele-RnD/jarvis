@@ -20,6 +20,7 @@
   "expired_at",
   "origin_page",
   "compacting_since",
+  "agent_initiated",
   "turn_count",
   "session_feedback_asked_at"
  ],
@@ -173,6 +174,16 @@
    "read_only": 1
   },
   {
+   "fieldname": "agent_initiated",
+   "fieldtype": "Check",
+   "label": "Agent-initiated conversation",
+   "default": "0",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Set at insert by the server-side producers that open a conversation the user did not ask for: macro runs, macro merges, app-learning runs, scheduled agent audits, proactive messages, and the act-on-a-finding chat. Such a conversation is a run log the user may reply to, not a chat session they chose to start, so it is excluded from turn counting and from the once-per-session feedback popup (spec: \"agent-initiated conversations are excluded from both\"). Distinct from skip_confirmation, which is armed-macro-only and is cleared when the run ends. Server-set only."
+  },
+  {
    "fieldname": "turn_count",
    "fieldtype": "Int",
    "label": "Turn Count",
@@ -180,7 +191,7 @@
    "hidden": 1,
    "read_only": 1,
    "no_copy": 1,
-   "description": "Maintained counter, incremented once per settled turn by jarvis.chat.settlement._bump_turn_count. NOT a live COUNT(*): the once-per-session feedback trigger reads it after every assistant reply, fleet-wide, so it must never scan tabJarvis Chat Message. Stays 0 on file_box conversations (excluded from turn counting). Server-set only."
+   "description": "Maintained counter, incremented once per settled user-visible turn by jarvis.chat.settlement._bump_turn_count. NOT a live COUNT(*): the once-per-session feedback trigger reads it after every assistant reply, fleet-wide, so it must never scan tabJarvis Chat Message. Stays 0 on file_box and agent_initiated conversations, and does not count a turn whose seed message is hidden (a confirmation continuation or a macro step). Server-set only."
   },
   {
    "fieldname": "session_feedback_asked_at",

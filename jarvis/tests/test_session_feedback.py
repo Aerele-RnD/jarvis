@@ -23,6 +23,7 @@ from jarvis.chat.settlement import _bump_turn_count
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
+TURN = "Jarvis Chat Turn"
 TEST_USER = "jarvis-session-feedback-test@example.com"
 
 _PUSH = "jarvis.admin_client.push_session_feedback"
@@ -47,6 +48,8 @@ def _ensure_test_user(user: str = TEST_USER) -> None:
 
 
 def _delete_conv(name: str) -> None:
+	for turn in frappe.get_all(TURN, filters={"conversation": name}, pluck="name"):
+		frappe.delete_doc(TURN, turn, ignore_permissions=True, force=True)
 	for child in frappe.get_all(MSG, filters={"conversation": name}, pluck="name"):
 		frappe.delete_doc(MSG, child, ignore_permissions=True, force=True)
 	if frappe.db.exists(CONV, name):
@@ -77,33 +80,81 @@ class _SessionFeedbackTestCase(FrappeTestCase):
 	def _set_turns(self, n, conversation=None):
 		frappe.db.set_value(CONV, conversation or self.conv, "turn_count", n, update_modified=False)
 
+	def _mk_turn(self, run_id, *, hidden=0, conversation=None):
+		"""A settled turn's row plus the seed user message the bump inspects."""
+		conv = conversation or self.conv
+		seed = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": conv,
+				"seq": 1,
+				"role": "user",
+				"content": "hi",
+				"streaming": 0,
+				"hidden": hidden,
+			}
+		).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": TURN,
+				"run_id": run_id,
+				"conversation": conv,
+				"relay_target_id": "default",
+				"turn_class": "interactive",
+				"state": "finalizing",
+				"seed_message": seed.name,
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+		return run_id
+
 
 class TestTurnCounter(_SessionFeedbackTestCase):
 	def test_turn_count_increments_once_per_bump(self):
-		for _ in range(3):
-			_bump_turn_count(self.conv)
+		for i in range(3):
+			_bump_turn_count(self.conv, self._mk_turn(f"sfrun{i}"))
 		self.assertEqual(self._turn_count(), 3)
 
 	def test_turn_count_never_counts_messages(self):
 		"""The counter is MAINTAINED, not a live COUNT(*) over the message table:
-		it advances with zero Jarvis Chat Message rows in the conversation, which
-		a COUNT(*)-derived value could not do."""
-		_bump_turn_count(self.conv)
-		self.assertEqual(frappe.db.count(MSG, {"conversation": self.conv}), 0)
+		it advances even though the conversation holds exactly one message (the
+		seed), which a COUNT(*)-derived value could not produce."""
+		_bump_turn_count(self.conv, self._mk_turn("sfrunA"))
+		self.assertEqual(frappe.db.count(MSG, {"conversation": self.conv}), 1)
 		self.assertEqual(self._turn_count(), 1)
 
 	def test_file_box_conversation_is_not_counted(self):
 		# Server-set path: the controller gates a generic save that ENABLES
 		# file_box, exactly as the real File Box drop path bypasses it.
 		frappe.db.set_value(CONV, self.conv, "file_box", 1, update_modified=False)
-		_bump_turn_count(self.conv)
+		_bump_turn_count(self.conv, self._mk_turn("sfrunB"))
 		self.assertEqual(self._turn_count(), 0)
+
+	def test_agent_initiated_conversation_is_not_counted(self):
+		# A macro / app-learning / scheduled-audit / proactive run log: the user
+		# never chose to start it, so its turns are not engagement.
+		frappe.db.set_value(CONV, self.conv, "agent_initiated", 1, update_modified=False)
+		_bump_turn_count(self.conv, self._mk_turn("sfrunC"))
+		self.assertEqual(self._turn_count(), 0)
+
+	def test_hidden_continuation_turn_is_not_counted(self):
+		"""Every human Apply/Confirm click dispatches a HIDDEN continuation turn
+		through this same path. Counting it would make one user action worth two
+		turns and fire the popup at half the intended depth."""
+		_bump_turn_count(self.conv, self._mk_turn("sfrunD", hidden=1))
+		self.assertEqual(self._turn_count(), 0)
+
+	def test_visible_and_hidden_turns_mixed(self):
+		_bump_turn_count(self.conv, self._mk_turn("sfrunE"))
+		_bump_turn_count(self.conv, self._mk_turn("sfrunF", hidden=1))
+		_bump_turn_count(self.conv, self._mk_turn("sfrunG"))
+		self.assertEqual(self._turn_count(), 2, "only the two user-visible turns count")
 
 	def test_bump_is_a_no_op_on_a_missing_conversation(self):
 		# A settled turn whose conversation was deleted must not cost the turn its
 		# terminal publish. The UPDATE simply matches 0 rows (it does not raise);
 		# the raising branch is covered by the stubbed-frappe harness.
-		_bump_turn_count("does-not-exist")
+		_bump_turn_count("does-not-exist", "sfrun-missing")
 
 
 class TestSessionFeedbackStatus(_SessionFeedbackTestCase):
@@ -121,6 +172,14 @@ class TestSessionFeedbackStatus(_SessionFeedbackTestCase):
 
 	def test_file_box_conversation_never_due(self):
 		frappe.db.set_value(CONV, self.conv, "file_box", 1, update_modified=False)
+		self._set_turns(999)
+		self.assertFalse(session_feedback_status(self.conv)["due"])
+
+	def test_agent_initiated_conversation_never_due(self):
+		# Defence in depth: the counter never advances for these anyway, but an
+		# older row (created before this field existed) must not fire the popup
+		# on what is really an automated run log.
+		frappe.db.set_value(CONV, self.conv, "agent_initiated", 1, update_modified=False)
 		self._set_turns(999)
 		self.assertFalse(session_feedback_status(self.conv)["due"])
 
@@ -145,6 +204,11 @@ class TestSubmitSessionFeedback(_SessionFeedbackTestCase):
 	def _item(self, push):
 		push.assert_called_once()
 		return push.call_args.args[0]
+
+	def _reopen(self):
+		"""Clear the claim so the next submit is a first submit again - the popup
+		is genuinely one-shot per conversation, so a loop over chips has to."""
+		frappe.db.set_value(CONV, self.conv, "session_feedback_asked_at", None, update_modified=False)
 
 	def test_chip_forwards_derived_payload(self):
 		with patch(_PUSH) as push:
@@ -176,7 +240,7 @@ class TestSubmitSessionFeedback(_SessionFeedbackTestCase):
 		# worse", not only for the bottom two chips.
 		for chip in ("Okay", "Not great", "Frustrating"):
 			with self.subTest(chip=chip):
-				frappe.db.set_value(CONV, self.conv, "session_feedback_asked_at", None, update_modified=False)
+				self._reopen()
 				with patch(_PUSH) as push:
 					submit_session_feedback(self.conv, chip, note="  it lost the thread  ")
 				self.assertEqual(self._item(push)["note"], "it lost the thread")
@@ -184,6 +248,7 @@ class TestSubmitSessionFeedback(_SessionFeedbackTestCase):
 	def test_positive_chip_never_carries_a_note(self):
 		for chip in ("Great", "Good"):
 			with self.subTest(chip=chip):
+				self._reopen()
 				with patch(_PUSH) as push:
 					submit_session_feedback(self.conv, chip, note="should be dropped")
 				self.assertEqual(self._item(push)["note"], "")
@@ -201,6 +266,31 @@ class TestSubmitSessionFeedback(_SessionFeedbackTestCase):
 		# A broken client must not consume the user's one chance to answer.
 		self.assertFalse(frappe.db.get_value(CONV, self.conv, "session_feedback_asked_at"))
 		self.assertTrue(session_feedback_status(self.conv)["due"])
+
+	def test_a_second_submit_records_and_forwards_nothing(self):
+		"""Two tabs, or a double-click that beats the dialog's disable: the claim
+		is a compare-and-set, so only the first call forwards."""
+		with patch(_PUSH) as push:
+			first = submit_session_feedback(self.conv, "Great")
+			second = submit_session_feedback(self.conv, "Frustrating", note="second tab")
+		self.assertEqual(first, {"ok": True, "recorded": True})
+		self.assertEqual(second, {"ok": True, "recorded": False})
+		self.assertEqual(self._item(push)["chip_value"], "Great", "the first answer is the one kept")
+
+	def test_a_second_skip_records_nothing(self):
+		with patch(_PUSH) as push:
+			submit_session_feedback(self.conv)
+			second = submit_session_feedback(self.conv)
+		self.assertEqual(second, {"ok": True, "recorded": False})
+		push.assert_not_called()
+
+	def test_a_chip_after_a_skip_is_not_recorded(self):
+		# Skip is final for the conversation - a later chip must not sneak in.
+		with patch(_PUSH) as push:
+			submit_session_feedback(self.conv)
+			late = submit_session_feedback(self.conv, "Great")
+		self.assertEqual(late, {"ok": True, "recorded": False})
+		push.assert_not_called()
 
 	def test_a_failed_forward_never_surfaces(self):
 		with patch(_PUSH, side_effect=RuntimeError("admin down")):
