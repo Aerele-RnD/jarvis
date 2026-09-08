@@ -63,12 +63,18 @@ class TestAmendDocValidation(FrappeTestCase):
 
 class TestAmendDocPermissions(FrappeTestCase):
 	def test_rejects_when_user_lacks_amend_perm(self):
+		# get_doc is mocked because the reorder loads the source BEFORE the perm
+		# check; without it this would hit a real (erpnext) controller load.
 		with patch("frappe.get_meta", return_value=_fake_meta()):
-			with patch("frappe.has_permission", return_value=False):
-				with self.assertRaises(PermissionDeniedError):
-					amend_doc(doctype="Sales Invoice", name="SINV-001")
+			with patch("frappe.get_doc", return_value=_fake_source(docstatus=2)):
+				with patch("frappe.has_permission", return_value=False):
+					with self.assertRaises(PermissionDeniedError):
+						amend_doc(doctype="Sales Invoice", name="SINV-001")
 
-	def test_checks_amend_ptype_at_record_level(self):
+	def test_checks_amend_ptype_on_loaded_doc(self):
+		"""Amend perm is checked on the LOADED source Document object (not the
+		name string): passing the object skips has_permission's duplicate lazy
+		load. The check runs after get_doc and before copy_doc(source)."""
 		called_with = {}
 
 		def fake_perm(doctype, ptype=None, doc=None, **_):
@@ -77,14 +83,15 @@ class TestAmendDocPermissions(FrappeTestCase):
 			called_with["doc"] = doc
 			return True
 
+		source = _fake_source(docstatus=2)
 		with patch("frappe.get_meta", return_value=_fake_meta()):
 			with patch("frappe.has_permission", side_effect=fake_perm):
-				with patch("frappe.get_doc", return_value=_fake_source(docstatus=2)):
+				with patch("frappe.get_doc", return_value=source):
 					with patch("frappe.copy_doc", return_value=_fake_copy()):
 						amend_doc(doctype="Sales Invoice", name="SINV-001")
 
 		self.assertEqual(called_with["ptype"], "amend")
-		self.assertEqual(called_with["doc"], "SINV-001")
+		self.assertIs(called_with["doc"], source)
 
 
 class TestAmendDocStateMachine(FrappeTestCase):

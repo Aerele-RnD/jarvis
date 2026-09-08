@@ -86,15 +86,31 @@ class TestUpdateDocPermissions(FrappeTestCase):
 					changes={"content": "new"},
 				)
 
-	def test_passes_doc_to_has_permission(self):
-		"""Permission is checked record-level (with doc=name), not just at
-		the DocType level."""
+	def test_denied_write_leaves_row_unchanged(self):
+		"""No partial write: a denied update must not have committed a DB change.
+		Guards that the has_permission check runs BEFORE doc.save() (the exact
+		before-doc.set() ordering is asserted in test_checks_permission_on_loaded_doc)."""
+		before = frappe.db.get_value(NOTE_DT, self.note, "content")
+		with patch("frappe.has_permission", return_value=False):
+			with self.assertRaises(PermissionDeniedError):
+				update_doc(doctype=NOTE_DT, name=self.note, changes={"content": "tampered"})
+		after = frappe.db.get_value(NOTE_DT, self.note, "content")
+		self.assertEqual(after, before)
+
+	def test_checks_permission_on_loaded_doc(self):
+		"""Permission is checked record-level on the LOADED Document object (not a
+		bare name string): passing the object skips has_permission's duplicate
+		lazy parent-row load while yielding the identical verdict. Also asserts the
+		check runs on the UNMUTATED doc (before the doc.set() loop) - the field the
+		verdict could key on still holds its pristine DB value at check time."""
 		called_with = {}
 
 		def fake_perm(doctype, ptype=None, doc=None, **_):
 			called_with["doctype"] = doctype
 			called_with["ptype"] = ptype
 			called_with["doc"] = doc
+			# Capture the field value AT CHECK TIME to prove the doc is unmutated.
+			called_with["content_at_check"] = doc.get("content") if hasattr(doc, "get") else None
 			return True
 
 		with patch("frappe.has_permission", side_effect=fake_perm):
@@ -106,7 +122,30 @@ class TestUpdateDocPermissions(FrappeTestCase):
 
 		self.assertEqual(called_with["doctype"], NOTE_DT)
 		self.assertEqual(called_with["ptype"], "write")
-		self.assertEqual(called_with["doc"], self.note)
+		# doc is the loaded Document, not the name string.
+		passed = called_with["doc"]
+		self.assertNotIsInstance(passed, str)
+		self.assertEqual(getattr(passed, "doctype", None), NOTE_DT)
+		self.assertEqual(getattr(passed, "name", None), self.note)
+		# The check ran BEFORE doc.set("content", "new"): the doc still carries the
+		# original content. A reorder that checked after the mutation would see "new".
+		self.assertEqual(called_with["content_at_check"], "before")
+
+	def test_enforce_update_runs_before_permission_check(self):
+		"""The delegate writes[] contract (enforce_update) must be evaluated
+		BEFORE the Frappe permission check - a delegate is bounced by its own
+		contract first."""
+		order = []
+		with patch(
+			"jarvis.tools.update_doc.enforce_update",
+			side_effect=lambda *a, **k: order.append("enforce_update"),
+		):
+			with patch(
+				"frappe.has_permission",
+				side_effect=lambda *a, **k: order.append("has_permission") or True,
+			):
+				update_doc(doctype=NOTE_DT, name=self.note, changes={"content": "new"})
+		self.assertEqual(order, ["enforce_update", "has_permission"])
 
 
 class TestUpdateDocHappyPath(FrappeTestCase):
