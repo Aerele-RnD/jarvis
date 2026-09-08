@@ -22,3 +22,23 @@ export function contextReading(usage) {
 			: "Not measured yet",
 	};
 }
+
+/** Windows the per-user token cap can apply to (Jarvis User Settings.limit_period),
+ * as frappe-ui select options. The server owns the enum; this mirrors it. */
+export const LIMIT_PERIOD_OPTIONS = [
+	{ label: "All time", value: "All time" },
+	{ label: "Daily", value: "Daily" },
+	{ label: "Weekly", value: "Weekly" },
+	{ label: "Monthly", value: "Monthly" },
+];
+
+const WINDOW_LABEL = { Daily: "today", Weekly: "this week", Monthly: "this month" };
+
+/** What a token cap is measured against, from a measured-usage / admin row:
+ * the cumulative total for an all-time cap, else the current window's
+ * `period_tokens` (already 0 server-side when the window has rolled). */
+export function limitWindow(row) {
+	const label = WINDOW_LABEL[row && row.limit_period];
+	if (!label) return { used: Number((row && row.total_tokens) || 0), label: "all time" };
+	return { used: Number(row.period_tokens || 0), label };
+}

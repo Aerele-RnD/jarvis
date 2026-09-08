@@ -226,3 +226,32 @@ describe("UsagePane, this chat context", () => {
 		expect(w.text()).toContain("Not measured yet");
 	});
 });
+
+describe("UsagePane, token limit window", () => {
+	it("reads a weekly cap against this week's usage, not the all-time total", async () => {
+		api.getUsage.mockResolvedValue({
+			measured: {
+				total_tokens: 500000,
+				month_tokens: 100000,
+				monthly_token_limit: 100000,
+				limit_period: "Weekly",
+				period_tokens: 40000,
+			},
+		});
+		const w = await mountAs();
+		expect(w.text()).toContain("40k of 100k this week, 40%");
+	});
+	it("keeps the all-time reading for an all-time cap", async () => {
+		api.getUsage.mockResolvedValue({
+			measured: {
+				total_tokens: 50000,
+				month_tokens: 1000,
+				monthly_token_limit: 100000,
+				limit_period: "All time",
+				period_tokens: 0,
+			},
+		});
+		const w = await mountAs();
+		expect(w.text()).toContain("50k of 100k all time, 50%");
+	});
+});
