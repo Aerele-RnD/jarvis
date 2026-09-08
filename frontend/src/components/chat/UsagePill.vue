@@ -13,8 +13,13 @@
 				:aria-label="title"
 				@click="togglePopover()"
 			>
-				<span class="jv-usage-dot" aria-hidden="true" />
-				<span>{{ pillText }}</span>
+				<span class="jv-usage-track" aria-hidden="true">
+					<span
+						data-testid="usage-fill"
+						class="jv-usage-fill"
+						:style="{ width: reading.pct + '%' }"
+					/>
+				</span>
 			</button>
 		</template>
 		<template #body>
@@ -74,17 +79,13 @@ const windowLabel = computed(() => {
 	const l = reading.value.label;
 	return l ? l.charAt(0).toUpperCase() + l.slice(1) : "Used";
 });
-const pillText = computed(() => {
+// The bar carries no text (design note 2026-09-08: the composer was crowded);
+// the reading lives in the tooltip, the accessible name and the popover.
+const title = computed(() => {
 	const r = reading.value;
-	if (r.state !== "full") return `${r.pct}% ${r.label}`;
-	return r.reset ? `Limit reached · resets ${r.reset}` : "Limit reached";
+	if (r.state === "full") return r.reset ? `Limit reached · resets ${r.reset}` : "Limit reached";
+	return `${fmtTokens(r.used)} of ${fmtTokens(r.limit)} ${r.label}`;
 });
-const title = computed(
-	() =>
-		`${fmtTokens(reading.value.used)} of ${fmtTokens(reading.value.limit)} ${
-			reading.value.label
-		}`
-);
 const barClass = computed(() =>
 	reading.value.state === "full"
 		? "bg-surface-red-5"
@@ -95,19 +96,15 @@ const barClass = computed(() =>
 </script>
 
 <style scoped>
+/* Same 18px footprint as the context ring beside it: a 28x4 track, no text. */
 .jv-usage-pill {
 	display: inline-flex;
 	align-items: center;
-	gap: 6px;
-	height: 22px;
-	padding: 0 9px 0 7px;
-	border-radius: 999px;
-	border: 1px solid var(--jv-border, rgba(127, 127, 127, 0.35));
+	height: 18px;
+	padding: 0 2px;
+	border: 0;
+	border-radius: 6px;
 	background: transparent;
-	color: var(--text-2);
-	font-size: 11.5px;
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
 	cursor: pointer;
 }
 .jv-usage-pill:hover {
@@ -117,25 +114,31 @@ const barClass = computed(() =>
 	outline: 2px solid var(--jv-terra);
 	outline-offset: 2px;
 }
-.jv-usage-dot {
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--text-3);
+.jv-usage-track {
+	display: block;
+	width: 28px;
+	height: 4px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--text-3) 45%, transparent);
+	overflow: hidden;
 }
-.jv-usage-warn {
-	color: var(--jv-terra);
-	border-color: var(--jv-terra);
+.jv-usage-fill {
+	display: block;
+	height: 100%;
+	border-radius: 999px;
+	background: linear-gradient(90deg, #6e8bff, #8b5cf6);
+	transition: width 300ms ease;
 }
-.jv-usage-warn .jv-usage-dot,
+.jv-usage-warn .jv-usage-fill,
 .jv-usage-bar-warn {
 	background: var(--jv-terra);
 }
-.jv-usage-full {
-	color: #dc2626;
-	border-color: #dc2626;
-}
-.jv-usage-full .jv-usage-dot {
+.jv-usage-full .jv-usage-fill {
 	background: #dc2626;
+}
+@media (prefers-reduced-motion: reduce) {
+	.jv-usage-fill {
+		transition: none;
+	}
 }
 </style>
