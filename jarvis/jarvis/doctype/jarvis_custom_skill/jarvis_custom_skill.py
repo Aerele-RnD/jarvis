@@ -142,6 +142,54 @@ def _child_values(skill, fieldname: str, value_field: str, child_doctype: str) -
 	return values
 
 
+def prefetch_child_values(skills: list) -> None:
+	"""Batch-load ``shared_with`` + ``allowed_roles`` onto a list of skill rows so
+	``user_can_use_skill``'s per-row ``_child_values`` fallback does not fire.
+
+	find_skills / get_skill fetch scalar-only candidate rows (no child tables), so
+	each row would otherwise trigger up to two per-row ``get_all`` lookups inside
+	the visibility check (an N+1). This resolves both child tables for the whole
+	batch in two queries and attaches the results in place.
+
+	Contract (must match ``_child_values`` exactly):
+	- Seed EVERY row with a list (``[]`` when it has no child rows). A MISSING key
+	  leaves ``skill.get(fieldname)`` as ``None`` → the per-row fallback re-fires,
+	  silently undoing the batch.
+	- Keep ``parenttype=SKILL_DOCTYPE``: ``Jarvis Custom Skill Allowed Role`` is a
+	  child of BOTH this doctype and Jarvis Skill Promotion Request, so a bare
+	  ``parent in names`` could pull a promotion request's rows.
+	- Drop falsy values, mirroring ``_child_values``' ``if value`` filter.
+
+	Caller must SKIP this for Administrator / System Manager (they short-circuit
+	``user_can_use_skill`` before any child read); it is also pointless for a
+	single-row batch.
+	"""
+	names = [s.get("name") for s in skills if s.get("name")]
+	if not names:
+		return
+	shares = _batch_child_values(names, "Jarvis Custom Skill Share", "user")
+	roles = _batch_child_values(names, "Jarvis Custom Skill Allowed Role", "role")
+	for s in skills:
+		name = s.get("name")
+		s["shared_with"] = shares.get(name, [])
+		s["allowed_roles"] = roles.get(name, [])
+
+
+def _batch_child_values(names: list, child_doctype: str, value_field: str) -> dict:
+	"""``{parent: [value, ...]}`` for ``child_doctype`` rows under ``names``, in one
+	query. Scoped by ``parenttype`` and falsy-filtered to match ``_child_values``."""
+	grouped: dict = {}
+	for row in frappe.get_all(
+		child_doctype,
+		filters={"parenttype": SKILL_DOCTYPE, "parent": ["in", names]},
+		fields=["parent", value_field],
+	):
+		value = row.get(value_field)
+		if value:
+			grouped.setdefault(row.parent, []).append(value)
+	return grouped
+
+
 class JarvisCustomSkill(Document):
 	def validate(self):
 		self._validate_slug()

@@ -47,6 +47,23 @@ def _visible(row, user: str, user_roles: list[str]) -> bool:
 	return user_can_use_skill(row, user, user_roles)
 
 
+def _maybe_prefetch_children(rows: list, user: str, user_roles: list[str]) -> None:
+	"""Batch-load child tables (shared_with/allowed_roles) for the visibility
+	check, so ``_visible`` doesn't fire a per-row fallback query per candidate.
+	Skipped when it wouldn't help: a single candidate (no batching win), or an
+	Administrator / System Manager caller (``user_can_use_skill`` short-circuits
+	before any child read)."""
+	if len(rows) <= 1:
+		return
+	if user == "Administrator" or "System Manager" in user_roles:
+		return
+	from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
+		prefetch_child_values,
+	)
+
+	prefetch_child_values(rows)
+
+
 def find_skills(query: str, limit: int = 10) -> dict:
 	"""Search enabled skills by name/description; returns only skills the
 	calling user may use. ``{"skills": [{skill_name, scope, description,
@@ -75,6 +92,7 @@ def find_skills(query: str, limit: int = 10) -> dict:
 		as_dict=True,
 	)
 	user_roles = frappe.get_roles(user)
+	_maybe_prefetch_children(rows, user, user_roles)
 	skills = []
 	for row in rows:
 		if not _visible(row, user, user_roles):
