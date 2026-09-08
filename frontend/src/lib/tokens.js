@@ -42,3 +42,18 @@ export function limitWindow(row) {
 	if (!label) return { used: Number((row && row.total_tokens) || 0), label: "all time" };
 	return { used: Number(row.period_tokens || 0), label };
 }
+
+const WINDOW_RESET = { Daily: "midnight", Weekly: "Sunday", Monthly: "the 1st" };
+export const LIMIT_WARN_PCT = 80;
+
+/** Everything a cap indicator needs from a measured-usage / settings row:
+ * state none (no cap) | quiet | warn (80%+) | full, the rounded pct, the
+ * window label ("this week") and when it resets ("Sunday"; "" for all time). */
+export function limitReading(row) {
+	const limit = Number((row && row.monthly_token_limit) || 0);
+	if (limit <= 0) return { state: "none", pct: 0, used: 0, limit: 0, label: "", reset: "" };
+	const { used, label } = limitWindow(row);
+	const pct = Math.min(100, Math.round((used / limit) * 100));
+	const state = used >= limit ? "full" : pct >= LIMIT_WARN_PCT ? "warn" : "quiet";
+	return { state, pct, used, limit, label, reset: WINDOW_RESET[row.limit_period] || "" };
+}

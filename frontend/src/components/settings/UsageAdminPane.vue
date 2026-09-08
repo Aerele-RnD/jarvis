@@ -96,31 +96,15 @@
 						</div>
 					</div>
 
-					<div class="flex flex-col gap-1.5">
-						<div class="flex items-center gap-2">
-							<FormControl
-								type="number"
-								size="sm"
-								class="min-w-0 flex-1"
-								v-model.number="u._limitDraft"
-								:disabled="u._saving"
-								placeholder="0 = unlimited"
-							/>
-							<Button
-								variant="subtle"
-								size="sm"
-								label="Save"
-								:loading="u._saving"
-								:disabled="u._saving || !limitDirty(u)"
-								@click="saveLimit(u)"
-							/>
-						</div>
-						<FormControl
-							type="select"
+					<div class="flex items-center gap-1">
+						<span class="text-sm text-ink-gray-8">{{ limitText(u) }}</span>
+						<Button
+							variant="ghost"
 							size="sm"
-							:options="LIMIT_PERIOD_OPTIONS"
-							v-model="u._periodDraft"
-							:disabled="u._saving"
+							icon="edit-2"
+							:tooltip="`Edit token limit for ${u.full_name || u.user}`"
+							:aria-label="`Edit token limit for ${u.full_name || u.user}`"
+							@click="openEditor(u)"
 						/>
 					</div>
 
@@ -156,32 +140,34 @@
 								{{ fmtTokens(m.month_tokens) }} · unlimited
 							</div>
 						</div>
-						<div class="flex items-center gap-2">
-							<FormControl
-								type="number"
-								size="sm"
-								class="min-w-0 flex-1"
-								v-model.number="m._limitDraft"
-								:disabled="m._saving"
-								placeholder="0 = unlimited"
-							/>
+						<div class="flex items-center gap-1">
+							<span class="text-sm text-ink-gray-8">{{ modelLimitText(m) }}</span>
 							<Button
-								variant="subtle"
+								variant="ghost"
 								size="sm"
-								label="Save"
-								:loading="m._saving"
-								:disabled="
-									m._saving ||
-									Number(m._limitDraft || 0) ===
-										Number(m.monthly_token_limit || 0)
-								"
-								@click="saveModelLimit(u, m)"
+								icon="edit-2"
+								:tooltip="`Edit monthly limit for ${modelDisplayLabel(m.model)}`"
+								:aria-label="`Edit monthly limit for ${modelDisplayLabel(
+									m.model
+								)}`"
+								@click="openEditor(u, m)"
 							/>
 						</div>
 					</div>
 				</div>
 			</template>
 		</template>
+
+		<TokenLimitDialog
+			v-if="editor"
+			v-model="editorOpen"
+			:user="editor.user.user"
+			:user-label="editor.user.full_name || editor.user.user"
+			:model="editor.model ? editor.model.model : ''"
+			:limit="Number((editor.model || editor.user).monthly_token_limit || 0)"
+			:period="editor.user.limit_period || 'All time'"
+			@saved="applySaved"
+		/>
 	</SettingsPane>
 </template>
 
@@ -191,11 +177,12 @@
 // independently on every call, so a stale client gate can only hide the nav
 // item, never bypass the real permission.
 import { ref, reactive, onMounted } from "vue";
-import { Button, FeatherIcon, FormControl, toast } from "frappe-ui";
+import { Button, FeatherIcon, toast } from "frappe-ui";
 import { timeAgo } from "@/utils/datetime";
 import { modelDisplayLabel } from "@/utils/usageModel";
-import { fmtTokens, limitWindow, LIMIT_PERIOD_OPTIONS } from "@/lib/tokens.js";
+import { fmtTokens, limitWindow } from "@/lib/tokens.js";
 import SettingsPane from "@/components/settings/SettingsPane.vue";
+import TokenLimitDialog from "@/components/settings/TokenLimitDialog.vue";
 import * as api from "@/api";
 import { errMessage as errMsg, errHtml } from "@/lib/errors";
 
@@ -218,17 +205,7 @@ async function loadUsers() {
 			return;
 		}
 		const rows = (res && res.data) || [];
-		users.value = rows.map((u) => ({
-			...u,
-			_limitDraft: u.monthly_token_limit || 0,
-			_periodDraft: u.limit_period || "All time",
-			_saving: false,
-			per_model: (u.per_model || []).map((m) => ({
-				...m,
-				_limitDraft: m.monthly_token_limit || 0,
-				_saving: false,
-			})),
-		}));
+		users.value = rows.map((u) => ({ ...u, per_model: u.per_model || [] }));
 	} catch (e) {
 		loadError.value = true;
 	} finally {
@@ -242,12 +219,6 @@ function pct(u) {
 	if (!u || !u.monthly_token_limit) return 0;
 	return Math.min(100, Math.round((limitWindow(u).used / Number(u.monthly_token_limit)) * 100));
 }
-function limitDirty(u) {
-	return (
-		Number(u._limitDraft || 0) !== Number(u.monthly_token_limit || 0) ||
-		u._periodDraft !== (u.limit_period || "All time")
-	);
-}
 function modelPct(m) {
 	if (!m || !m.monthly_token_limit) return 0;
 	return Math.min(
@@ -255,50 +226,32 @@ function modelPct(m) {
 		Math.round((Number(m.month_tokens || 0) / Number(m.monthly_token_limit)) * 100)
 	);
 }
-
-async function saveLimit(u) {
-	const val = Math.max(0, Math.round(Number(u._limitDraft) || 0));
-	const period = u._periodDraft;
-	u._saving = true;
-	try {
-		const res = await api.adminSetUserLimit(u.user, val, period);
-		if (res && res.ok === false) {
-			toast.error(res.reason || "Could not update the limit.");
-			return;
-		}
-		const d = (res && res.data) || {};
-		u.monthly_token_limit = d.monthly_token_limit != null ? d.monthly_token_limit : val;
-		u._limitDraft = u.monthly_token_limit;
-		// A window switch restarts the count server-side; mirror it locally.
-		if (period !== (u.limit_period || "All time")) u.period_tokens = 0;
-		u.limit_period = d.limit_period || period;
-		u._periodDraft = u.limit_period;
-		toast.success("Limit updated");
-	} catch (e) {
-		toast.error(errHtml(e));
-	} finally {
-		u._saving = false;
-	}
+function limitText(u) {
+	if (!u.monthly_token_limit) return "Unlimited";
+	return `${fmtTokens(u.monthly_token_limit)} · ${(u.limit_period || "All time").toLowerCase()}`;
+}
+function modelLimitText(m) {
+	return m.monthly_token_limit ? `${fmtTokens(m.monthly_token_limit)} monthly` : "Unlimited";
 }
 
-async function saveModelLimit(u, m) {
-	const val = Math.max(0, Math.round(Number(m._limitDraft) || 0));
-	m._saving = true;
-	try {
-		const res = await api.adminSetUserModelLimit(u.user, m.model, val);
-		if (res && res.ok === false) {
-			toast.error(res.reason || "Could not update the model limit.");
-			return;
-		}
-		const d = (res && res.data) || {};
-		m.monthly_token_limit = d.monthly_token_limit != null ? d.monthly_token_limit : val;
-		m._limitDraft = m.monthly_token_limit;
-		toast.success(`Limit updated for ${modelDisplayLabel(m.model)}`);
-	} catch (e) {
-		toast.error(errHtml(e));
-	} finally {
-		m._saving = false;
+// One dialog instance, re-pointed at whichever row's pencil was clicked
+// (`model` set = the per-model monthly cap, else the user's cap + window).
+const editor = ref(null);
+const editorOpen = ref(false);
+function openEditor(u, m = null) {
+	editor.value = { user: u, model: m };
+	editorOpen.value = true;
+}
+function applySaved({ model, monthly_token_limit, limit_period }) {
+	const { user: u, model: m } = editor.value;
+	if (model && m) {
+		m.monthly_token_limit = monthly_token_limit;
+		return;
 	}
+	// A window switch restarts the count server-side; mirror it locally.
+	if (limit_period !== (u.limit_period || "All time")) u.period_tokens = 0;
+	u.monthly_token_limit = monthly_token_limit;
+	u.limit_period = limit_period;
 }
 
 // "Sync from agent" — sweeps the agent gateway's sessions.list to refresh
