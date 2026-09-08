@@ -184,6 +184,11 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	if not isinstance(spec, dict):
 		raise InvalidArgumentError("spec must be a dict")
 
+	# Start a fresh per-call memo for the field-level ACL (see
+	# _permitted_read_fields). Per-call, so a permission change earlier in this
+	# request can't be served stale to this query.
+	_reset_acl_memo()
+
 	# Step 1: validate spec shape (lightweight; deep validation happens
 	# during translation when we have type context).
 	_validate_spec_shape(spec)
@@ -535,9 +540,65 @@ def _from_doctype(alias_map: dict) -> str:
 	return next(iter(alias_map.values()))[0]
 
 
-def _permitted_read_fields(dt: str, base_doctype: str | None) -> set[str]:
-	"""Fields on ``dt`` the current user may READ (the field-level permlevel
-	ACL), mirroring ``get_list``'s ``apply_fieldlevel_read_permissions``.
+_ACL_MEMO_ATTR = "_jarvis_query_permitted_fields_memo"
+
+
+def _acl_memo_enabled() -> bool:
+	"""Kill switch for the per-call permitted-field memo. Set
+	``jarvis_disable_query_acl_memo: true`` in site_config (then restart the
+	workers) to bypass it and recompute the field ACL fresh on every column
+	reference. An emergency escape hatch: there is no runtime signal that would
+	catch a memo bug in prod, so operators must be able to turn it off live
+	without a code redeploy."""
+	return not frappe.conf.get("jarvis_disable_query_acl_memo")
+
+
+def _reset_acl_memo() -> None:
+	"""Start a FRESH memo for one ``query()`` call (or disable it under the kill
+	switch). Called once at the top of ``query()``. Deliberately per-CALL, not
+	per-request: a permission mutation earlier in the same request (share_doc,
+	update_doc) must not let a later query() read a stale ACL. Resetting at entry
+	means each call starts clean and nothing else ever reads this attribute.
+
+	(This is why ``frappe.request_cache`` is NOT used: it lives for the whole
+	request and would serve that stale ACL to a later query() in the same request;
+	it also keys on args only, so a user-in-key would be needed regardless. The
+	hand-rolled per-call reset keeps this behaviour-identical to get_list, which
+	recomputes the field ACL uncached every call.)"""
+	setattr(frappe.local, _ACL_MEMO_ATTR, {} if _acl_memo_enabled() else None)
+
+
+def _permitted_read_fields(dt: str, base_doctype: str | None) -> frozenset[str]:
+	"""Fields on ``dt`` the current user may READ (the field-level permlevel ACL),
+	memoized for the lifetime of one ``query()`` call.
+
+	The underlying ``get_permitted_fields`` is NOT cached by Frappe and is called
+	once per concrete column reference (select/where/having/group-by/order-by/
+	join-on/EXISTS), so a wide query recomputed the identical ACL set — plus, in
+	the no-permlevel-0 branch, a ``get_shared`` DB query — many times. Memoize on
+	``(user, dt, base_doctype)``:
+	  - ``user`` — belt-and-suspenders so the set can never be read across an
+	    identity switch (the memo is per-call and one call is one user, but the
+	    key makes a cross-user read structurally impossible).
+	  - ``base_doctype`` — load-bearing: an EXISTS sub-FROM resolves the same
+	    ``dt`` under a different base, which legitimately yields a DIFFERENT
+	    permitted set (parenttype None vs the base).
+	The result is a ``frozenset`` so a caller can never mutate the cached value.
+	"""
+	memo = getattr(frappe.local, _ACL_MEMO_ATTR, None)
+	key = (frappe.session.user, dt, base_doctype)
+	# ``key in memo``, not truthiness: an empty permitted set (e.g. a child-as-FROM
+	# with zero readable parents) is a real, cacheable answer, not a miss.
+	if memo is not None and key in memo:
+		return memo[key]
+	result = _compute_permitted_read_fields(dt, base_doctype)
+	if memo is not None:
+		memo[key] = result
+	return result
+
+
+def _compute_permitted_read_fields(dt: str, base_doctype: str | None) -> frozenset[str]:
+	"""The uncached ACL computation behind ``_permitted_read_fields``.
 
 	A child (istable) DocType carries no permissions of its own, so
 	``get_permitted_fieldnames`` short-circuits to an EMPTY list for
@@ -555,7 +616,7 @@ def _permitted_read_fields(dt: str, base_doctype: str | None) -> set[str]:
 	"""
 	if not frappe.get_meta(dt).istable:
 		parenttype = None if (base_doctype is None or dt == base_doctype) else base_doctype
-		return set(
+		return frozenset(
 			get_permitted_fields(
 				doctype=dt,
 				parenttype=parenttype,
@@ -586,7 +647,7 @@ def _permitted_read_fields(dt: str, base_doctype: str | None) -> set[str]:
 				ignore_virtual=True,
 			)
 		)
-	return permitted
+	return frozenset(permitted)
 
 
 def _validate_column(dt: str, field: str, base_doctype: str | None = None) -> None:
