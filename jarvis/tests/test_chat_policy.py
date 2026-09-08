@@ -49,6 +49,34 @@ class TestValidateCanSend(FrappeTestCase):
 		self.assertTrue(ok)
 		self.assertIsNone(reason)
 
+	def test_maintenance_blocks_send(self):
+		"""An active upgrade maintenance hold refuses the send with reason "maintenance"."""
+		with patch("jarvis.maintenance_notice.boot_payload", return_value={"active": True}):
+			ok, reason = validate_can_send("Administrator")
+		self.assertFalse(ok)
+		self.assertEqual(reason, "maintenance")
+
+	def test_release_update_wins_over_maintenance(self):
+		"""Precedence: a blocking release rollout is reported before a maintenance hold."""
+		with (
+			patch("jarvis.release_notice.boot_payload", return_value={"active": True}),
+			patch("jarvis.maintenance_notice.boot_payload", return_value={"active": True}),
+		):
+			ok, reason = validate_can_send("Administrator")
+		self.assertFalse(ok)
+		self.assertEqual(reason, "release_update_required")
+
+	def test_maintenance_wins_over_workspace_resetting(self):
+		"""Precedence: the "upgrading, back shortly" copy wins over the reset copy
+		(maintenance is checked before _workspace_resetting)."""
+		with (
+			patch("jarvis.maintenance_notice.boot_payload", return_value={"active": True}),
+			patch("jarvis.chat.policy._workspace_resetting", return_value=True),
+		):
+			ok, reason = validate_can_send("Administrator")
+		self.assertFalse(ok)
+		self.assertEqual(reason, "maintenance")
+
 	def test_administrator_can_send(self):
 		ok, reason = validate_can_send("Administrator")
 		self.assertTrue(ok)

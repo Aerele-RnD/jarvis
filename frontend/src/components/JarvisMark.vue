@@ -7,11 +7,14 @@
 
 	     `mood` turns the mark into a tiny reacting face for the moments that have
 	     one: eyes that glance while a reply is being written (thinking), widen
-	     while the mic is capturing (listening), and a one-off smile when the
-	     answer lands (happy). Default "star" renders exactly the resting spark, so
-	     the existing call sites need no change. The face is white on the same
-	     brand gradient as the spark - it never introduces a colour of its own, and
-	     the whitelabel <img> branch ignores mood entirely. -->
+	     while the mic is capturing (listening), a one-off smile when the answer
+	     lands (happy), and heavy sleepy lids with a soft "z z z" while the agent is
+	     being upgraded (upgrading). Default "star" renders exactly the resting
+	     spark, so the existing call sites need no change. The face is white on the
+	     same brand gradient as the spark - it never introduces a colour of its
+	     own, and the whitelabel <img> branch ignores mood entirely (a tenant with
+	     an uploaded logo keeps their logo during an upgrade; the maintenance
+	     banner still carries the "back shortly" message). -->
 	<img
 		v-if="brandLogoUrl"
 		class="jv-mark jv-mark-img"
@@ -38,6 +41,9 @@
 			<span class="jv-eyes"><i class="jv-eye"></i><i class="jv-eye"></i></span>
 			<span class="jv-mouth"></span>
 		</span>
+		<span v-if="mood === 'upgrading'" class="jv-zzz" aria-hidden="true"
+			><i>z</i><i>z</i><i>z</i></span
+		>
 	</span>
 </template>
 
@@ -54,11 +60,12 @@ const props = defineProps({
 	 * "thinking"  eyes glance around  - while a reply is being written
 	 * "listening" eyes widen + pulse  - while voice/mic is capturing
 	 * "happy"     smile, plays once   - the moment an answer lands
+	 * "upgrading" sleepy lids + z z z  - while the agent is being upgraded
 	 */
 	mood: {
 		type: String,
 		default: "star",
-		validator: (v) => ["star", "thinking", "listening", "happy"].includes(v),
+		validator: (v) => ["star", "thinking", "listening", "happy", "upgrading"].includes(v),
 	},
 	/** Sidebar/brand use: reveal a friendly blink on hover, calm otherwise. */
 	hoverPeek: { type: Boolean, default: false },
@@ -325,6 +332,87 @@ const markStyle = computed(() => ({
 	}
 }
 
+/* UPGRADING - the maintenance mood. The same white pills the other moods use,
+   drooped to heavy sleepy lids that slow-blink, over a soft breath, with a faint
+   "z z z" rising in the corner: the mark reads as "resting, back shortly" while
+   the agent is being upgraded. Everything stays inside the mark (which clips to
+   its rounded square), so nothing is cut off; a whitelabel <img> shows no face,
+   and the maintenance banner carries the message there. */
+.jv-mood-upgrading .jv-face {
+	animation: jvm-rest-breathe 4.6s ease-in-out infinite;
+}
+.jv-mood-upgrading .jv-eye {
+	height: calc(var(--jv-mark-size) * 0.055);
+	animation: jvm-rest-lid 4.6s ease-in-out infinite;
+}
+.jv-mood-upgrading .jv-eye:first-child {
+	transform: rotate(-13deg);
+}
+.jv-mood-upgrading .jv-eye:last-child {
+	transform: rotate(13deg);
+}
+@keyframes jvm-rest-breathe {
+	0%,
+	100% {
+		transform: scale(0.99);
+	}
+	50% {
+		transform: scale(1.02);
+	}
+}
+@keyframes jvm-rest-lid {
+	0%,
+	100% {
+		height: calc(var(--jv-mark-size) * 0.055);
+	}
+	50% {
+		height: calc(var(--jv-mark-size) * 0.022);
+	}
+}
+/* The sleep "z z z", white on the gradient, rising and fading in the corner.
+   Bounded travel so it fades before the clip edge rather than being cut. */
+.jv-zzz {
+	position: absolute;
+	top: 9%;
+	right: 8%;
+	display: flex;
+	align-items: flex-end;
+	gap: 1px;
+	line-height: 1;
+	pointer-events: none;
+}
+.jv-zzz i {
+	font-style: normal;
+	font-weight: 800;
+	color: #fff;
+	opacity: 0;
+}
+.jv-zzz i:nth-child(1) {
+	font-size: calc(var(--jv-mark-size) * 0.13);
+	animation: jvm-zfloat 3.2s ease-out infinite;
+}
+.jv-zzz i:nth-child(2) {
+	font-size: calc(var(--jv-mark-size) * 0.17);
+	animation: jvm-zfloat 3.2s ease-out 0.6s infinite;
+}
+.jv-zzz i:nth-child(3) {
+	font-size: calc(var(--jv-mark-size) * 0.22);
+	animation: jvm-zfloat 3.2s ease-out 1.2s infinite;
+}
+@keyframes jvm-zfloat {
+	0% {
+		opacity: 0;
+		transform: translateY(20%) scale(0.7);
+	}
+	30% {
+		opacity: 0.85;
+	}
+	100% {
+		opacity: 0;
+		transform: translateY(-30%) scale(1.05);
+	}
+}
+
 /* PEEK - resting star until triggered, then the same "thinking" glance the
    thinking mood uses (eyes look around, with a soft blink) rather than a quick
    one-off blink, so a resting mark is clearly, visibly alive. Triggered by
@@ -358,6 +446,17 @@ const markStyle = computed(() => ({
 	}
 	.jv-mood-thinking .jv-eye {
 		transform: translateY(-8%);
+	}
+	/* Upgrading: hold a calm sleeping frame - heavy lids, the z z z shown
+	   statically so it still reads as resting without any motion. */
+	.jv-mood-upgrading .jv-eye {
+		height: calc(var(--jv-mark-size) * 0.055);
+	}
+	.jv-zzz i {
+		/* Stop the rise/fade (an animation would otherwise override this static
+		   opacity); hold the z's visible so the frame still reads as resting. */
+		animation: none !important;
+		opacity: 0.8;
 	}
 }
 </style>
