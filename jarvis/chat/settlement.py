@@ -160,6 +160,11 @@ def invoke_settlement(
 
 	frappe.db.commit()  # slot released; the NEXT turn can be promoted
 
+	# The maintained per-conversation turn counter that drives the once-per-session
+	# feedback popup. Runs BEFORE the terminal publish so the client's
+	# ``session_feedback_status`` call on ``run:end`` already sees this turn counted.
+	_bump_turn_count(conversation)
+
 	# S5 — authoritative fenced terminal event, ONLY after the winning commit. CDX-3:
 	# the terminal carries pump_epoch so the client permanently blocks any later
 	# lower-epoch straggler (a stale pump's late delta / run:start) for this turn. CDX-12:
@@ -185,6 +190,55 @@ def invoke_settlement(
 
 	# S6 — enqueue enrichment (idempotent per (turn, effect_name); force-done at 3).
 	deps.enqueue_finalize(run_id, relay_target_id)
+
+
+def _bump_turn_count(conversation: str) -> None:
+	"""Advance ``Jarvis Conversation.turn_count`` by one for a settled turn.
+
+	O(1) indexed single-row UPDATE, never a ``COUNT(*)`` over ``tabJarvis Chat
+	Message``: this is the highest-frequency path the session-feedback feature
+	touches (every assistant reply, every conversation, fleet-wide), so the
+	popup's trigger check must be a plain integer read, not a scan. Same shape as
+	``greeting.increment_new_chat_count`` - an ATOMIC ``col = col + 1`` rather
+	than a read-modify-write, so two settlements racing on one conversation
+	(reconcile + terminal) can never lose an increment.
+
+	``file_box=0`` is part of the WHERE, not a separate read: File Box drops are
+	unattended runs excluded from turn counting (and from popup eligibility), and
+	folding the exclusion into the same indexed lookup costs nothing. A 0-row
+	update is the intended outcome there, so the rowcount is not consulted.
+
+	DELIBERATELY its OWN transaction, AFTER the settlement commit above, NOT
+	inside the fenced settlement txn. ``Jarvis Conversation`` is rank 2 in the
+	canonical lock order (control -> conversation -> turn -> message, OAR-6) and
+	the settlement txn already holds turn (rank 3) and message (rank 4) row locks;
+	taking a conversation lock there would invert against
+	``admission.accept_or_queue`` (shard -> conversation -> turn) and could
+	deadlock a concurrent send. The codebase already draws this line explicitly:
+	``admission._sweep_age_out`` and the user-cancel path both COMMIT their turn
+	CAS before calling ``_write_cancel_marker``, which takes the conversation
+	lock. This txn holds exactly one row lock and never waits while holding
+	another, so it cannot be part of a cycle.
+
+	Cost of the split: a crash between the settlement commit and this bump
+	undercounts one turn (a re-settle returns early on the already-advanced
+	state). Acceptable - the counter is an advisory engagement signal, and the
+	popup simply fires one turn later.
+
+	NEVER raises: a failed bump must not cost the turn its terminal publish or
+	its finalize enqueue, and must not leave an open txn/row lock across the
+	realtime publish that follows."""
+	try:
+		frappe.db.sql(
+			f"UPDATE `tab{CONV}` SET turn_count = turn_count + 1 WHERE name=%(c)s AND file_box=0",
+			{"c": conversation},
+		)
+		# Own short transaction (see above): commit immediately so the conversation
+		# row lock is released before the publish, and is never held across it.
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(title="settlement.bump_turn_count", message=frappe.get_traceback())
 
 
 def _extra_with_pending(extra: dict, owner: str | None, conversation: str) -> dict:

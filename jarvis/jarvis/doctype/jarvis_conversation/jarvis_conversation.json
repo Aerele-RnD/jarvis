@@ -19,7 +19,9 @@
   "auto_expired",
   "expired_at",
   "origin_page",
-  "compacting_since"
+  "compacting_since",
+  "turn_count",
+  "session_feedback_asked_at"
  ],
  "fields": [
   {
@@ -169,6 +171,25 @@
    "label": "Compacting Since",
    "hidden": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "turn_count",
+   "fieldtype": "Int",
+   "label": "Turn Count",
+   "default": "0",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Maintained counter, incremented once per settled turn by jarvis.chat.settlement._bump_turn_count. NOT a live COUNT(*): the once-per-session feedback trigger reads it after every assistant reply, fleet-wide, so it must never scan tabJarvis Chat Message. Stays 0 on file_box conversations (excluded from turn counting). Server-set only."
+  },
+  {
+   "fieldname": "session_feedback_asked_at",
+   "fieldtype": "Datetime",
+   "label": "Session Feedback Asked At",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Set once the once-per-session feedback popup has been answered or skipped for this conversation, by jarvis.chat.feedback.submit_session_feedback. Server-side (not localStorage) so the \"asked once\" guarantee survives a reload and a second tab. Server-set only."
   }
  ],
  "permissions": [
