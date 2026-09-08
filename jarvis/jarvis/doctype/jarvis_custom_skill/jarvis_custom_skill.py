@@ -177,7 +177,14 @@ def prefetch_child_values(skills: list) -> None:
 
 def _batch_child_values(names: list, child_doctype: str, value_field: str) -> dict:
 	"""``{parent: [value, ...]}`` for ``child_doctype`` rows under ``names``, in one
-	query. Scoped by ``parenttype`` and falsy-filtered to match ``_child_values``."""
+	query, scoped by ``parenttype``.
+
+	The ``if value`` drop matches ``_child_values``' LIST branch (which every
+	batch-attached row goes through) — the authoritative filter also used on the
+	SPA/ORM Document path. Both child fields (``user``/``role``) are ``reqd: 1``
+	and the controller writes only non-empty values, so a falsy value is not
+	reachable through any app write; the filter is defensive alignment, not a
+	behaviour change for real data."""
 	grouped: dict = {}
 	for row in frappe.get_all(
 		child_doctype,
