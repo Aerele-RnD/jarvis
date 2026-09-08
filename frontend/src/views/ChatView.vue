@@ -4309,7 +4309,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
 import { Dropdown } from "frappe-ui";
 import ContextRing from "@/components/chat/ContextRing.vue";
 import UsagePill from "@/components/chat/UsagePill.vue";
-import { myUsage, loadMyUsage } from "@/stores/usage";
+import { myUsage, loadMyUsage, takeUsage } from "@/stores/usage";
 import CompactDialog from "@/components/chat/CompactDialog.vue";
 import { parseCompactCommand, compactFailureCopy } from "@/lib/compact";
 import * as api from "@/api";
@@ -4832,6 +4832,7 @@ const supportMenuOptions = computed(() => [
 // otherwise be unhandled (the real store already catches its own errors, so
 // this is belt-and-braces).
 onMounted(() => {
+	loadMyUsage();
 	if (supportOn) supportStore.refreshAwaiting().catch(() => {});
 });
 // One-shot "ground on wiki": when armed, the NEXT message carries a
@@ -5187,8 +5188,8 @@ async function loadContext({ applyCompacting = false } = {}) {
 		return;
 	}
 	try {
-		loadMyUsage();
 		const c = await api.getConversationContext(id);
+		takeUsage(c);
 		// Stale-response guard (mirrors loadConversation): a slow response for a
 		// chat the user has since left must not stamp ITS compacting/context state
 		// onto whichever chat is on screen now.

@@ -1,6 +1,7 @@
 // The signed-in user's own token cap and usage, for the composer's UsagePill.
-// One roaming source (Jarvis User Settings via get_my_settings); refreshed on
-// chat open and after every completed turn, alongside the context ring.
+// Fed by the context-meter payload the chat already fetches on open and after
+// every completed turn (takeUsage), so the pill costs no request of its own; a
+// brand-new chat with no conversation yet loads it once from settings.
 import { ref } from "vue";
 import * as api from "@/api";
 
@@ -17,4 +18,12 @@ export async function loadMyUsage() {
 	} catch {
 		/* the pill is best-effort; a failed read keeps the last reading */
 	}
+}
+
+/** Take the cap reading off a get_conversation_context payload. A payload
+ * without one (older server, error path) keeps the last reading. */
+export function takeUsage(context) {
+	const u = context && context.usage;
+	if (!u) return;
+	myUsage.value = Object.fromEntries(FIELDS.map((k) => [k, u[k]]));
 }

@@ -265,3 +265,29 @@ class TestMigrateWindow(_UsageTestBase):
 			ok, reason = policy.validate_can_send(USER_A)
 		self.assertTrue(ok)
 		self.assertIsNone(reason)
+
+
+class TestContextCarriesUsage(_UsageTestBase):
+	"""The composer's usage pill rides the context-meter payload the SPA already
+	fetches after every turn, so the pill costs no request of its own."""
+
+	def tearDown(self):
+		from jarvis.tests.test_chat_compaction import _cleanup
+
+		frappe.set_user("Administrator")
+		_cleanup()
+		super().tearDown()
+
+	def test_context_payload_carries_the_cap_reading(self):
+		from jarvis.chat.api import get_conversation_context
+		from jarvis.tests.test_chat_compaction import _mk_conversation
+
+		_set_cap(100, "Daily")
+		_stamp(period_tokens=40, total_tokens=900)
+		frappe.set_user(USER_A)
+		conv = _mk_conversation("agent:main:c-usage-pill")
+		out = get_conversation_context(conv)
+		self.assertEqual(
+			out["usage"],
+			{"monthly_token_limit": 100, "limit_period": "Daily", "period_tokens": 40, "total_tokens": 900},
+		)
