@@ -3498,3 +3498,23 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 			self.assertEqual(gpf.call_count, 2)  # one per reference, no memo
 		finally:
 			frappe.conf.pop("jarvis_disable_query_acl_memo", None)
+
+	def test_acl_memo_keys_on_base_doctype(self):
+		"""base_doctype is part of the memo key: the same child dt resolved under two
+		different owning parents (as an EXISTS sub-FROM's scope produces) must
+		compute SEPARATELY, never collide on a base-less key. Dropping base_doctype
+		from the key would collapse these to one entry and serve one parent's
+		permitted set for the other — this pins acceptance criterion #3."""
+		frappe.set_user(self.USER_SCOPE_AB)  # can read both scope parents
+		query_mod._reset_acl_memo()
+		with patch.object(query_mod, "get_permitted_fields", wraps=query_mod.get_permitted_fields) as gpf:
+			a1 = query_mod._permitted_read_fields(self.SCOPE_CHILD_DT, self.SCOPE_PARENT_A)
+			b1 = query_mod._permitted_read_fields(self.SCOPE_CHILD_DT, self.SCOPE_PARENT_B)
+			# Repeats must be memo HITS (no recompute), proving each base is its own key.
+			a2 = query_mod._permitted_read_fields(self.SCOPE_CHILD_DT, self.SCOPE_PARENT_A)
+			b2 = query_mod._permitted_read_fields(self.SCOPE_CHILD_DT, self.SCOPE_PARENT_B)
+		# Two distinct (dt, base) keys -> computed once each; a base-less key -> 1.
+		self.assertEqual(gpf.call_count, 2)
+		# Same key returns the identical cached object (frozenset), not a recompute.
+		self.assertIs(a1, a2)
+		self.assertIs(b1, b2)
