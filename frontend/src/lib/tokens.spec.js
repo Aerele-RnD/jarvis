@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fmtTokens, contextReading, limitWindow } from "./tokens.js";
+import { fmtTokens, contextReading, limitWindow, limitReading } from "./tokens.js";
 
 describe("fmtTokens", () => {
 	it("renders an even thousand without a decimal", () => {
@@ -47,5 +47,38 @@ describe("limitWindow", () => {
 			used: 40000,
 			label: "this month",
 		});
+	});
+});
+
+describe("limitReading", () => {
+	const weekly = {
+		monthly_token_limit: 1000000,
+		limit_period: "Weekly",
+		period_tokens: 400000,
+		total_tokens: 4200000,
+	};
+	it("no cap reads as none", () => {
+		expect(limitReading({ monthly_token_limit: 0 }).state).toBe("none");
+		expect(limitReading(null).state).toBe("none");
+	});
+	it("under 80% is quiet, with the window label and reset day", () => {
+		expect(limitReading(weekly)).toEqual({
+			state: "quiet",
+			pct: 40,
+			used: 400000,
+			limit: 1000000,
+			label: "this week",
+			reset: "Sunday",
+		});
+	});
+	it("80% and above warns; the cap itself is full", () => {
+		expect(limitReading({ ...weekly, period_tokens: 820000 }).state).toBe("warn");
+		expect(limitReading({ ...weekly, period_tokens: 1000000 }).state).toBe("full");
+		expect(limitReading({ ...weekly, period_tokens: 1200000 }).pct).toBe(100);
+	});
+	it("daily and monthly name their reset; all time has none", () => {
+		expect(limitReading({ ...weekly, limit_period: "Daily" }).reset).toBe("midnight");
+		expect(limitReading({ ...weekly, limit_period: "Monthly" }).reset).toBe("the 1st");
+		expect(limitReading({ ...weekly, limit_period: "All time" }).reset).toBe("");
 	});
 });

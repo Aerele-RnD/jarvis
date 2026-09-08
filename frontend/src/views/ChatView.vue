@@ -3680,6 +3680,7 @@
 								:compacted="compactedChip"
 								@compact="openCompactDialog('')"
 							/>
+							<UsagePill :usage="myUsage" />
 							<ModelEffortPicker
 								:model-override="modelOverride"
 								:default-model="ui.llm_model || ''"
@@ -4459,6 +4460,8 @@ import {
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
 import { Dropdown } from "frappe-ui";
 import ContextRing from "@/components/chat/ContextRing.vue";
+import UsagePill from "@/components/chat/UsagePill.vue";
+import { myUsage, loadMyUsage } from "@/stores/usage";
 import CompactDialog from "@/components/chat/CompactDialog.vue";
 import { parseCompactCommand, compactFailureCopy } from "@/lib/compact";
 import * as api from "@/api";
@@ -5416,6 +5419,7 @@ async function loadContext({ applyCompacting = false } = {}) {
 		return;
 	}
 	try {
+		loadMyUsage();
 		const c = await api.getConversationContext(id);
 		// Stale-response guard (mirrors loadConversation): a slow response for a
 		// chat the user has since left must not stamp ITS compacting/context state
