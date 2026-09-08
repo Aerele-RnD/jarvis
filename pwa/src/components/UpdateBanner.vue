@@ -18,7 +18,7 @@ import { agentName } from "@/branding";
 import { bannerToneFor } from "@shared/releaseNudge";
 import { notice, pillHandle, snoozeBanner, openWhatsNew } from "../noticeGate";
 
-const message = `A new version of ${agentName} is available — ask your administrator to update.`;
+const message = `A new version of ${agentName} is available. Ask your administrator to update.`;
 
 // Severity drives the banner's colour, mirroring the pill - single-sourced via
 // bannerToneFor (releaseNudge.js) so the pill and banner can never disagree, and
