@@ -21,7 +21,7 @@ import hashlib
 
 import frappe
 
-from jarvis import admin_client, announcement, compat, onboarding_contract, release_notice
+from jarvis import admin_client, announcement, compat, maintenance_notice, onboarding_contract, release_notice
 from jarvis.exceptions import (
 	AdminAuthError,
 	AdminRateLimitedError,
@@ -567,6 +567,10 @@ def _admin_chat_gate() -> dict:
 	release_notice.persist(conn.get("release_notice") or {})
 	# Same cadence: mirror the fleet-wide operator announcement for the soft banner.
 	announcement.persist(conn.get("announcement") or {})
+	# Same cadence for the maintenance hold. Present key = authoritative (set/clear);
+	# absent = unknown -> keep last-known (decision 3), so a partial payload can't clear
+	# a live hold mid-teardown.
+	maintenance_notice.persist(conn["maintenance"] if "maintenance" in conn else None)
 	# Same cadence: mirror the backend-owned egress redaction rules for the chat backstop.
 	from jarvis.chat import egress_rules
 

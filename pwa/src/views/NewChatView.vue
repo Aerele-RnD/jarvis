@@ -1,6 +1,7 @@
 <script setup>
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from "vue";
 import BrandMark from "../components/BrandMark.vue";
+import { holdActive } from "../maintenanceGate";
 import { agentName } from "@/branding";
 import { useRouter } from "vue-router";
 import * as api from "../api";
@@ -207,7 +208,7 @@ onUnmounted(() => attachments.value.forEach((a) => a.preview && URL.revokeObject
 	</div>
 
 	<div class="jv-hero">
-		<BrandMark :size="56" />
+		<BrandMark :size="56" :mood="holdActive ? 'upgrading' : 'star'" />
 		<h1 class="jv-greeting">{{ greeting }}</h1>
 	</div>
 

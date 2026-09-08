@@ -113,3 +113,15 @@ def set_jarvis_boot(bootinfo):
 	except Exception:
 		bootinfo.jarvis_agent_name = ""
 		bootinfo.jarvis_brand_logo_url = ""
+
+	# Upgrade maintenance hold (Stream E) for the desk floating widget: the same
+	# {active, message} the SPA/PWA get via their own boot payloads, so the bubble
+	# can show the "back shortly" banner + sleepy avatar proactively (Panel.vue
+	# reads window.frappe.boot.jarvis_maintenance synchronously, so no flash).
+	# Fail-safe to not-held: a boot error must never wedge the widget into a hold.
+	try:
+		from jarvis import maintenance_notice
+
+		bootinfo.jarvis_maintenance = maintenance_notice.boot_payload()
+	except Exception:
+		bootinfo.jarvis_maintenance = {"active": False, "message": ""}
