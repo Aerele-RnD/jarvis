@@ -7,7 +7,7 @@ import json
 import frappe
 from frappe.utils import cint, validate_email_address
 
-from jarvis import admin_client, onboarding_contract, release_notice
+from jarvis import admin_client, announcement, onboarding_contract, release_notice
 from jarvis.exceptions import (
 	AdminAuthError,
 	AdminRateLimitedError,
@@ -263,6 +263,8 @@ def sync_connection(timeout_s: int | None = None) -> dict:
 	# raise or clear the release notice, and this is the only refresh an idle
 	# bench gets.
 	release_notice.persist(data.get("release_notice") or {})
+	# Same cadence: mirror the fleet-wide operator announcement for the soft banner.
+	announcement.persist(data.get("announcement") or {})
 	# Same cadence: mirror the backend-owned egress redaction rules for the chat backstop.
 	from jarvis.chat import egress_rules
 
