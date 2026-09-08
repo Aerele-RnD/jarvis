@@ -9,8 +9,9 @@ this module's contract.
 Returns (True, None) on success or (False, reason: str) on rejection. The
 reason is a machine code the SPA maps to a human toast: ``"usage_limit"`` for
 enforcement, ``"subscription_suspended"`` for billing,
-and ``"release_update_required"`` while a release rollout is blocking this
-bench. Worker health is never a gate here: RQ's worker registry can read zero
+``"release_update_required"`` while a release rollout is blocking this
+bench, and ``"maintenance"`` during an upgrade maintenance hold. Worker
+health is never a gate here: RQ's worker registry can read zero
 while every worker is alive (see ``jarvis.chat.pump._registry_is_stale``), and a
 turn nobody picks up is the orphan sweep's job (``stale_scan``).
 """
@@ -32,6 +33,11 @@ def validate_can_send(user: str, model: str | None = None) -> tuple[bool, str | 
 		return False, "subscription_suspended"
 	if _release_update_required():
 		return False, "release_update_required"
+	# Upgrade maintenance hold (operator- or roll-driven, resolved on the control plane).
+	# Before _workspace_resetting so the "upgrading, back shortly" copy wins over the
+	# generic "resetting" copy during a roll.
+	if _maintenance_hold():
+		return False, "maintenance"
 	if _workspace_resetting():
 		return False, "workspace_resetting"
 	if _llm_not_configured():
@@ -61,6 +67,26 @@ def _release_update_required() -> bool:
 			title="jarvis policy: release-notice check failed (allowing send)",
 			message=frappe.get_traceback(),
 		)
+		return False
+
+
+def _maintenance_hold() -> bool:
+	"""True while an upgrade maintenance hold applies to this bench (operator- or
+	roll-driven, resolved on the control plane, mirrored locally). Reads the local
+	mirror (no admin round-trip) so the send gate and the UI banner agree. Fails OPEN."""
+	try:
+		from jarvis import maintenance_notice
+
+		return bool(maintenance_notice.boot_payload().get("active"))
+	except Exception:
+		# See _workspace_resetting: don't let a logging failure defeat fail-open.
+		try:
+			frappe.log_error(
+				title="jarvis policy: maintenance-hold check failed (allowing send)",
+				message=frappe.get_traceback(),
+			)
+		except Exception:
+			pass
 		return False
 
 

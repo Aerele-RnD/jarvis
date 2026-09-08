@@ -68,8 +68,16 @@
 				></div>
 			</template>
 			<div class="jvp-head">
-				<div class="jvp-avatar">
+				<div class="jvp-avatar" :class="{ 'jvp-sleeping': maintenanceActive }">
 					<img v-if="brandLogoUrl" :src="brandLogoUrl" class="jvp-avatar-img" alt="" />
+					<!-- Upgrading: sleepy drooping lids (the desk twin of JarvisMark's
+					     "upgrading" mood). The online dot goes amber via .jvp-sleeping. -->
+					<span v-else-if="maintenanceActive" class="jvp-face" aria-hidden="true">
+						<i class="jvp-eye"></i><i class="jvp-eye"></i>
+					</span>
+					<span v-if="maintenanceActive" class="jvp-zzz" aria-hidden="true"
+						><i>z</i><i>z</i><i>z</i></span
+					>
 					<svg v-else viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
 						<path
 							d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
@@ -181,6 +189,19 @@
 			     replaces the conversation below it. Sits above the scrollable thread
 			     so it reads as a thin banner at the top, not inline with any one
 			     message. -->
+			<!-- Upgrade maintenance hold (Stream E): a proactive "back shortly" strip,
+			     shown regardless of readiness. The composer stays enabled below; a held
+			     send gets the friendly refusal and this self-clears when one gets
+			     through. Amber, like the worker notice; aria-live announces it. -->
+			<div
+				v-if="maintenanceActive"
+				class="jvp-maint-notice"
+				role="status"
+				aria-live="polite"
+			>
+				{{ maintenanceText }}
+			</div>
+
 			<div
 				v-if="workerWarning && readiness === 'ready'"
 				class="jvp-worker-notice"
@@ -238,8 +259,16 @@
 						v-else-if="!shownMessages.length && !stream.live && !thinking"
 						class="jvp-welcome"
 					>
-						<div class="jvp-hero">
-							<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+						<div class="jvp-hero" :class="{ 'jvp-sleeping': maintenanceActive }">
+							<!-- Upgrading: the hero mark sleeps too, so it matches the header
+							     avatar instead of showing a wide-awake face during a hold. -->
+							<span v-if="maintenanceActive" class="jvp-face" aria-hidden="true">
+								<i class="jvp-eye"></i><i class="jvp-eye"></i>
+							</span>
+							<span v-if="maintenanceActive" class="jvp-zzz" aria-hidden="true"
+								><i>z</i><i>z</i><i>z</i></span
+							>
+							<svg v-else viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
 								<path
 									d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
 								/>
@@ -635,6 +664,7 @@ import { resizeFrom } from "./panel_size.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { classifyReadiness, degradedActionable, shouldWarnWorkers } from "./panel_readiness.mjs";
 import { sendRefusalMessage } from "./panel_send_copy.mjs";
+import { maintenanceActiveAfterSend } from "./panel_maintenance.mjs";
 import {
 	emptyStream,
 	applyEvent,
@@ -984,6 +1014,24 @@ const shownMessages = computed(() => visibleMessages(messages.value));
 // synchronously so there's no flash. Blank => Jarvis defaults.
 const brandName = (window.frappe?.boot?.jarvis_agent_name || "").trim() || "Jarvis";
 const brandLogoUrl = (window.frappe?.boot?.jarvis_brand_logo_url || "").trim();
+// Upgrade maintenance hold (Stream E): seeded from boot (jarvis_maintenance =
+// {active, message}, set_jarvis_boot), raised if a send is refused with reason
+// "maintenance" while the bubble is open, and cleared the moment a later send gets
+// through (the roll finished). The composer never blocks - a held send shows the
+// friendly refusal, not a dead box. The custom operator message (brand-scrubbed
+// server-side) wins over the branded default; the server refusal carries only the
+// reason, so the boot message is the source of the custom text.
+const _maint = window.frappe?.boot?.jarvis_maintenance || {};
+const maintenanceActive = ref(!!_maint.active);
+const maintenanceMessage = ref((_maint.message || "").trim());
+const maintenanceText = computed(
+	// Reuse the single-sourced copy (sendRefusalMessage) instead of a 3rd hardcoded copy of
+	// the sentence, so a wording change can't leave this banner out of sync with the inline
+	// refusal / the SPA. NOTE: there is no widget-side recheck()/poll - this desk bundle
+	// cannot import frontend/src (see panel_send_copy.mjs's header), so the hold clears on
+	// the next accepted send (maintenanceActiveAfterSend) or a Desk reload.
+	() => maintenanceMessage.value || sendRefusalMessage("maintenance", brandName)
+);
 // A turn is in flight from the moment the POST is away until the first token
 // lands. Without this the panel looks inert for the whole worker round-trip.
 const greeting = computed(() => {
@@ -1454,6 +1502,10 @@ async function send() {
 		const approvalTokens = orderedPending.value.map((p) => p.token);
 		const res = await sendMessage(convId.value, text, props.context, atts, approvalTokens);
 		if (res?.conversation_id) convId.value = res.conversation_id;
+		// Fold this response into the maintenance banner: raise on a "maintenance"
+		// refusal, clear once any send/confirm gets past the gate (proof it lifted).
+		const maintNext = maintenanceActiveAfterSend(res);
+		if (maintNext !== null) maintenanceActive.value = maintNext;
 		// A send the server refused outright (e.g. a required app update, via the
 		// same validate_can_send gate as the full chat) starts no turn and returns
 		// no conversation. Surface the reason and STOP — otherwise the fall-through
@@ -1463,6 +1515,13 @@ async function send() {
 		if (res && res.ok === false && !res.confirmed) {
 			sending.value = false;
 			messages.value = messages.value.filter((m) => !String(m.name).startsWith("local-"));
+			if (res.reason === "maintenance") {
+				// The proactive amber banner (raised above) carries the message; restore
+				// the typed text and do NOT set the red loadError - on an empty conversation
+				// that would replace the whole welcome screen.
+				draft.value = lastSent.value;
+				return;
+			}
 			loadError.value =
 				res.reason === "release_update_required"
 					? sendRefusalMessage(res.reason, brandName)
@@ -1952,6 +2011,7 @@ defineExpose({ load, startNewChat, convId });
 }
 .jvp-avatar {
 	position: relative;
+	--sz: 30px;
 	width: 30px;
 	height: 30px;
 	flex: 0 0 auto;
@@ -2203,6 +2263,10 @@ defineExpose({ load, startNewChat, convId });
 	padding: 24px 9px 8px;
 }
 .jvp-hero {
+	/* position: relative so the sleepy .jvp-face (position:absolute) centres inside
+	   this 52px tile, not against the whole panel - matching .jvp-avatar. */
+	position: relative;
+	--sz: 52px;
 	width: 52px;
 	height: 52px;
 	border-radius: 14px;
@@ -2681,6 +2745,122 @@ defineExpose({ load, startNewChat, convId });
 	font-size: 12px;
 	line-height: 1.4;
 	text-align: center;
+}
+
+/* ---- upgrade maintenance hold (Stream E) ---- */
+.jvp-maint-notice {
+	flex: none;
+	margin: 10px 15px 0;
+	padding: 6px 11px;
+	border: 1px solid var(--jv-warn-bd);
+	border-radius: 9px;
+	background: var(--jv-warn-bg);
+	color: var(--jv-warn);
+	font-size: 12px;
+	line-height: 1.4;
+	text-align: center;
+	/* The message is operator-authored (maintenance_message); a long unbroken token
+	   (e.g. a status-page URL) must wrap, not overflow the fixed-width panel. */
+	overflow-wrap: anywhere;
+}
+/* Sleepy header avatar: heavy drooping white pill lids over the brand tile - the
+   desk twin of JarvisMark's "upgrading" mood. #fff explicit (the tile fills the
+   spark). The online dot goes amber to match the paused state. */
+.jvp-face {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: calc(var(--sz) * 0.19);
+	animation: jvp-breathe 4.6s ease-in-out infinite;
+}
+.jvp-eye {
+	width: calc(var(--sz) * 0.135);
+	height: calc(var(--sz) * 0.055);
+	background: #fff;
+	border-radius: 999px;
+	animation: jvp-lid 4.6s ease-in-out infinite;
+}
+.jvp-eye:first-child {
+	transform: rotate(-13deg);
+}
+.jvp-eye:last-child {
+	transform: rotate(13deg);
+}
+.jvp-sleeping .jvp-online {
+	background: var(--jv-warn, #e8a845);
+}
+/* Sleep "z z z", white over the gradient tile - the z's fade out as they rise
+   past the tile edge, so only the on-tile part shows (overflow is visible). */
+.jvp-zzz {
+	position: absolute;
+	top: 9%;
+	right: 8%;
+	display: flex;
+	align-items: flex-end;
+	gap: 1px;
+	line-height: 1;
+	pointer-events: none;
+}
+.jvp-zzz i {
+	font-style: normal;
+	font-weight: 800;
+	color: #fff;
+	opacity: 0;
+}
+.jvp-zzz i:nth-child(1) {
+	font-size: calc(var(--sz) * 0.14);
+	animation: jvp-zfloat 3.2s ease-out infinite;
+}
+.jvp-zzz i:nth-child(2) {
+	font-size: calc(var(--sz) * 0.18);
+	animation: jvp-zfloat 3.2s ease-out 0.6s infinite;
+}
+.jvp-zzz i:nth-child(3) {
+	font-size: calc(var(--sz) * 0.24);
+	animation: jvp-zfloat 3.2s ease-out 1.2s infinite;
+}
+@keyframes jvp-zfloat {
+	0% {
+		opacity: 0;
+		transform: translateY(20%) scale(0.7);
+	}
+	30% {
+		opacity: 0.9;
+	}
+	100% {
+		opacity: 0;
+		transform: translateY(-30%) scale(1.05);
+	}
+}
+@keyframes jvp-breathe {
+	0%,
+	100% {
+		transform: scale(0.99);
+	}
+	50% {
+		transform: scale(1.02);
+	}
+}
+@keyframes jvp-lid {
+	0%,
+	100% {
+		height: calc(var(--sz) * 0.055);
+	}
+	50% {
+		height: calc(var(--sz) * 0.022);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.jvp-face,
+	.jvp-eye,
+	.jvp-zzz i {
+		animation: none;
+	}
+	.jvp-zzz i {
+		opacity: 0.85;
+	}
 }
 
 /* ---- pending write confirmation ---- */

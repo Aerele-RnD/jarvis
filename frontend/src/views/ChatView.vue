@@ -556,6 +556,17 @@
 			     stacks, never hides chat. -->
 			<AnnouncementBanner v-if="announcementVisible" />
 
+			<!-- Upgrade maintenance hold (Stream E): a friendly "back shortly" while
+			     this tenant's agent is being upgraded (an image roll / reprovision).
+			     Same top-of-chat slot and warning register as the update banner, but
+			     the composer STAYS enabled - the send-gate gives a soft refusal and
+			     self-heals when the roll clears (see send()'s "maintenance" branch).
+			     Takes precedence over the release-nudge soft banner (holdActive is in
+			     hasUrgentAlert), so the two never stack. role/aria-live announce it. -->
+			<div v-if="holdActive" role="status" aria-live="polite" style="margin: 12px 18px 0">
+				<Banner type="warning" :message="holdText" align="center" />
+			</div>
+
 			<!-- Release-nudge banner (Slice 3b): severity-coloured (amber for soft,
 			     red for severe), top-of-chat. Shows over the welcome screen; yields
 			     to the greeting/booting states and to any urgent billing/readiness
@@ -607,7 +618,12 @@
 							overflow-wrap: anywhere;
 						"
 					>
-						<JarvisMark :size="38" :radius="11" style="flex: none" />
+						<JarvisMark
+							:size="38"
+							:radius="11"
+							:mood="holdActive ? 'upgrading' : 'star'"
+							style="flex: none"
+						/>
 						<span>{{ greeting }}, {{ firstName }}</span>
 					</h1>
 					<p class="jv-welcome-sub">
@@ -4390,6 +4406,14 @@ import AnnouncementBanner from "@/components/chat/AnnouncementBanner.vue";
 import WhatsNewDialog from "@/components/chat/WhatsNewDialog.vue";
 import { showBanner } from "@/noticeGate";
 import { showAnnouncement } from "@/announcementGate";
+
+import {
+	holdActive,
+	holdText,
+	raiseHold,
+	clearHold,
+	recheck as recheckMaintenance,
+} from "@/maintenanceGate";
 import { parseAsk } from "@/lib/chatAsk";
 import { sendRejectionCopy } from "@/lib/sendRejectionCopy";
 import { shouldHideActivityTool, isCustomerFacingTool } from "@/lib/activityTools";
@@ -4676,13 +4700,18 @@ const versionPillRef = ref(null);
 const hasUrgentAlert = computed(
 	() =>
 		!!(
-			replacedAlert.value ||
-			billingAlert.value ||
-			suspendedNotice.value ||
-			noAiConnected.value ||
-			containerUnavailable.value ||
-			llmApplyStuck.value ||
-			notReadyNotice.value
+			// An active upgrade maintenance hold pauses chat too (Stream E), so the
+			// release-nudge soft banner yields to the "back shortly" banner.
+			(
+				holdActive.value ||
+				replacedAlert.value ||
+				billingAlert.value ||
+				suspendedNotice.value ||
+				noAiConnected.value ||
+				containerUnavailable.value ||
+				llmApplyStuck.value ||
+				notReadyNotice.value
+			)
 		)
 );
 // The operator announcement banner shares the top-of-chat slot and the same
@@ -8895,6 +8924,10 @@ async function retry(messageId) {
 			// not a toast that vanishes before they can renew.
 			if (r.reason === "subscription_suspended") {
 				if (!suspendedNotice.value) suspendedNotice.value = SUSPENDED_FALLBACK;
+			} else if (r.reason === "maintenance") {
+				// Same as send(): raise the hold banner + self-heal, no toast.
+				raiseHold(r.message);
+				recheckMaintenance();
 			} else {
 				// e.g. the single-flight guard ("a reply is already in progress").
 				notify(r.reason || "Couldn't retry that.", { type: "error" });
@@ -8902,6 +8935,8 @@ async function retry(messageId) {
 		}
 		if (r && r.ok !== false) {
 			workersWarnNotice.value = null; // a retry got through: workers are back
+			// A retry that got through also proves any maintenance hold lifted.
+			clearHold();
 		}
 	} catch (e) {
 		sending.value = false;
@@ -9159,6 +9194,16 @@ async function send(textArg, resendAck) {
 				setTimeout(() => window.location.reload(), 1500);
 				return;
 			}
+			// Maintenance hold (Stream E): the operator/roll raised an upgrade hold
+			// while this tab was open, so boot never carried it. Show the friendly
+			// "back shortly" banner + self-heal by re-checking the CP; the composer
+			// stays enabled, so the next send lands the moment the roll clears. No
+			// reload (unlike release_update_required) - an upgrade hold is transient.
+			if (r.reason === "maintenance") {
+				raiseHold(r.message);
+				recheckMaintenance();
+				return;
+			}
 			if (r.reason === "workspace_resetting") {
 				notify(`${agentName} is being reset. Chat will be back in a few minutes.`, {
 					type: "warning",
@@ -9184,6 +9229,10 @@ async function send(textArg, resendAck) {
 		}
 		if (r && r.ok !== false) {
 			workersWarnNotice.value = null; // a send got through: workers are back
+			// An accepted send proves the CP-side gate passed, i.e. any upgrade
+			// maintenance hold has lifted - clear the banner + wake the avatar now
+			// rather than stranding them until a reload (self-heal).
+			clearHold();
 		}
 		// Send accepted — the one-shot grounding/prefill context is now consumed.
 		// Cleared HERE, not before the await: a rejected send (r.ok === false, above)

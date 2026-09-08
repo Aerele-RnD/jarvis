@@ -10,6 +10,12 @@ import {
 	watch,
 } from "vue";
 import BrandMark from "../components/BrandMark.vue";
+import {
+	holdActive,
+	raiseHold,
+	clearHold,
+	recheck as recheckMaintenance,
+} from "../maintenanceGate";
 import { agentName } from "@/branding";
 import { useRouter } from "vue-router";
 // The desktop SPA's renderer — dependency-free, and sharing it means an agent
@@ -326,6 +332,9 @@ async function send() {
 		// exist. The receipt chip in the reloaded thread is what the user sees.
 		if (res?.confirmed) {
 			sendBusy.value = false;
+			// A parked-card confirmation also got past the send gate, so any maintenance
+			// hold has lifted - clear the strip now instead of waiting for the poll.
+			clearHold();
 			messages.value = messages.value.filter((m) => !m.optimistic);
 			if (res.ok === false)
 				errorBanner.value =
@@ -345,9 +354,22 @@ async function send() {
 				setTimeout(() => window.location.reload(), 1500);
 				return;
 			}
+			// Maintenance hold (Stream E): the operator/roll raised an upgrade hold
+			// while this tab was open. Raise the persistent top-of-app strip + self-
+			// heal by re-checking the CP; no reload (a hold is transient), composer
+			// stays enabled, so the next send lands the moment the roll clears.
+			if (res.reason === "maintenance") {
+				raiseHold(res.message);
+				recheckMaintenance();
+				input.value = text; // keep their typed text - the composer stays enabled, they can retry
+				return;
+			}
 			errorBanner.value = res.reason || "Couldn't send that message.";
 			return;
 		}
+		// An accepted send proves the maintenance hold lifted - clear the strip + wake
+		// the avatar now instead of stranding them until a reload (self-heal).
+		clearHold();
 		// First send of a brand-new chat: adopt the id the backend just created,
 		// and put the row in the list without a refetch.
 		const id = res?.conversation_id;
@@ -699,7 +721,7 @@ onUnmounted(() => {
 
 	<div ref="scroller" class="jv-scroll jv-thread" @scroll.passive="onScroll">
 		<div v-if="!items.length && !live && !loading" class="jv-empty">
-			<BrandMark :size="52" />
+			<BrandMark :size="52" :mood="holdActive ? 'upgrading' : 'star'" />
 			<div style="font-size: 16px; font-weight: 600; color: var(--ink9)">
 				What can I do for you?
 			</div>
