@@ -86,8 +86,9 @@
 								/>
 							</div>
 							<div class="mt-1 text-xs text-ink-gray-5">
-								{{ fmtTokens(u.total_tokens) }} of
-								{{ fmtTokens(u.monthly_token_limit) }} · {{ pct(u) }}%
+								{{ fmtTokens(limitWindow(u).used) }} of
+								{{ fmtTokens(u.monthly_token_limit) }} {{ limitWindow(u).label }} ·
+								{{ pct(u) }}%
 							</div>
 						</template>
 						<div v-else class="text-xs text-ink-gray-5">
@@ -95,25 +96,31 @@
 						</div>
 					</div>
 
-					<div class="flex items-center gap-2">
+					<div class="flex flex-col gap-1.5">
+						<div class="flex items-center gap-2">
+							<FormControl
+								type="number"
+								size="sm"
+								class="min-w-0 flex-1"
+								v-model.number="u._limitDraft"
+								:disabled="u._saving"
+								placeholder="0 = unlimited"
+							/>
+							<Button
+								variant="subtle"
+								size="sm"
+								label="Save"
+								:loading="u._saving"
+								:disabled="u._saving || !limitDirty(u)"
+								@click="saveLimit(u)"
+							/>
+						</div>
 						<FormControl
-							type="number"
+							type="select"
 							size="sm"
-							class="min-w-0 flex-1"
-							v-model.number="u._limitDraft"
+							:options="LIMIT_PERIOD_OPTIONS"
+							v-model="u._periodDraft"
 							:disabled="u._saving"
-							placeholder="0 = unlimited"
-						/>
-						<Button
-							variant="subtle"
-							size="sm"
-							label="Save"
-							:loading="u._saving"
-							:disabled="
-								u._saving ||
-								Number(u._limitDraft || 0) === Number(u.monthly_token_limit || 0)
-							"
-							@click="saveLimit(u)"
 						/>
 					</div>
 
@@ -187,6 +194,7 @@ import { ref, reactive, onMounted } from "vue";
 import { Button, FeatherIcon, FormControl, toast } from "frappe-ui";
 import { timeAgo } from "@/utils/datetime";
 import { modelDisplayLabel } from "@/utils/usageModel";
+import { fmtTokens, limitWindow, LIMIT_PERIOD_OPTIONS } from "@/lib/tokens.js";
 import SettingsPane from "@/components/settings/SettingsPane.vue";
 import * as api from "@/api";
 import { errMessage as errMsg, errHtml } from "@/lib/errors";
@@ -213,6 +221,7 @@ async function loadUsers() {
 		users.value = rows.map((u) => ({
 			...u,
 			_limitDraft: u.monthly_token_limit || 0,
+			_periodDraft: u.limit_period || "All time",
 			_saving: false,
 			per_model: (u.per_model || []).map((m) => ({
 				...m,
@@ -227,19 +236,16 @@ async function loadUsers() {
 	}
 }
 
-function fmtTokens(n) {
-	n = Number(n || 0);
-	if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
-	if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
-	return String(n);
-}
-// All-time: compares against total_tokens (the cumulative, never-reset
-// counter), not month_tokens. See jarvis.chat.policy._over_total_limit.
+// The cap reads against its window (all-time total, or this day/week/month's
+// period_tokens). See jarvis.chat.policy._over_total_limit.
 function pct(u) {
 	if (!u || !u.monthly_token_limit) return 0;
-	return Math.min(
-		100,
-		Math.round((Number(u.total_tokens || 0) / Number(u.monthly_token_limit)) * 100)
+	return Math.min(100, Math.round((limitWindow(u).used / Number(u.monthly_token_limit)) * 100));
+}
+function limitDirty(u) {
+	return (
+		Number(u._limitDraft || 0) !== Number(u.monthly_token_limit || 0) ||
+		u._periodDraft !== (u.limit_period || "All time")
 	);
 }
 function modelPct(m) {
@@ -252,9 +258,10 @@ function modelPct(m) {
 
 async function saveLimit(u) {
 	const val = Math.max(0, Math.round(Number(u._limitDraft) || 0));
+	const period = u._periodDraft;
 	u._saving = true;
 	try {
-		const res = await api.adminSetUserLimit(u.user, val);
+		const res = await api.adminSetUserLimit(u.user, val, period);
 		if (res && res.ok === false) {
 			toast.error(res.reason || "Could not update the limit.");
 			return;
@@ -262,6 +269,10 @@ async function saveLimit(u) {
 		const d = (res && res.data) || {};
 		u.monthly_token_limit = d.monthly_token_limit != null ? d.monthly_token_limit : val;
 		u._limitDraft = u.monthly_token_limit;
+		// A window switch restarts the count server-side; mirror it locally.
+		if (period !== (u.limit_period || "All time")) u.period_tokens = 0;
+		u.limit_period = d.limit_period || period;
+		u._periodDraft = u.limit_period;
 		toast.success("Limit updated");
 	} catch (e) {
 		toast.error(errHtml(e));

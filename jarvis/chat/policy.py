@@ -218,22 +218,22 @@ def _over_model_limit(user: str, model: str) -> bool:
 
 
 def _over_total_limit(user: str) -> bool:
-	"""True iff ``user`` has a positive all-time token cap and their all-time
-	recorded usage has reached it. Dependency-light: one ``db.get_value`` on the
-	settings row, no lazy create (a missing row = no limit). No rollover: unlike
-	the per-model gate, this cap never resets, so it compares against
-	``total_tokens`` (the cumulative, never-reset counter) rather than a
-	month-scoped bucket. Fails open on any error — an accounting lookup bug
+	"""True iff ``user`` has a positive token cap and the usage it applies to has
+	reached it: ``total_tokens`` (cumulative, never reset) for an All-time
+	``limit_period``, else the current day/week/month window (``period_tokens``,
+	read as 0 when its key is stale - the window restarts on the next send).
+	Dependency-light: one ``db.get_value`` on the settings row, no lazy create (a
+	missing row = no limit). Fails open on any error — an accounting lookup bug
 	must never block a legitimate send.
 
 	NOTE: the field is still named ``monthly_token_limit`` (kept to avoid a
-	migration for ~15 existing references / the wire contract) but the cap it
-	now enforces is all-time, not monthly."""
+	migration for ~15 existing references / the wire contract); the period it
+	covers is ``limit_period``."""
 	try:
 		row = frappe.db.get_value(
 			"Jarvis User Settings",
 			{"user": user},
-			["monthly_token_limit", "total_tokens"],
+			["monthly_token_limit", "total_tokens", "limit_period", "period_key", "period_tokens"],
 			as_dict=True,
 		)
 		if not row:
@@ -241,8 +241,7 @@ def _over_total_limit(user: str) -> bool:
 		limit = int(row.monthly_token_limit or 0)
 		if limit <= 0:
 			return False
-		used = int(row.total_tokens or 0)
-		return used >= limit
+		return _tokens_counted_against_cap(row) >= limit
 	except Exception:
 		# See _over_model_limit: don't let a logging failure defeat fail-open.
 		try:
@@ -253,3 +252,11 @@ def _over_total_limit(user: str) -> bool:
 		except Exception:
 			pass
 		return False
+
+
+def _tokens_counted_against_cap(row) -> int:
+	from jarvis.chat.usage import LIMIT_PERIOD_ALL_TIME, period_tokens_effective
+
+	if (row.limit_period or LIMIT_PERIOD_ALL_TIME) == LIMIT_PERIOD_ALL_TIME:
+		return int(row.total_tokens or 0)
+	return period_tokens_effective(row.limit_period, row.period_key, row.period_tokens)
