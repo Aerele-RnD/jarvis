@@ -27,7 +27,9 @@
 				class="my-2 w-64 rounded-lg bg-surface-modal p-3 shadow-2xl ring-1 ring-black ring-opacity-5"
 			>
 				<div class="flex items-baseline justify-between">
-					<h3 class="text-base font-semibold text-ink-gray-9">{{ agentName }} usage</h3>
+					<h3 class="text-base font-semibold text-ink-gray-9">
+						{{ agentName }} usage limit
+					</h3>
 					<span class="text-p-sm text-ink-gray-6">{{ reading.pct }}%</span>
 				</div>
 				<!-- Named so nobody reads it as their ChatGPT / API-provider usage. -->
