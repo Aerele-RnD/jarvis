@@ -243,3 +243,25 @@ class TestRejectionNamesTheWindow(_UsageTestBase):
 			_send_rejection(USER_A, "subscription_suspended"),
 			{"ok": False, "reason": "subscription_suspended"},
 		)
+
+
+class TestMigrateWindow(_UsageTestBase):
+	"""Code can run ahead of ``bench migrate`` for a moment (dev server
+	auto-reload, a worker restarted early). The read paths and the gate must
+	then behave as if the window columns did not exist: All time, 0 used."""
+
+	def test_read_paths_and_gate_fall_back_to_all_time(self):
+		from unittest.mock import patch
+
+		from jarvis.chat.api import _measured_usage
+
+		_set_cap(100, "Daily")
+		_stamp(period_tokens=100, total_tokens=10)
+		with patch.object(frappe.db, "has_column", return_value=False):
+			row = next(r for r in user_settings_api.admin_list_user_usage()["data"] if r["user"] == USER_A)
+			self.assertEqual((row["limit_period"], row["period_tokens"]), ("All time", 0))
+			measured = _measured_usage(USER_A)
+			self.assertEqual((measured["limit_period"], measured["period_tokens"]), ("All time", 0))
+			ok, reason = policy.validate_can_send(USER_A)
+		self.assertTrue(ok)
+		self.assertIsNone(reason)

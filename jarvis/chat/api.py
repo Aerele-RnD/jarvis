@@ -11,8 +11,8 @@ from urllib.parse import quote
 import frappe
 
 from jarvis.chat import admission, user_settings_api
-from jarvis.chat.usage import LIMIT_PERIOD_ALL_TIME
 from jarvis.chat.usage import current_month_key as _usage_month_key
+from jarvis.chat.usage import period_select_fields
 from jarvis.permissions import (
 	has_jarvis_access,
 	require_jarvis_access,
@@ -922,7 +922,7 @@ from frappe import _
 from jarvis.chat import role_profiles
 from jarvis.chat.agent_client import AgentSession
 from jarvis.chat.entities import scrub
-from jarvis.chat.policy import _over_total_limit, validate_can_send
+from jarvis.chat.policy import blocking_limit_period, validate_can_send
 
 _INFLIGHT_FRESH_SECONDS = 180
 
@@ -934,11 +934,10 @@ def _send_rejection(user: str, reason: str) -> dict:
 	monthly) fires the same code but leaves the window out, and the SPA keeps
 	its period-neutral copy."""
 	out = {"ok": False, "reason": reason}
-	if reason != "usage_limit" or not _over_total_limit(user):
-		return out
-	period = frappe.db.get_value("Jarvis User Settings", {"user": user}, "limit_period")
-	if period and period != LIMIT_PERIOD_ALL_TIME:
-		out["limit_period"] = period
+	if reason == "usage_limit":
+		period = blocking_limit_period(user)
+		if period:
+			out["limit_period"] = period
 	return out
 
 
@@ -2281,10 +2280,8 @@ def _measured_usage(user: str) -> dict | None:
 			"month_tokens",
 			"total_tokens",
 			"monthly_token_limit",
-			"limit_period",
-			"period_key",
-			"period_tokens",
 			"last_usage_at",
+			*period_select_fields(),
 		],
 		as_dict=True,
 	)

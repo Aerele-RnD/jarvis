@@ -81,6 +81,22 @@ def current_period_key(period: str | None, now: datetime | None = None) -> str:
 	return ""
 
 
+PERIOD_FIELDS = ("limit_period", "period_key", "period_tokens")
+
+
+def period_select_fields() -> list[str]:
+	"""The window columns to add to a settings read, or ``[]`` while the app
+	runs ahead of ``bench migrate`` (dev-server reload, a worker restarted
+	early): selecting a column that is not there yet would 500 the panes and
+	the gate, where the old all-time reading is the right fallback. Frappe
+	caches the table's column list, so this is not a per-call DESCRIBE."""
+	try:
+		present = frappe.db.has_column(USER_SETTINGS, "limit_period")
+	except Exception:
+		present = False
+	return list(PERIOD_FIELDS) if present else []
+
+
 def period_tokens_effective(limit_period: str | None, period_key: str | None, period_tokens) -> int:
 	"""Tokens used in the CURRENT window. 0 for an All-time cap (it reads
 	``total_tokens``) and for a stale key (the window restarts on the next

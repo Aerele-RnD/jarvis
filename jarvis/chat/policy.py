@@ -230,12 +230,7 @@ def _over_total_limit(user: str) -> bool:
 	migration for ~15 existing references / the wire contract); the period it
 	covers is ``limit_period``."""
 	try:
-		row = frappe.db.get_value(
-			"Jarvis User Settings",
-			{"user": user},
-			["monthly_token_limit", "total_tokens", "limit_period", "period_key", "period_tokens"],
-			as_dict=True,
-		)
+		row = _cap_row(user)
 		if not row:
 			return False
 		limit = int(row.monthly_token_limit or 0)
@@ -254,9 +249,46 @@ def _over_total_limit(user: str) -> bool:
 		return False
 
 
-def _tokens_counted_against_cap(row) -> int:
-	from jarvis.chat.usage import LIMIT_PERIOD_ALL_TIME, period_tokens_effective
+def blocking_limit_period(user: str) -> str | None:
+	"""The day/week/month window whose cap is refusing ``user``'s sends, or
+	None: no cap, cap not reached, or an All-time cap. One settings read; the
+	send-rejection envelope uses it so the toast can name the reset without
+	re-running the gate. Never raises (a rejection must still go out)."""
+	try:
+		row = _cap_row(user)
+		if not row:
+			return None
+		limit = int(row.monthly_token_limit or 0)
+		if limit <= 0 or _tokens_counted_against_cap(row) < limit:
+			return None
+		period = row.limit_period or _all_time()
+		return None if period == _all_time() else period
+	except Exception:
+		return None
 
-	if (row.limit_period or LIMIT_PERIOD_ALL_TIME) == LIMIT_PERIOD_ALL_TIME:
+
+def _cap_row(user: str):
+	"""The settings columns the cap reads. The window columns are added only
+	once they exist (see usage.period_select_fields)."""
+	from jarvis.chat.usage import period_select_fields
+
+	return frappe.db.get_value(
+		"Jarvis User Settings",
+		{"user": user},
+		["monthly_token_limit", "total_tokens", *period_select_fields()],
+		as_dict=True,
+	)
+
+
+def _tokens_counted_against_cap(row) -> int:
+	from jarvis.chat.usage import period_tokens_effective
+
+	if (row.limit_period or _all_time()) == _all_time():
 		return int(row.total_tokens or 0)
 	return period_tokens_effective(row.limit_period, row.period_key, row.period_tokens)
+
+
+def _all_time() -> str:
+	from jarvis.chat.usage import LIMIT_PERIOD_ALL_TIME
+
+	return LIMIT_PERIOD_ALL_TIME
