@@ -220,6 +220,7 @@
 						:compacted="compactedChip"
 						@compact="openCompactDialog()"
 					/>
+					<UsagePill :usage="myUsage" />
 					<ModelEffortPicker
 						:model-override="modelOverride"
 						:default-model="chatUi.llm_model || ''"
@@ -326,6 +327,8 @@ import VoiceRecorder from "@/components/VoiceRecorder.vue";
 import AskCard from "@/components/chat/AskCard.vue";
 import CompactDialog from "@/components/chat/CompactDialog.vue";
 import ContextRing from "@/components/chat/ContextRing.vue";
+import UsagePill from "@/components/chat/UsagePill.vue";
+import { myUsage, loadMyUsage, takeUsage } from "@/stores/usage";
 import ModelEffortPicker from "@/components/chat/ModelEffortPicker.vue";
 import { renderMarkdown } from "@/markdown";
 import { parseAsk } from "@/lib/chatAsk";
@@ -474,6 +477,7 @@ async function loadContext({ applyCompacting = false } = {}) {
 	}
 	try {
 		const c = await getConversationContext(id);
+		takeUsage(c);
 		if (conversation.value !== id) return;
 		if (c && c.fresh) contextInfo.value = c;
 		if (applyCompacting) compacting.value = !!(c && c.compacting);
@@ -971,7 +975,7 @@ async function send(gotoMessageId = "") {
 			messages.value = messages.value.filter((m) => m.name !== tmpName);
 			if (!draft.value) draft.value = text;
 			forgetGotoClaim(gotoMessageId);
-			const { message, type } = sendRejectionCopy(r.reason, agentName);
+			const { message, type } = sendRejectionCopy(r.reason, agentName, r);
 			(toast[type] || toast.error)(message);
 			return;
 		}
@@ -1166,6 +1170,7 @@ function startNoSocketLadder() {
 }
 
 onMounted(() => {
+	loadMyUsage();
 	loadDashboardChats();
 	getChatUiSettings()
 		.then((data) => {

@@ -12,6 +12,7 @@ import frappe
 
 from jarvis.chat import admission, user_settings_api
 from jarvis.chat.usage import current_month_key as _usage_month_key
+from jarvis.chat.usage import period_select_fields
 from jarvis.permissions import (
 	has_jarvis_access,
 	require_jarvis_access,
@@ -921,9 +922,23 @@ from frappe import _
 from jarvis.chat import role_profiles
 from jarvis.chat.agent_client import AgentSession
 from jarvis.chat.entities import scrub
-from jarvis.chat.policy import validate_can_send
+from jarvis.chat.policy import blocking_limit_period, validate_can_send
 
 _INFLIGHT_FRESH_SECONDS = 180
+
+
+def _send_rejection(user: str, reason: str) -> dict:
+	"""The ``{ok: False, reason}`` envelope for a refused send. A ``usage_limit``
+	rejection also names the window (``limit_period``) when the AGGREGATE cap is
+	what blocked, so the toast can say when it resets. A per-model cap (still
+	monthly) fires the same code but leaves the window out, and the SPA keeps
+	its period-neutral copy."""
+	out = {"ok": False, "reason": reason}
+	if reason == "usage_limit":
+		period = blocking_limit_period(user)
+		if period:
+			out["limit_period"] = period
+	return out
 
 
 def _conversation_busy(conversation: str) -> bool:
@@ -1312,7 +1327,7 @@ def send_message(
 
 	ok, reason = validate_can_send(user)
 	if not ok:
-		return {"ok": False, "reason": reason}
+		return _send_rejection(user, reason)
 	requested_origin = _origin_page_from_context(context)
 
 	# No conversation yet (first send from a fresh chat surface): create or
@@ -1444,7 +1459,7 @@ def send_message(
 		eff_model = ""
 	ok, reason = validate_can_send(user, model=eff_model)
 	if not ok:
-		return {"ok": False, "reason": reason}
+		return _send_rejection(user, reason)
 
 	# A genuine new top-level message ENDS any approved skill run on this conversation
 	# (skill "Approve & run", design §3.4 "Other close-triggers"): it is not a covered
@@ -2249,6 +2264,8 @@ def _measured_usage(user: str) -> dict | None:
 		"month_output_tokens": 0,
 		"total_tokens": 0,
 		"monthly_token_limit": 0,
+		"limit_period": "All time",
+		"period_tokens": 0,
 		"usage_month": None,
 		"last_usage_at": None,
 		"per_model": [],
@@ -2264,6 +2281,7 @@ def _measured_usage(user: str) -> dict | None:
 			"total_tokens",
 			"monthly_token_limit",
 			"last_usage_at",
+			*period_select_fields(),
 		],
 		as_dict=True,
 	)
@@ -2277,6 +2295,7 @@ def _measured_usage(user: str) -> dict | None:
 			"month_output_tokens": 0 if stale else int(row.month_output_tokens or 0),
 			"total_tokens": int(row.total_tokens or 0),
 			"monthly_token_limit": int(row.monthly_token_limit or 0),
+			**user_settings_api._period_fields(row),
 			"usage_month": row.usage_month,
 			"last_usage_at": row.last_usage_at,
 		}
@@ -2354,7 +2373,30 @@ def get_conversation_context(conversation: str) -> dict:
 	_get_owned_conversation(conversation)
 	from jarvis.chat import compaction
 
-	return compaction.context_payload(conversation)
+	payload = compaction.context_payload(conversation)
+	# The composer's usage pill rides this payload (fetched on open and after
+	# every turn anyway) instead of making a request of its own: one indexed
+	# read of the caller's own settings row, no doc load.
+	payload["usage"] = _cap_reading(frappe.session.user)
+	return payload
+
+
+def _cap_reading(user: str) -> dict:
+	"""The caller's token cap and what counts against it, for the usage pill.
+	No row yet (recording has not started) reads as no cap."""
+	row = frappe.db.get_value(
+		"Jarvis User Settings",
+		{"user": user},
+		["monthly_token_limit", "total_tokens", *period_select_fields()],
+		as_dict=True,
+	)
+	if not row:
+		return {"monthly_token_limit": 0, "total_tokens": 0, "limit_period": "All time", "period_tokens": 0}
+	return {
+		"monthly_token_limit": int(row.monthly_token_limit or 0),
+		"total_tokens": int(row.total_tokens or 0),
+		**user_settings_api._period_fields(row),
+	}
 
 
 @frappe.whitelist()

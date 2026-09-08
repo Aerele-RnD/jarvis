@@ -46,6 +46,20 @@ def _month_tokens_effective(usage_month: str | None, month_tokens) -> int:
 	return int(month_tokens or 0)
 
 
+def _period_fields(r) -> dict:
+	"""The cap's window as the panes read it: which period, and the tokens used
+	in the CURRENT window (0 for All time or a stale key). ``r`` is a settings
+	doc or a get_value/get_all row; getattr keeps the migrate window (columns
+	not yet on the meta) from 500ing the read paths."""
+	period = getattr(r, "limit_period", None) or usage.LIMIT_PERIOD_ALL_TIME
+	return {
+		"limit_period": period,
+		"period_tokens": usage.period_tokens_effective(
+			period, getattr(r, "period_key", None), getattr(r, "period_tokens", 0)
+		),
+	}
+
+
 def _per_model_row_dict(r) -> dict:
 	"""Shared row-shaping for a single ``Jarvis User Model Usage`` record (used
 	by both the single-user and batched-admin paths, so the two never drift on
@@ -119,6 +133,7 @@ def _settings_payload(doc) -> dict:
 		# migrate-window guard above (getattr, not a bare read).
 		"support_context_copy_pref": getattr(doc, "support_context_copy_pref", None) or "",
 		"monthly_token_limit": cint(doc.monthly_token_limit),
+		**_period_fields(doc),
 		"usage_month": doc.usage_month,
 		"month_tokens": _month_tokens_effective(doc.usage_month, doc.month_tokens),
 		"month_input_tokens": _month_tokens_effective(doc.usage_month, doc.month_input_tokens),
@@ -195,6 +210,7 @@ def admin_list_user_usage() -> dict:
 			"total_tokens",
 			"last_usage_at",
 			"last_synced_at",
+			*usage.period_select_fields(),
 		],
 	)
 	# One batched query for both "is this user enabled" and full_name, instead
@@ -223,6 +239,7 @@ def admin_list_user_usage() -> dict:
 				"user": r.user,
 				"full_name": user_map[r.user] or r.user,
 				"monthly_token_limit": cint(r.monthly_token_limit),
+				**_period_fields(r),
 				"usage_month": r.usage_month,
 				"month_tokens": _month_tokens_effective(r.usage_month, r.month_tokens),
 				"month_input_tokens": _month_tokens_effective(r.usage_month, r.month_input_tokens),
@@ -237,29 +254,47 @@ def admin_list_user_usage() -> dict:
 
 
 @frappe.whitelist()
-def admin_set_user_limit(user: str, monthly_token_limit: int = 0) -> dict:
-	"""Set a user's all-time token cap (0 = unlimited), creating the settings
-	row if absent. Admins only. NOTE: arg/field name ``monthly_token_limit`` is
-	legacy (kept as the wire contract) - the cap it sets is all-time, not
-	monthly."""
+def admin_set_user_limit(user: str, monthly_token_limit: int = 0, limit_period: str | None = None) -> dict:
+	"""Set a user's token cap (0 = unlimited) and, when given, the window it
+	applies to (All time / Daily / Weekly / Monthly), creating the settings row
+	if absent. Switching the period restarts the window at this moment: the
+	counter is zeroed and keyed to the current bucket, so earlier usage never
+	counts against the new window. Omitting ``limit_period`` leaves it as is.
+	Admins only. NOTE: arg/field name ``monthly_token_limit`` is legacy (kept as
+	the wire contract); the period is ``limit_period``."""
 	require_jarvis_admin()
 	# Coerce before the db calls: a dict `user` would turn the identity check into
 	# a filter match (see the module NOTE / N10).
 	user = _s(user)
 	if not user or not frappe.db.exists("User", user):
 		return {"ok": False, "reason": "unknown_user"}
+	if limit_period is not None:
+		limit_period = _s(limit_period)
+		if limit_period not in usage.LIMIT_PERIODS:
+			return {"ok": False, "reason": "invalid_period"}
 	limit = max(0, cint(monthly_token_limit))
 	doc = usage.get_or_create_user_settings(user)
-	# monthly_token_limit is permlevel 1; write it directly (admin-gated above).
-	frappe.db.set_value(
-		USER_SETTINGS,
-		doc.name,
-		"monthly_token_limit",
-		limit,
-		update_modified=False,
-	)
+	# permlevel-1 fields; written directly (admin-gated above).
+	values = {"monthly_token_limit": limit}
+	current_period = getattr(doc, "limit_period", None) or usage.LIMIT_PERIOD_ALL_TIME
+	if limit_period is not None and limit_period != current_period:
+		values.update(
+			{
+				"limit_period": limit_period,
+				"period_key": usage.current_period_key(limit_period),
+				"period_tokens": 0,
+			}
+		)
+	frappe.db.set_value(USER_SETTINGS, doc.name, values, update_modified=False)
 	frappe.db.commit()
-	return {"ok": True, "data": {"user": user, "monthly_token_limit": limit}}
+	return {
+		"ok": True,
+		"data": {
+			"user": user,
+			"monthly_token_limit": limit,
+			"limit_period": values.get("limit_period", current_period),
+		},
+	}
 
 
 @frappe.whitelist()
