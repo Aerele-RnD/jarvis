@@ -87,7 +87,8 @@ class _SessionFeedbackTestCase(FrappeTestCase):
 			{
 				"doctype": MSG,
 				"conversation": conv,
-				"seq": 1,
+				# Unique per conversation, the way api._next_seq allocates it.
+				"seq": frappe.db.count(MSG, {"conversation": conv}) + 1,
 				"role": "user",
 				"content": "hi",
 				"streaming": 0,
@@ -116,12 +117,15 @@ class TestTurnCounter(_SessionFeedbackTestCase):
 		self.assertEqual(self._turn_count(), 3)
 
 	def test_turn_count_never_counts_messages(self):
-		"""The counter is MAINTAINED, not a live COUNT(*) over the message table:
-		it advances even though the conversation holds exactly one message (the
-		seed), which a COUNT(*)-derived value could not produce."""
-		_bump_turn_count(self.conv, self._mk_turn("sfrunA"))
+		"""The counter is MAINTAINED, not derived: three bumps against ONE turn
+		reach 3 while the conversation still holds a single message. A live
+		COUNT(*) over the message table could only ever report 1 here, so this
+		fails the moment the implementation starts scanning."""
+		run = self._mk_turn("sfrunA")
+		for _ in range(3):
+			_bump_turn_count(self.conv, run)
 		self.assertEqual(frappe.db.count(MSG, {"conversation": self.conv}), 1)
-		self.assertEqual(self._turn_count(), 1)
+		self.assertEqual(self._turn_count(), 3)
 
 	def test_file_box_conversation_is_not_counted(self):
 		# Server-set path: the controller gates a generic save that ENABLES

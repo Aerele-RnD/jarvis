@@ -153,9 +153,10 @@ def submit_session_feedback(
 
 	The response is recorded AT MOST ONCE per conversation. Claiming the popup and
 	stamping ``session_feedback_asked_at`` is a single compare-and-set (see
-	``_claim_session_feedback``), so two tabs - or a double-click that beats the
-	dialog's own disable - cannot both forward: the loser returns
-	``recorded: False`` and forwards nothing. A Skip claims the popup exactly the
+	``_claim_session_feedback``) that is committed before the admin forward, so two
+	tabs - or a double-click that beats the dialog's own disable - cannot both
+	forward: the loser returns ``recorded: False`` and forwards nothing, and the
+	winner never holds a row lock across the network call. A Skip claims the popup exactly the
 	same way and is never forwarded to admin (there is no response to store); a
 	real reaction is forwarded best-effort. The optional note is kept only on
 	"Okay" or worse - the popup only reveals the field there, and a note typed
@@ -177,6 +178,16 @@ def submit_session_feedback(
 	# a second tab opened later), then settle a genuine race with the CAS.
 	if conv.session_feedback_asked_at or not _claim_session_feedback(conversation):
 		return {"ok": True, "recorded": False}
+	# Durability-before-external-call (the ONE sanctioned reason for an explicit
+	# commit here, and the same thing api.create_conversation does): make the claim
+	# durable and RELEASE the conversation row lock BEFORE the admin HTTPS forward
+	# below. Frappe would otherwise not commit until the end of the request, holding
+	# that row lock for the whole admin round-trip - up to admin_client's timeout
+	# when admin is unreachable. Anything touching this conversation meanwhile would
+	# block on it: settlement's turn-count bump (delaying a run:end), and
+	# admission.accept_or_queue's _lock_conversation - which waits while holding the
+	# SITE-WIDE shard lock, turning one slow popup into a shard-wide send stall.
+	frappe.db.commit()
 	if not chip_value:
 		return {"ok": True, "recorded": False}
 

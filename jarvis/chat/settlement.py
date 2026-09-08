@@ -196,13 +196,13 @@ def _is_hidden_turn(run_id: str) -> bool:
 	"""True when this turn's SEED user message is hidden from the transcript - an
 	internal system prompt rather than something a human typed.
 
-	The confirmation continuation is the case that matters: every human
-	Apply/Confirm click dispatches ``chat.api.enqueue_continuation`` ->
-	``_enqueue_turn(..., hidden=True)``, which rides this same pump path. Without
-	this guard ONE user action (send a message that stages a write, then click
-	Apply) counts as TWO turns and the popup fires at roughly half the intended
-	engagement depth. Macro steps and app-learning prompts are hidden for the same
-	reason and are excluded on the same rule.
+	``chat.api.enqueue_continuation`` is the ONLY producer that passes
+	``hidden=True`` today (checked: macro steps and app-learning prompts call
+	``_enqueue_turn`` WITHOUT it - those conversations are excluded by
+	``agent_initiated`` instead). Every human Apply/Confirm click dispatches such a
+	continuation, and it rides this same pump path, so without this guard ONE user
+	action (send a message that stages a write, then click Apply) counts as TWO
+	turns and the popup fires at roughly half the intended engagement depth.
 
 	``hidden`` lives on the seed Message, not on the Turn row, so this is a
 	two-table read - one statement via ``frappe.qb`` with an explicit join (the
@@ -233,8 +233,8 @@ def _bump_turn_count(conversation: str, run_id: str) -> None:
 	  * ``file_box=0`` - an unattended drop, never a chat session;
 	  * ``agent_initiated=0`` - a macro / merge / app-learning / scheduled-audit /
 	    proactive / act-on-a-finding run log the user did not open;
-	  * ``_is_hidden_turn`` - a confirmation continuation or macro step, which is
-	    part of the user's PREVIOUS action, not a new turn.
+	  * ``_is_hidden_turn`` - a confirmation continuation, which is part of the
+	    user's PREVIOUS action, not a new turn.
 	The first two ride the same indexed lookup and cost nothing extra; a 0-row
 	update is the intended outcome there, so the rowcount is not consulted. The
 	third is checked FIRST so an excluded turn skips the UPDATE and its commit
