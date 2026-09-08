@@ -49,3 +49,25 @@ describe("sendRejectionCopy", () => {
 		expect(sendRejectionCopy(undefined, "Jarvis").message).toBe(FALLBACK);
 	});
 });
+
+describe("sendRejectionCopy, usage limit window", () => {
+	it("names the window and its reset when the envelope carries one", () => {
+		expect(sendRejectionCopy("usage_limit", "Jarvis", { limit_period: "Daily" }).message).toBe(
+			"You've reached today's usage limit. It resets at midnight."
+		);
+		expect(
+			sendRejectionCopy("usage_limit", "Jarvis", { limit_period: "Weekly" }).message
+		).toBe("You've reached this week's usage limit. It resets on Sunday.");
+		expect(
+			sendRejectionCopy("usage_limit", "Jarvis", { limit_period: "Monthly" }).message
+		).toBe("You've reached this month's usage limit. It resets on the 1st.");
+	});
+
+	it("keeps the neutral copy without a window (all-time or per-model cap)", () => {
+		for (const envelope of [undefined, {}, { limit_period: "All time" }]) {
+			expect(sendRejectionCopy("usage_limit", "Jarvis", envelope).message).toBe(
+				"You've reached your usage limit. Ask your Jarvis admin to raise it."
+			);
+		}
+	});
+});

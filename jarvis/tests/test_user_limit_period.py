@@ -4,7 +4,7 @@
 The window is a lazily-rolled counter, same trick as the month buckets: the
 accrual UPDATE compares the stored ``period_key`` with the current bucket key
 and either adds or restarts, so no scheduler is involved. Switching a user's
-period restarts the window at that moment (Kavin, 2026-09-08). Fixtures and
+period restarts the window at that moment (decision 2026-09-08). Fixtures and
 commit/cleanup discipline come from ``test_user_settings``.
 """
 
@@ -207,3 +207,39 @@ class TestWindowEnforcement(_UsageTestBase):
 		ok, reason = policy.validate_can_send(USER_A)
 		self.assertTrue(ok)
 		self.assertIsNone(reason)
+
+
+class TestRejectionNamesTheWindow(_UsageTestBase):
+	def test_send_message_carries_the_window_that_blocked(self):
+		from jarvis.chat.api import send_message
+
+		_set_cap(100, "Daily")
+		_stamp(period_tokens=100)
+		frappe.set_user(USER_A)
+		out = send_message(conversation="JCONV-does-not-matter", message="hi")
+		frappe.set_user("Administrator")
+		self.assertEqual(out, {"ok": False, "reason": "usage_limit", "limit_period": "Daily"})
+
+	def test_all_time_cap_carries_no_window(self):
+		from jarvis.chat.api import _send_rejection
+
+		_set_cap(100)
+		_stamp(total_tokens=100)
+		self.assertEqual(_send_rejection(USER_A, "usage_limit"), {"ok": False, "reason": "usage_limit"})
+
+	def test_per_model_rejection_carries_no_window(self):
+		# The aggregate window is NOT full, so a usage_limit rejection came from
+		# the (still monthly) per-model cap; the toast must stay period-neutral.
+		from jarvis.chat.api import _send_rejection
+
+		_set_cap(100, "Weekly")
+		_stamp(period_tokens=1)
+		self.assertEqual(_send_rejection(USER_A, "usage_limit"), {"ok": False, "reason": "usage_limit"})
+
+	def test_other_reasons_pass_through(self):
+		from jarvis.chat.api import _send_rejection
+
+		self.assertEqual(
+			_send_rejection(USER_A, "subscription_suspended"),
+			{"ok": False, "reason": "subscription_suspended"},
+		)
