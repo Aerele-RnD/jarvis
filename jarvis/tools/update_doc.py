@@ -69,10 +69,16 @@ def _update_one(doctype: str, name: str, changes: dict) -> "frappe.model.documen
 	# (docstatus==0), and only a row owned by its run-as identity.
 	enforce_update(doctype, name)
 
-	if not frappe.has_permission(doctype, ptype="write", doc=name):
+	# Load the doc first, then check WRITE permission on the loaded object rather
+	# than by name. has_permission(doc=<name string>) lazy-loads the parent row
+	# just to evaluate the check - work this get_doc (needed for save() anyway)
+	# already does. Passing the loaded, UNMUTATED object yields an identical
+	# verdict and drops the duplicate load. Order is load-bearing: the check must
+	# run BEFORE any doc.set() below, so the verdict is on pristine DB values.
+	doc = frappe.get_doc(doctype, name)  # raises DoesNotExistError if missing
+	if not frappe.has_permission(doctype, ptype="write", doc=doc):
 		raise PermissionDeniedError(f"no write permission on {doctype} '{name}'")
 
-	doc = frappe.get_doc(doctype, name)  # raises DoesNotExistError if missing
 	for field, value in changes.items():
 		doc.set(field, value)
 	doc.save()  # runs DocType validate() and on_update hooks

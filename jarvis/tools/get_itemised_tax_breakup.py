@@ -46,10 +46,14 @@ def get_itemised_tax_breakup(doctype: str, name: str) -> dict:
 		)
 	if not frappe.db.exists(doctype, name):
 		raise InvalidArgumentError(f"unknown {doctype}: {name}")
-	if not frappe.has_permission(doctype, "read", doc=name):
+
+	# Load once, then check permission on the loaded object (has_permission with a
+	# name string would lazy-load the parent row this get_doc already fetches).
+	# The full doc - with its tax/item child tables - is needed by compat below.
+	doc = frappe.get_doc(doctype, name)
+	if not frappe.has_permission(doctype, "read", doc=doc):
 		raise PermissionDeniedError(f"no read permission on {doctype} {name}")
 
-	doc = frappe.get_doc(doctype, name)
 	# ERPNext 15 wants the taxes child table here, ERPNext 16 wants the parent
 	# doc. Passing `doc` unconditionally was a TypeError ('SalesInvoice' object
 	# is not iterable) on every ERPNext 15 call.

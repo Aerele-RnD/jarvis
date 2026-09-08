@@ -38,10 +38,20 @@ def _delete_one(doctype: str, name: str) -> str:
 	if not frappe.has_permission(doctype, ptype="delete", doc=name):
 		raise PermissionDeniedError(f"no delete permission on {doctype} '{name}'")
 
-	# Pre-load the doc to check docstatus - gives a clearer error than
-	# Frappe's "cannot delete a submitted document".
-	doc = frappe.get_doc(doctype, name)  # raises DoesNotExistError if missing
-	if getattr(doc, "docstatus", 0) == 1:
+	# Read ONLY docstatus to gate the submitted-doc case - a clearer error than
+	# Frappe's "cannot delete a submitted document". A scalar get_value avoids
+	# loading the whole doc + every child table just to read one int (the doc is
+	# not otherwise used here; frappe.delete_doc below re-loads its own for the
+	# trash hooks).
+	docstatus = frappe.db.get_value(doctype, name, "docstatus")
+	if docstatus is None:
+		# No such row. Preserve the pre-refactor contract (the old get_doc
+		# pre-load raised DoesNotExistError here) - it is NOT covered downstream:
+		# has_permission above short-circuits True for Administrator WITHOUT
+		# loading the doc, and frappe.delete_doc defaults ignore_missing=True, so
+		# a missing name would otherwise be a silent no-op success.
+		raise frappe.DoesNotExistError(f"{doctype} {name} not found")
+	if docstatus == 1:
 		raise InvalidArgumentError(
 			f"{doctype} '{name}' is Submitted (docstatus=1); cancel it first (cancel_doc) before deleting"
 		)

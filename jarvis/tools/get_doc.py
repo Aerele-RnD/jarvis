@@ -60,10 +60,17 @@ def _get_doc_one(doctype: str, name: str) -> dict:
 	if not frappe.db.exists(doctype, name):
 		raise InvalidArgumentError(f"No {doctype} named '{name}'. Use get_list to find valid names first.")
 
-	if not frappe.has_permission(doctype, ptype="read", doc=name):
+	# Load once, then check READ permission on the loaded object. has_permission
+	# (doc=<name string>) would lazy-load the parent row just to run the check -
+	# a load this get_doc already does. Passing the pristine object gives an
+	# identical verdict and drops the duplicate read. The check must precede
+	# apply_fieldlevel_read_permissions() below, which mutates the doc to mask
+	# permlevel-restricted fields. The exists() guard above keeps the friendly
+	# "No <doctype> named ..." message (get_doc alone would raise DoesNotExist).
+	doc = frappe.get_doc(doctype, name)
+	if not frappe.has_permission(doctype, ptype="read", doc=doc):
 		raise PermissionDeniedError(f"no read permission on {doctype} {name}")
 
-	doc = frappe.get_doc(doctype, name)
 	doc.apply_fieldlevel_read_permissions()
 	return doc.as_dict(no_default_fields=False)
 
