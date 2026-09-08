@@ -179,24 +179,52 @@ def fetch_fresh_session_row(sess, session_key: str, attempts: int = 3, delay_s: 
 	bounded number of times inside the same checkout closes that window
 	without holding the pooled connection indefinitely.
 
-	Returns the first row that is both present and fresh (has a non-null
-	``inputTokens`` or ``outputTokens``). If no attempt ever produces a fresh
-	row, returns the LAST row seen anyway (``record_turn_usage``'s own
-	freshness gate will just no-op it, same as before this retry existed) and
-	logs once so the miss is visible instead of silently dropped.
+	jarvis#1170: a SECOND, narrower gap on the same row — a session pinned to
+	a model that has never run a turn in THIS container before can go fresh
+	(``totalTokensFresh``, real ``inputTokens``/``outputTokens``) before the
+	gateway has resolved that model's ``contextTokens`` (its context-window
+	capacity) into the row. Verified live on the agent runtime (2026.9.2): a freshly
+	pinned session's row read ``contextTokens: null`` right after its first
+	completed turn, while OTHER sessions already using that same model in the
+	same container read ``272000`` — the value arrives late, not never, and a
+	later turn on the SAME session does pick it up (there is no separate
+	catalog RPC needed). So freshness alone no longer ends the poll: once the
+	row is fresh, keep retrying (same attempts/delay budget) until it also
+	carries a capacity, falling back to the last fresh row when the budget
+	runs out.
+
+	Returns the first row that is both fresh (non-null ``inputTokens`` or
+	``outputTokens``) AND carries a capacity, when the budget allows it.
+	If no attempt ever produces a fresh row, returns the LAST row seen anyway
+	(``record_turn_usage``'s own freshness gate will just no-op it, same as
+	before this retry existed) and logs once so the miss is visible instead of
+	silently dropped. If the row went fresh but capacity never arrived within
+	the budget, returns the last FRESH row (so the real usage still gets
+	recorded) and logs a warning, not an error - the ring is hidden for this
+	one reply and self-heals on the session's next turn.
 	"""
 	row: dict | None = None
+	last_fresh_row: dict | None = None
 	for attempt in range(attempts):
 		rows = sess.list_sessions()
 		row = next((r for r in rows if r.get("key") == session_key), None)
-		if (
+		fresh = bool(
 			row
 			and row.get("totalTokensFresh")
 			and (row.get("inputTokens") is not None or row.get("outputTokens") is not None)
-		):
-			return row
+		)
+		if fresh:
+			last_fresh_row = row
+			if int(row.get("contextTokens") or 0) > 0:
+				return row
 		if attempt < attempts - 1:
 			time.sleep(delay_s)
+	if last_fresh_row is not None:
+		frappe.logger().warning(
+			"jarvis usage: fresh row missing context capacity (ring hidden this turn, "
+			f"self-heals on next turn): session_key={session_key!r} row={last_fresh_row!r}"
+		)
+		return last_fresh_row
 	frappe.log_error(
 		title="jarvis usage: session row never went fresh (turn usage lost)",
 		message=f"session_key={session_key!r} last row={row!r}",
