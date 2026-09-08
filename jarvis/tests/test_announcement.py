@@ -118,17 +118,25 @@ class TestAnnouncementBoot(FrappeTestCase):
 
 	# -- expires_on storage (H2) ----------------------------------------------
 
-	def test_absent_expiry_stored_as_null(self):
-		# H2: a Datetime column rejects "" - an absent expiry must land as NULL, or
-		# persist raises and swallows, silently killing the channel.
+	def test_absent_expiry_persists_and_never_gates(self):
+		# H2: a Datetime column rejects "" - an absent expiry must NOT make persist
+		# raise + swallow (which would silently kill the channel). The RAW stored form
+		# of an empty Datetime is version-dependent (Frappe v16 reads it back via
+		# get_value as datetime.min, v17 as None), so assert H2's real contract instead
+		# of the representation: the announcement persisted AND boot_payload (which reads
+		# via get_cached_value) treats it as no-expiry, never gating active off.
 		announcement.persist({"active": True, "id": "ANN-4", "message": "m"})
-		stored = frappe.db.get_value("Jarvis Settings", "Jarvis Settings", "announcement_expires_on")
-		self.assertIsNone(stored)
+		self.assertEqual(
+			frappe.db.get_value("Jarvis Settings", "Jarvis Settings", "announcement_id"), "ANN-4"
+		)
+		self.assertTrue(announcement.boot_payload()["active"])
 
-	def test_blank_expiry_stored_as_null(self):
+	def test_blank_expiry_persists_and_never_gates(self):
 		announcement.persist({"active": True, "id": "ANN-4b", "message": "m", "expires_on": ""})
-		stored = frappe.db.get_value("Jarvis Settings", "Jarvis Settings", "announcement_expires_on")
-		self.assertIsNone(stored)
+		self.assertEqual(
+			frappe.db.get_value("Jarvis Settings", "Jarvis Settings", "announcement_id"), "ANN-4b"
+		)
+		self.assertTrue(announcement.boot_payload()["active"])
 
 	# -- expiry boundary (H4), strict now < expires_on ------------------------
 

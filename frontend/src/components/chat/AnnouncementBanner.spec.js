@@ -27,6 +27,17 @@ vi.mock("@/announcementGate", () => ({
 	showAnnouncement: { value: true },
 }));
 
+// The real frappe-ui package has an internal import (resources/resources) that
+// vitest can't resolve under CI's install, which fails this suite at import time.
+// Banner.vue and AnnouncementBanner.vue only use FeatherIcon from it, so stub that:
+// the REAL Banner.vue still mounts (so its {{ }} text-escaping is genuinely tested)
+// without loading frappe-ui.
+vi.mock("frappe-ui", () => ({
+	// render fn (not an inline `template` string) so no runtime template compiler is
+	// needed; the tests don't assert on the icon glyph.
+	FeatherIcon: { name: "FeatherIcon", render: () => null },
+}));
+
 import AnnouncementBanner from "./AnnouncementBanner.vue";
 
 /** Reset the shared announcement to a clean baseline, then apply overrides. */
