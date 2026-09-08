@@ -183,7 +183,7 @@ def fetch_fresh_session_row(sess, session_key: str, attempts: int = 3, delay_s: 
 	a model that has never run a turn in THIS container before can go fresh
 	(``totalTokensFresh``, real ``inputTokens``/``outputTokens``) before the
 	gateway has resolved that model's ``contextTokens`` (its context-window
-	capacity) into the row. Verified live on openclaw 2026.9.2: a freshly
+	capacity) into the row. Verified live on the agent runtime (2026.9.2): a freshly
 	pinned session's row read ``contextTokens: null`` right after its first
 	completed turn, while OTHER sessions already using that same model in the
 	same container read ``272000`` — the value arrives late, not never, and a
