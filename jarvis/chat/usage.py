@@ -24,7 +24,7 @@ Three entry points:
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import frappe
 
@@ -55,6 +55,49 @@ def current_month_key() -> str:
 	"""The current usage bucket as ``"YYYY-MM"`` (site timezone, matching the
 	``now_datetime()`` stamps used for ``last_usage_at``)."""
 	return frappe.utils.now_datetime().strftime("%Y-%m")
+
+
+# Windows the per-user token cap can apply to (``Jarvis User Settings.limit_period``).
+# All time compares the cap with ``total_tokens``; the rest with ``period_tokens``,
+# a counter that restarts lazily when its ``period_key`` goes stale - same trick as
+# the month buckets, no scheduler involved.
+LIMIT_PERIOD_ALL_TIME = "All time"
+LIMIT_PERIODS = (LIMIT_PERIOD_ALL_TIME, "Daily", "Weekly", "Monthly")
+
+
+def current_period_key(period: str | None, now: datetime | None = None) -> str:
+	"""Bucket key ``period_tokens`` accumulates into for ``period`` (site
+	timezone, like ``current_month_key``). Weekly buckets start on Sunday 00:00,
+	the Frappe scheduler's weekly boundary. Prefixed so a Daily key can never
+	equal a Weekly one on a Sunday. All time (or unknown) has no bucket: ``""``."""
+	now = now or frappe.utils.now_datetime()
+	if period == "Daily":
+		return "D:" + now.strftime("%Y-%m-%d")
+	if period == "Weekly":
+		sunday = now.date() - timedelta(days=(now.weekday() + 1) % 7)
+		return "W:" + sunday.isoformat()
+	if period == "Monthly":
+		return "M:" + now.strftime("%Y-%m")
+	return ""
+
+
+def period_tokens_effective(limit_period: str | None, period_key: str | None, period_tokens) -> int:
+	"""Tokens used in the CURRENT window. 0 for an All-time cap (it reads
+	``total_tokens``) and for a stale key (the window restarts on the next
+	send, so nothing counts against it now)."""
+	expected = current_period_key(limit_period)
+	if not expected or period_key != expected:
+		return 0
+	return int(period_tokens or 0)
+
+
+# The current limit-window key for the row being updated, picked by its own
+# limit_period (the three candidate keys ride in as query params).
+_PERIOD_KEY_SQL = """CASE limit_period
+	WHEN 'Daily' THEN %(day_key)s
+	WHEN 'Weekly' THEN %(week_key)s
+	WHEN 'Monthly' THEN %(month_period_key)s
+	ELSE '' END"""
 
 
 def tenant_wide_per_model_tokens(month: str) -> list[dict]:
@@ -389,6 +432,9 @@ def record_turn_usage(session_key: str, row: dict | None, run_id: str | None = N
 			"ctx_cap": context_capacity,
 			"ctx_pct": context_pct,
 			"month": month,
+			"day_key": current_period_key("Daily", now),
+			"week_key": current_period_key("Weekly", now),
+			"month_period_key": current_period_key("Monthly", now),
 			"now": now,
 			"user": user,
 			"session_key": session_key,
@@ -396,8 +442,11 @@ def record_turn_usage(session_key: str, row: dict | None, run_id: str | None = N
 		# Month rollover done inside SQL so the read-modify-write is atomic:
 		# when usage_month already matches, add; otherwise reset the month
 		# buckets to this delta. total_tokens is all-time and never resets.
+		# The limit window (period_tokens) rolls the same way against the key
+		# for THIS row's limit_period; assignments run left to right, so the
+		# counter is updated before its key is overwritten.
 		frappe.db.sql(
-			"""
+			f"""
 			UPDATE `tabJarvis User Settings`
 			SET
 				month_input_tokens = CASE WHEN usage_month = %(month)s
@@ -408,6 +457,11 @@ def record_turn_usage(session_key: str, row: dict | None, run_id: str | None = N
 					THEN month_tokens + %(delta)s ELSE %(delta)s END,
 				total_tokens = total_tokens + %(delta)s,
 				usage_month = %(month)s,
+				period_tokens = CASE
+					WHEN {_PERIOD_KEY_SQL} = '' THEN 0
+					WHEN period_key = {_PERIOD_KEY_SQL} THEN period_tokens + %(delta)s
+					ELSE %(delta)s END,
+				period_key = {_PERIOD_KEY_SQL},
 				last_usage_at = %(now)s,
 				modified = %(now)s
 			WHERE user = %(user)s
