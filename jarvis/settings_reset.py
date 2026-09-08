@@ -88,6 +88,15 @@ CONNECTION = ResetSpec(
 		# Release notice + whitelabel branding of the previous tenancy. The SPA
 		# falls back to "Jarvis" when agent_name is blank.
 		"release_notice_message",
+		# Announcement mirror of the previous tenancy (H6). The banner is gated on
+		# announcement_active (zeroed below), but clear the string fields too so no
+		# stale operator prose lingers on the fresh tenancy.
+		"announcement_id",
+		"announcement_title",
+		"announcement_message",
+		"announcement_severity",
+		"announcement_link_url",
+		"announcement_link_label",
 		"agent_name",
 		"brand_logo",
 		"brand_favicon",
@@ -118,11 +127,18 @@ CONNECTION = ResetSpec(
 		"role_profiles_pushed_at",
 		"role_profiles_config_synced_at",
 		"wiki_mirror_last_synced_at",
+		# Announcement expiry mirror of the previous tenancy (H6) - a Datetime, so
+		# it NULLs (not blanks) like the other timestamps here.
+		"announcement_expires_on",
 	),
 	zero=(
 		"agent_catalog_dirty",
 		"agent_catalog_version",
 		"release_notice_active",
+		# Announcement mirror of the previous tenancy (H6): the active + interval
+		# scalars zero beside release_notice_active.
+		"announcement_active",
+		"announcement_interval_days",
 		# Forget the accepted authority generation so the fresh tenancy's first
 		# connection is accepted on its own terms, not rejected as "older" than
 		# the previous tenancy's generation (review plan 04 P0-5).
