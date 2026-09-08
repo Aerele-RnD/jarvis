@@ -99,9 +99,10 @@ class TestTurnCounter(_SessionFeedbackTestCase):
 		_bump_turn_count(self.conv)
 		self.assertEqual(self._turn_count(), 0)
 
-	def test_bump_never_raises_on_a_missing_conversation(self):
+	def test_bump_is_a_no_op_on_a_missing_conversation(self):
 		# A settled turn whose conversation was deleted must not cost the turn its
-		# terminal publish; the bump swallows and logs instead.
+		# terminal publish. The UPDATE simply matches 0 rows (it does not raise);
+		# the raising branch is covered by the stubbed-frappe harness.
 		_bump_turn_count("does-not-exist")
 
 
