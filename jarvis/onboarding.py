@@ -2074,26 +2074,41 @@ def _resync_after_rebuild(settings) -> None:
 	"""Re-push the BENCH-owned state the fresh container came up empty of, after a rebuild.
 	The control plane re-applies its own carried config, but two things live ONLY on the
 	bench and must be re-synced FROM HERE (never from admin — the LLM-key invariant): the
-	LLM credential and the custom/learned skills.
+	custom/learned skills and the LLM credential.
 
-	- **LLM — only when a real credential exists:** ``request_resync`` re-drives the current
-	  config (direct-leg restart OR pool) and, as of the pool-leg fix, fires both skill
-	  resyncs on either leg. Gated on ``_has_llm_config`` so a revoked / never-configured
-	  tenant is not pushed an empty/broken config (it returns False there).
-	- **Skills — always:** when there is no LLM to drive, still restore skills directly; they
-	  are unrelated to the LLM and the CP holds no copy.
+	- **Skills — always, first, unconditionally.** Skills are orthogonal to the LLM leg and
+	  the CP holds no copy, so restore them regardless of whether an LLM is configured.
+	  Doing it here (not via ``request_resync``) is load-bearing: the LLM leg only re-pushes
+	  skills as a side effect on a SYNCHRONOUS ``applied`` (its direct-leg ``action="restart"``)
+	  or via the pool leg — and it also writes ``last_sync_status`` off the resetting marker,
+	  which makes the Ready branch (branch A, the other skills back-fill) unreachable. A DIRECT
+	  tenant whose apply converges async — the normal case — would otherwise get its LLM back
+	  but its skills lost. Both helpers are no-op on zero rows, deduped by job_id, never raise.
+	- **LLM — only when a real credential exists.** ``request_resync`` re-drives the current
+	  config (direct-leg restart OR pool). Gated on ``_has_llm_config`` so a revoked /
+	  never-configured tenant is not pushed an empty/broken config (it returns False there).
+	  On the pool leg ``request_resync`` also fires the two skill resyncs again; those coalesce
+	  with the unconditional pushes above via job-id dedup (same commit, ``enqueue_after_commit``).
 
-	Idempotent + safe by construction: every push dedups by job_id and none of
-	``request_resync`` / the two skill helpers raises. A repeat call for the same converging
-	container is a deduped no-op."""
+	Never raises: this runs inside the (otherwise unguarded) reset poll and the ``*/5``
+	reconcile, so a failure (e.g. redis unavailable) is logged and swallowed. That leaves
+	``last_sync_status`` at the resetting marker so a later tick retries, with the manual
+	"Resync" button as the backstop."""
 	from jarvis.account import _has_llm_config
-	from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import request_resync
 
-	if _has_llm_config(settings):
-		request_resync(settings)
-	else:
+	try:
 		settings._resync_custom_skills_after_restart()
 		settings._resync_learned_skills_after_restart()
+		has_llm = _has_llm_config(settings)
+		frappe.logger("jarvis").info(
+			f"reprovision auto-resync: skills re-pushed; llm={'yes' if has_llm else 'no'}"
+		)
+		if has_llm:
+			from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import request_resync
+
+			request_resync(settings)
+	except Exception:
+		frappe.log_error(title="Jarvis: reprovision auto-resync failed", message=frappe.get_traceback())
 
 
 def _workspace_reset_poll() -> dict:
@@ -2150,8 +2165,17 @@ def _workspace_reset_poll() -> dict:
 		# holds no copy). Without this a rebuilt DIRECT tenant stayed key-less and a
 		# subscription pool stayed "blocked" forever, and skills were lost for all. Hands
 		# convergence to the standard pending-applying machinery (runs once — agent_url is
-		# set after this; all pushes dedup).
+		# set after this; all pushes dedup). Never reached for a revoke-LLM reset:
+		# _reconnect_llm() forces ready=True the moment the container is reachable, so
+		# branch A (skills-only, correct for that cohort) always wins this elif.
 		write_connection(data)
+		# Commit the reconnected transport BEFORE the resync. request_resync's status write
+		# can hit a snapshot write-conflict inside the */5 background reconcile and take its
+		# rollback+retry branch; without this commit that rollback would also discard the
+		# (still-uncommitted) agent_url and strand the tenant transport-less while clearing
+		# the reset marker. Committing here scopes any later rollback to the resync's own
+		# writes. (reprovision review I-2.)
+		frappe.db.commit()
 		_resync_after_rebuild(settings)
 		frappe.db.commit()
 	return {
@@ -2168,7 +2192,12 @@ def reconcile_pending_workspace_reset() -> None:
 	s = frappe.get_single("Jarvis Settings")
 	if not (s.get("last_sync_status") or "").startswith(_RESETTING_STATUS):
 		return
-	_workspace_reset_poll()
+	try:
+		_workspace_reset_poll()
+	except Exception:
+		# A scheduled task must not die on one bad tick; the resetting marker persists so
+		# the next run retries. (reprovision review I-3.)
+		frappe.log_error(title="Jarvis: workspace-reset reconcile failed", message=frappe.get_traceback())
 
 
 @frappe.whitelist()
