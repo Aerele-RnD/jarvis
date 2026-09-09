@@ -15,6 +15,15 @@ The same direct-send, no-local-table rule governs the once-per-session popup
 own metadata (``Jarvis Conversation.session_feedback_asked_at``, and the
 ``turn_count`` that triggers it) is kept on the bench - the response itself
 lives only on the admin side.
+
+The periodic "business pulse" survey (last section) follows the same rule and
+keeps exactly two fields, both on ``Jarvis User Settings``:
+``pulse_last_period_key`` and ``pulse_offer_count``. There is no cron behind
+it - the fleet scheduler is paused, so a scheduled survey would silently never
+run. Instead it reuses the lazy period-key rollover the per-user token cap
+already ships (``jarvis.chat.usage.current_period_key``, jarvis#1165): the
+current monthly bucket is compared against the stored key on chat open, and a
+mismatch IS the rollover.
 """
 
 from __future__ import annotations
@@ -28,6 +37,7 @@ from jarvis.permissions import require_jarvis_access
 
 MSG = "Jarvis Chat Message"
 CONV = "Jarvis Conversation"
+USER_SETTINGS = "Jarvis User Settings"
 
 _RATINGS = {"up", "down"}
 _MAX_NOTE = 1000
@@ -238,3 +248,240 @@ def _forward_session(payload: dict) -> None:
 		admin_client.push_session_feedback(payload)
 	except Exception:
 		frappe.log_error(title="session feedback forward failed")
+
+
+# --------------------------------------------------------------------------- #
+# Periodic "business pulse" survey
+# --------------------------------------------------------------------------- #
+
+#: Cadence of the pulse survey, spelled the way ``usage.current_period_key``
+#: expects it (it shares ``limit_period``'s vocabulary). Hardcoded for v1, for
+#: the same reason as SESSION_FEEDBACK_TURN_THRESHOLD above.
+PULSE_SURVEY_CADENCE = "Monthly"
+#: Offers per period before the survey goes quiet. "Maybe later" is not
+#: recorded anywhere: it simply lets the next chat open offer again, three
+#: times in all, rather than nagging for the rest of the month. Answering
+#: stores this value outright - see ``_store_pulse_state``.
+PULSE_MAX_OFFERS = 3
+#: The window "used this period" is measured over. Monthly cadence -> the last
+#: 30 days (spec: "monthly -> last 30 days"), a rolling window rather than the
+#: calendar bucket, so a survey offered on the 2nd still has something to show.
+_PULSE_WINDOW_DAYS = 30
+#: Bound on the free-text "is Jarvis solving your business use case?" answer.
+_MAX_USE_CASE = 1000
+
+
+def _pulse_state_columns_present() -> bool:
+	"""False while the app runs ahead of ``bench migrate`` (a dev-server reload,
+	a worker restarted early). Reading or writing a column that is not there yet
+	would 500 the chat open, where "never due" is the right fallback: the survey
+	is not worth an error, and it comes back on its own after the migrate.
+
+	Same guard, and same reasoning, as ``usage.period_select_fields``; Frappe
+	caches the table's column list, so this is not a per-call DESCRIBE."""
+	try:
+		return bool(frappe.db.has_column(USER_SETTINGS, "pulse_last_period_key"))
+	except Exception:
+		return False
+
+
+def _pulse_window_start():
+	"""Start of the rolling usage window the survey asks about."""
+	return frappe.utils.add_to_date(frappe.utils.now_datetime(), days=-_PULSE_WINDOW_DAYS)
+
+
+def _pulse_period_label(now=None) -> str:
+	"""Badge text for the dialog, e.g. "This month, Sep 2026"."""
+	now = now or frappe.utils.now_datetime()
+	return now.strftime("This month, %b %Y")
+
+
+def _turns_since(user: str, since) -> int:
+	"""Total settled turns across this user's OWN conversations last active
+	since ``since``.
+
+	A real SUM of the maintained ``turn_count`` counter, not a proxy like "has a
+	conversation": a user who opened chats but never sent anything has not used
+	Jarvis this period and must not be surveyed. ``file_box`` and
+	``agent_initiated`` conversations contribute 0 by construction (the counter
+	never advances on them - see ``settlement._bump_turn_count``), so they are
+	excluded without needing a filter.
+
+	One query, scoped to one user, and NOT on a hot path: it is reached only
+	after the period-key gate says an offer is still possible, so once the user
+	has any turns at all it runs at most ``PULSE_MAX_OFFERS`` times per period.
+	``owner`` carries no index on this table (Frappe indexes only ``modified``
+	by default), so this is a per-tenant table scan - acceptable at that rate,
+	and precisely why it must stay behind the cheap gate."""
+	from frappe.query_builder.functions import Sum
+
+	conv = frappe.qb.DocType(CONV)
+	rows = (
+		frappe.qb.from_(conv)
+		.select(Sum(conv.turn_count).as_("total"))
+		.where((conv.owner == user) & (conv.last_active_at >= since))
+	).run(as_dict=True)
+	return int((rows[0].total if rows else 0) or 0)
+
+
+def _store_pulse_state(settings_name: str, period_key: str, offer_count: int) -> None:
+	"""Stamp the period key and the offer count on the user's settings row.
+
+	``update_modified=False``: server-owned app state (permlevel 1), not a user
+	edit of their settings.
+
+	Callers pass ``PULSE_MAX_OFFERS`` to mean "quiet for the rest of this
+	period". Two states share that value deliberately - "answered" and "offered
+	three times" - because the outcome is identical and the spec allots the
+	survey exactly two fields."""
+	if not _pulse_state_columns_present():
+		return
+	frappe.db.set_value(
+		USER_SETTINGS,
+		settings_name,
+		{"pulse_last_period_key": period_key, "pulse_offer_count": offer_count},
+		update_modified=False,
+	)
+
+
+@frappe.whitelist()
+def pulse_context() -> dict:
+	"""Whether the periodic business-pulse survey is due for the current user
+	right now and, if so, the period label and the dynamic feature list.
+
+	Called on every chat open, so it is ordered cheapest-gate-first and returns
+	``{"due": False}`` almost always. The comparatively expensive feature-usage
+	sweep (7 sources, two of them bounded scans) runs ONLY once the period key
+	and the turn gate have both said an offer is really happening - it must
+	never be computed speculatively (spec: performance review).
+
+	Returning ``due`` also CLAIMS the offer: the count is incremented here, not
+	when the user answers, because "Maybe later" and a closed tab look the same
+	to the server and both have to count against the cap."""
+	require_jarvis_access()
+	if not _pulse_state_columns_present():
+		return {"due": False}
+	from jarvis.chat.usage import current_period_key, get_or_create_user_settings
+
+	user = frappe.session.user
+	row = get_or_create_user_settings(user)
+	current_key = current_period_key(PULSE_SURVEY_CADENCE)
+	# ``.get`` rather than attribute access: a row loaded before the migrate
+	# added these columns simply has no such attribute.
+	same_period = row.get("pulse_last_period_key") == current_key
+	# A key from an earlier period IS the rollover: the count restarts at 0
+	# rather than carrying last month's exhausted total forward.
+	offer_count = int(row.get("pulse_offer_count") or 0) if same_period else 0
+	if offer_count >= PULSE_MAX_OFFERS:
+		return {"due": False}
+	since = _pulse_window_start()
+	if _turns_since(user, since) < 1:
+		return {"due": False}
+	from jarvis.chat.feature_usage import get_used_features
+
+	# May be empty, and the survey is still due: the stars and the open question
+	# are worth asking regardless. Only the chip question hides (spec: "hidden
+	# if empty"), which the dialog decides from this list.
+	features = get_used_features(user, since)
+	_store_pulse_state(row.name, current_key, offer_count + 1)
+	return {
+		"due": True,
+		"period_label": _pulse_period_label(),
+		"period_key": current_key,
+		"features_offered": _feature_keys(list(features)),
+	}
+
+
+def _feature_keys(value) -> list:
+	"""The tracked feature keys in ``value``, in ``feature_usage.FEATURES``
+	order.
+
+	An allowlist filter of the same shape as ``_SESSION_CHIP_VALUES`` above,
+	not just a length bound: the submitted lists come from the client, so only
+	keys this bench can actually report survive. That drops junk and duplicates
+	and caps the list at 7 by construction. The JSON string form is accepted
+	too - ``frappe.client`` passes list arguments as JSON over HTTP."""
+	from jarvis.chat.feature_usage import FEATURES
+
+	if isinstance(value, str):
+		try:
+			value = frappe.parse_json(value)
+		except Exception:
+			return []
+	if not isinstance(value, list):
+		return []
+	picked = {item for item in value if isinstance(item, str)}
+	return [feature for feature in FEATURES if feature in picked]
+
+
+@frappe.whitelist()
+def submit_pulse_feedback(
+	stars: int,
+	features_offered: list | str,
+	features_selected: list | str,
+	use_case_text: str = "",
+	note: str | None = None,
+) -> dict:
+	"""Record one business-pulse response: forward it to admin, then silence the
+	survey for the rest of this period.
+
+	The full set that was OFFERED rides along with the subset the user picked as
+	most used, so the admin dashboard can tell "used it but did not pick it as
+	top" from "never offered because unused" (spec: Dynamic feature list).
+
+	A malformed rating is rejected BEFORE anything is written or sent, so a
+	broken client cannot burn the user's survey for the month on a value that
+	was never a real answer.
+
+	Forward first, THEN write: ``frappe.db.set_value`` holds the settings row
+	lock until the request commits, and that row is the one every turn's usage
+	accounting also updates. Writing first would hold that lock across the admin
+	HTTPS round-trip - up to ``admin_client``'s timeout when admin is
+	unreachable - and stall this user's own chat, the same hazard
+	``submit_session_feedback`` commits early to avoid. The write still happens
+	when the forward fails: the user answered, and asking them again is worse
+	than losing one low-stakes response (the trade the thumbs tap already
+	makes)."""
+	require_jarvis_access()
+	try:
+		stars = int(stars)
+	except (TypeError, ValueError):
+		# Over HTTP every argument arrives as a string, so a broken client sends
+		# a non-numeric rating as easily as an out-of-range one; both are the
+		# same 417 to the caller, never a 500.
+		frappe.throw("stars must be between 1 and 5", frappe.ValidationError)
+	if not 1 <= stars <= 5:
+		frappe.throw("stars must be between 1 and 5", frappe.ValidationError)
+	from jarvis.chat.usage import current_period_key, get_or_create_user_settings
+
+	current_key = current_period_key(PULSE_SURVEY_CADENCE)
+	payload = {
+		"kind": "Pulse",
+		"period_key": current_key,
+		"stars": stars,
+		"features_offered": _feature_keys(features_offered),
+		"features_selected": _feature_keys(features_selected),
+		"use_case_text": (use_case_text or "").strip()[:_MAX_USE_CASE],
+		"user_ref": frappe.session.user,
+		"note": (note or "").strip()[:_MAX_NOTE],
+	}
+	_forward_pulse(payload)
+	# Resolved AFTER the forward for the same reason the write is: on a user
+	# whose settings row does not exist yet this INSERTs one, and an uncommitted
+	# insert holds its own row lock just as an update does.
+	row = get_or_create_user_settings(frappe.session.user)
+	_store_pulse_state(row.name, current_key, PULSE_MAX_OFFERS)
+	return {"ok": True}
+
+
+def _forward_pulse(payload: dict) -> None:
+	"""Best-effort forward to admin, same contract as ``_forward`` and
+	``_forward_session`` above: a lost response is acceptable, a blocked dialog
+	is not. Named verbatim in ``admin_client.push_pulse_feedback``'s docstring -
+	keep the two in step."""
+	try:
+		from jarvis import admin_client
+
+		admin_client.push_pulse_feedback(payload)
+	except Exception:
+		frappe.log_error(title="pulse feedback forward failed")
