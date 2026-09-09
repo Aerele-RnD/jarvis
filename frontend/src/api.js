@@ -274,12 +274,18 @@ export async function sendMessage(
 	modelOverride,
 	attachments,
 	context,
-	approvalTokens
+	approvalTokens,
+	voice
 ) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty
 	// conversation itself and returns its id as `conversation_id` - saves the
 	// SPA a createOrFocusEmpty round-trip before the first send (latency plan).
 	const args = { conversation: conversation || "", message };
+	// Dictated-and-sent flag (via_voice on the persisted Jarvis Chat Message):
+	// true only when ChatView's send() found a non-empty voice-ack token for
+	// this payload. Omitted (not even `voice: 0`) for every ordinary typed
+	// send, matching every existing caller that doesn't pass this arg.
+	if (voice) args.voice = 1;
 	if (modelOverride) args.model_override = modelOverride;
 	if (attachments && attachments.length) args.attachments = JSON.stringify(attachments);
 	// The ordered tokens of the confirmation cards on screen. A typed "confirm 2"
