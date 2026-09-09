@@ -344,10 +344,16 @@ def _store_pulse_state(settings_name: str, period_key: str, offer_count: int) ->
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def pulse_context() -> dict:
 	"""Whether the periodic business-pulse survey is due for the current user
 	right now and, if so, the period label and the dynamic feature list.
+
+	POST-only despite the getter-shaped name, and that is load-bearing: this
+	endpoint WRITES (it claims the offer below), and Frappe commits only for
+	unsafe methods - reached over GET the claim would be rolled back silently
+	and the anti-nag cap would never advance. Same reason, and the same
+	annotation, as ``release_notice.check`` and ``maintenance_notice.check``.
 
 	Called on every chat open, so it is ordered cheapest-gate-first and returns
 	``{"due": False}`` almost always. The comparatively expensive feature-usage
@@ -361,17 +367,25 @@ def pulse_context() -> dict:
 	require_jarvis_access()
 	if not _pulse_state_columns_present():
 		return {"due": False}
-	from jarvis.chat.usage import current_period_key, get_or_create_user_settings
+	from jarvis.chat.usage import current_period_key
 
 	user = frappe.session.user
-	row = get_or_create_user_settings(user)
 	current_key = current_period_key(PULSE_SURVEY_CADENCE)
-	# ``.get`` rather than attribute access: a row loaded before the migrate
-	# added these columns simply has no such attribute.
-	same_period = row.get("pulse_last_period_key") == current_key
+	# READ, never ``get_doc``: the settings doc carries a child table
+	# (``user_model_usage``) and this runs on every chat open, so the deciding
+	# path is three columns off one row - the same shape ``greeting._get_pref``
+	# uses for its own proactive-card state. ``get_or_create_user_settings``
+	# stays for the one path that genuinely needs a row: claiming an offer.
+	row = frappe.db.get_value(
+		USER_SETTINGS,
+		{"user": user},
+		["name", "pulse_last_period_key", "pulse_offer_count"],
+		as_dict=True,
+	)
+	same_period = bool(row) and row.pulse_last_period_key == current_key
 	# A key from an earlier period IS the rollover: the count restarts at 0
 	# rather than carrying last month's exhausted total forward.
-	offer_count = int(row.get("pulse_offer_count") or 0) if same_period else 0
+	offer_count = int(row.pulse_offer_count or 0) if same_period else 0
 	if offer_count >= PULSE_MAX_OFFERS:
 		return {"due": False}
 	since = _pulse_window_start()
@@ -383,7 +397,16 @@ def pulse_context() -> dict:
 	# are worth asking regardless. Only the chip question hides (spec: "hidden
 	# if empty"), which the dialog decides from this list.
 	features = get_used_features(user, since)
-	_store_pulse_state(row.name, current_key, offer_count + 1)
+	# A user chatting before their settings row exists is normal (the row is
+	# created lazily by whichever surface needs it first), and an offer has to be
+	# recorded somewhere, so this is where the create belongs.
+	if row:
+		settings_name = row.name
+	else:
+		from jarvis.chat.usage import get_or_create_user_settings
+
+		settings_name = get_or_create_user_settings(user).name
+	_store_pulse_state(settings_name, current_key, offer_count + 1)
 	return {
 		"due": True,
 		"period_label": _pulse_period_label(),
@@ -414,7 +437,7 @@ def _feature_keys(value) -> list:
 	return [feature for feature in FEATURES if feature in picked]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_pulse_feedback(
 	stars: int,
 	features_offered: list | str,
@@ -424,6 +447,10 @@ def submit_pulse_feedback(
 ) -> dict:
 	"""Record one business-pulse response: forward it to admin, then silence the
 	survey for the rest of this period.
+
+	POST-only for the same reason as ``pulse_context`` above: it writes, and a
+	GET would be rolled back - here that would forward the answer to admin and
+	then re-offer the survey on the next chat open.
 
 	The full set that was OFFERED rides along with the subset the user picked as
 	most used, so the admin dashboard can tell "used it but did not pick it as

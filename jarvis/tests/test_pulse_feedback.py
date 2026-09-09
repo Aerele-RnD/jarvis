@@ -13,6 +13,7 @@ The admin forward is always mocked - these never hit a real admin.
 from unittest.mock import patch
 
 import frappe
+from frappe.exceptions import FrappeTypeError
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat.api import create_conversation
@@ -186,6 +187,26 @@ class TestPulseContext(_PulseTestCase):
 		self.assertTrue(result["due"])
 		self.assertEqual(result["features_offered"], [])
 
+	def test_both_endpoints_are_post_only(self):
+		"""Both WRITE, and Frappe commits only for unsafe methods: reached over
+		GET, pulse_context's offer claim (and a submit's silencing write) would
+		be rolled back silently and the cap would never advance."""
+		for fn in (pulse_context, submit_pulse_feedback):
+			with self.subTest(fn=fn.__name__):
+				self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[fn], ["POST"])
+
+	def test_a_user_with_no_settings_row_yet_is_offered_and_the_row_is_created(self):
+		"""The settings row is created lazily by whichever surface needs it
+		first, so the deciding read must tolerate its absence - and claiming the
+		offer is the one path that creates it."""
+		frappe.delete_doc(SETTINGS, self.settings, ignore_permissions=True, force=True)
+		with patch(_FEATURES, return_value={}):
+			self.assertTrue(pulse_context()["due"])
+		self.settings = get_or_create_user_settings(TEST_USER).name
+		row = self._pulse()
+		self.assertEqual(row.pulse_last_period_key, current_period_key(PULSE_SURVEY_CADENCE))
+		self.assertEqual(row.pulse_offer_count, 1)
+
 	def test_features_offered_are_the_used_keys_in_canonical_order(self):
 		# feature_usage.FEATURES order, not alphabetical: the dialog renders the
 		# chips in the order it receives them, and both endpoints agree on it.
@@ -237,12 +258,15 @@ class TestSubmitPulseFeedback(_PulseTestCase):
 		self.assertEqual(item["features_selected"], [])
 
 	def test_rejects_stars_outside_one_to_five(self):
-		# Non-numeric too: over HTTP every argument arrives as a string, so a
-		# broken client must get the same validation error, never a 500.
+		# Non-numeric values are rejected too, but by a DIFFERENT layer: under a
+		# request or a test run, @frappe.whitelist wraps the function in
+		# validate_argument_types, so "abc"/None never reach the body and raise
+		# FrappeTypeError (a TypeError) rather than our ValidationError. The
+		# body's own int() guard still matters for non-request callers.
 		for bad in (0, 6, -1, "abc", None):
 			with self.subTest(stars=bad):
 				with patch(_PUSH) as push:
-					with self.assertRaises(frappe.ValidationError):
+					with self.assertRaises((frappe.ValidationError, FrappeTypeError)):
 						submit_pulse_feedback(stars=bad, features_offered=[], features_selected=[])
 				push.assert_not_called()
 				self.assertIsNone(
