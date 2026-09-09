@@ -26,6 +26,17 @@ export const submitFeedback = (message, rating, note) =>
 		rating,
 		note: note || "",
 	});
+// Once-per-session popup ("How did this session go?"): status poll (is it due
+// for this conversation right now?) and the answer/Skip submission. Mirrors
+// submitFeedback's best-effort contract - see SessionFeedbackDialog.vue.
+export const sessionFeedbackStatus = (conversation) =>
+	call("jarvis.chat.feedback.session_feedback_status", { conversation });
+export const submitSessionFeedback = (conversation, chip_value, note) =>
+	call("jarvis.chat.feedback.submit_session_feedback", {
+		conversation,
+		chip_value: chip_value || undefined,
+		note: note || "",
+	});
 export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation });
 // Danger zone: permanently delete ALL of the user's conversations + messages.
