@@ -748,6 +748,7 @@ class TestWorkspaceReset(FrappeTestCase):
 		s.db_set("agent_url", "")
 		s.db_set("proxy_active", 1)
 		frappe.db.commit()
+		JS = "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings.JarvisSettings"
 		try:
 			with (
 				patch(
@@ -762,9 +763,16 @@ class TestWorkspaceReset(FrappeTestCase):
 						"agent_token": "t2",
 					},
 				),
-				patch(
-					"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings.JarvisSettings._enqueue_pool_sync"
-				) as push,
+				# Branch B now routes the pool push through request_resync, whose pool-vs-direct
+				# split gates on compute_pool_mode (models[] rows), NOT the raw proxy_active flag
+				# this test sets. Pin it True so the pool leg is exercised deterministically
+				# rather than depending on ambient singleton fixture state (reprovision review I-1).
+				patch("jarvis.jarvis.pool_serialize.compute_pool_mode", return_value=True),
+				patch(f"{JS}._enqueue_pool_sync") as push,
+				# Skills now fire unconditionally in _resync_after_rebuild; isolate them so this
+				# test asserts only the pool-leg routing.
+				patch(f"{JS}._resync_custom_skills_after_restart"),
+				patch(f"{JS}._resync_learned_skills_after_restart"),
 			):
 				out = onboarding.workspace_reset_state()
 			push.assert_called_once()
@@ -830,16 +838,62 @@ class TestWorkspaceReset(FrappeTestCase):
 		self.assertEqual(frappe.get_single("Jarvis Settings").last_sync_status, "ok (workspace reset)")
 
 	def test_resync_after_rebuild_with_llm_calls_request_resync(self):
-		# A tenant that still has an LLM credential re-drives the full config via request_resync
-		# (which, with the pool-leg fix, restores LLM + skills on either leg).
+		# A tenant that still has an LLM credential re-drives the full config via request_resync,
+		# AND skills fire unconditionally (not only via the LLM leg) - a direct tenant whose apply
+		# converges async would otherwise lose skills (reprovision review: approach/correctness).
 		s = frappe.get_single("Jarvis Settings")
 		jsmod = "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+		js = jsmod + ".JarvisSettings"
 		with (
 			patch("jarvis.account._has_llm_config", return_value=True),
 			patch(f"{jsmod}.request_resync") as rr,
+			patch(f"{js}._resync_custom_skills_after_restart") as cs,
+			patch(f"{js}._resync_learned_skills_after_restart") as ls,
 		):
 			onboarding._resync_after_rebuild(s)
 		rr.assert_called_once()
+		cs.assert_called_once()
+		ls.assert_called_once()
+
+	def test_resync_after_rebuild_swallows_request_resync_error(self):
+		# Must never raise into the (unguarded) reset poll / */5 reconcile: a raise from
+		# request_resync (e.g. redis down) is logged and swallowed (reprovision review I-3).
+		s = frappe.get_single("Jarvis Settings")
+		jsmod = "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+		js = jsmod + ".JarvisSettings"
+		with (
+			patch("jarvis.account._has_llm_config", return_value=True),
+			patch(f"{jsmod}.request_resync", side_effect=RuntimeError("redis down")),
+			patch(f"{js}._resync_custom_skills_after_restart"),
+			patch(f"{js}._resync_learned_skills_after_restart"),
+			patch("frappe.log_error") as log_error,
+		):
+			onboarding._resync_after_rebuild(s)  # must not raise
+		log_error.assert_called()
+
+	def test_reset_poll_no_resync_when_not_resetting(self):
+		# Criterion #7: the auto-resync lives ONLY in the reset poll's _resetting() branches.
+		# A normal (non-reset) poll - last_sync_status is not the resetting marker - must NOT
+		# re-push anything, even when the container reports Ready.
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_sync_status", "ok (converged via admin reconcile)")
+		s.db_set("agent_url", "")
+		frappe.db.commit()
+		with (
+			patch("jarvis.onboarding.admin_client.reset_workspace_state", return_value={}),
+			patch(
+				"jarvis.onboarding.admin_client.get_connection",
+				return_value={
+					"chat_readiness": "Ready",
+					"agent_url": "ws://localhost:19100",
+					"agent_token": "t2",
+				},
+			),
+			patch("jarvis.onboarding._resync_after_rebuild") as resync,
+			patch("jarvis.account._bust_chat_gate"),
+		):
+			onboarding.workspace_reset_state()
+		resync.assert_not_called()
 
 	def test_resync_after_rebuild_without_llm_calls_skills_only(self):
 		# A revoked / never-configured tenant (no credential) must NOT be pushed an empty LLM
