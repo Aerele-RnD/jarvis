@@ -2732,6 +2732,7 @@
 						v-model="input"
 						:attachments="composerAttachments"
 						:busy="busy"
+						:disabled="holdActive"
 						:canSend="canSend"
 						:sendTitle="voiceSendBlockReason"
 						:placeholder="composerPlaceholder"
@@ -3320,6 +3321,7 @@
 							<button
 								class="jv-iconbtn"
 								title="Attach file"
+								:disabled="holdActive"
 								@click="pickFiles"
 								style="
 									width: 30px;
@@ -3402,6 +3404,7 @@
 										? 'Wiki grounding armed. Your next message will be answered from the wiki (click to turn off)'
 										: 'Ground your next message on the org wiki'
 								"
+								:disabled="holdActive"
 								@click="groundNextTurn = !groundNextTurn"
 								:aria-pressed="String(groundNextTurn)"
 								:style="{
@@ -3497,6 +3500,7 @@
 											? 'Stop dictation'
 											: 'Dictate (voice to text)'
 									"
+									:disabled="holdActive && micState !== 'recording'"
 									@click="micState === 'recording' ? stopMic() : startMic()"
 									style="
 										width: 30px;
@@ -6227,6 +6231,10 @@ const canSend = computed(
 		!compacting.value &&
 		// Suspended: the server rejects every send, so keep the button dead.
 		!suspendedNotice.value &&
+		// Maintenance hold (Stream E HARD block): the server refuses every send during an
+		// upgrade, so disable Send too (the composer is also greyed via :disabled below). This
+		// reverses the earlier soft-block (composer-stays-enabled); see readiness.spec.js.
+		!holdActive.value &&
 		// No model configured: nothing on the other end can answer, so prevent the
 		// send rather than reporting the failure after the fact.
 		!noAiConnected.value &&
@@ -8972,6 +8980,10 @@ function resendFailed(m) {
 // optional `context`, e.g. a dashboard): consumed by the first send below.
 let _prefillSendContext = null;
 async function send(textArg, resendAck) {
+	// Maintenance HARD block: once a hold is known, no send runs — this guards the paths that call
+	// send() directly (AskCard/answer/resend/prefill), not just the disabled composer. On the FIRST
+	// mid-session send holdActive is still false, so the detection branch below is preserved.
+	if (holdActive.value) return;
 	// Don't race a dictation that hasn't landed: sending now would drop the spoken words (the
 	// transcript would arrive AFTER the message left the composer). Block on the real busy
 	// signal — recording, or a recording still being transcribed — NOT hasUnfinished(), which
@@ -9196,9 +9208,9 @@ async function send(textArg, resendAck) {
 			}
 			// Maintenance hold (Stream E): the operator/roll raised an upgrade hold
 			// while this tab was open, so boot never carried it. Show the friendly
-			// "back shortly" banner + self-heal by re-checking the CP; the composer
-			// stays enabled, so the next send lands the moment the roll clears. No
-			// reload (unlike release_update_required) - an upgrade hold is transient.
+			// "back shortly" banner + self-heal by re-checking the CP; this HARD-blocks
+			// the composer (disabled until the hold lifts, then re-enabled reactively).
+			// No reload (unlike release_update_required) - an upgrade hold is transient.
 			if (r.reason === "maintenance") {
 				raiseHold(r.message);
 				recheckMaintenance();

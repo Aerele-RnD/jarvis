@@ -413,9 +413,10 @@ describe("ChatView banner chain order", () => {
 
 /**
  * Upgrade maintenance hold (Stream E). Same source-read technique as the suites
- * above (mounting ChatView is not viable). Pins the four load-bearing wiring
- * facts: the hold banner outranks the release nudge, the composer stays enabled,
- * and the send-gate branch mirrors the server's policy order without a reload.
+ * above (mounting ChatView is not viable). Pins the load-bearing wiring facts:
+ * the hold banner outranks the release nudge, the hold HARD-blocks the composer
+ * (canSend gated on holdActive + :disabled on the Composer), and the send-gate
+ * branch mirrors the server's policy order without a reload.
  */
 describe("maintenance hold banner + send gate", () => {
 	const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -438,11 +439,21 @@ describe("maintenance hold banner + send gate", () => {
 		expect(chatSrc.slice(start, end)).toContain("holdActive.value");
 	});
 
-	it("never gates canSend on holdActive (composer stays enabled - soft refusal only)", () => {
+	it("HARD-blocks: gates canSend on holdActive (Send dead during a hold)", () => {
+		// Reverses the earlier soft-block (composer-stays-enabled + soft refusal). The operator
+		// asked for a hard block, so Send is disabled during a hold (belt-and-suspenders with the
+		// :disabled binding below, which also blocks Enter / voice / programmatic sends).
 		const start = chatSrc.indexOf("const canSend = computed(");
 		expect(start, "ChatView must still define canSend").not.toBe(-1);
 		const end = chatSrc.indexOf("\n);", start);
-		expect(chatSrc.slice(start, end)).not.toContain("holdActive");
+		expect(chatSrc.slice(start, end)).toContain("!holdActive.value");
+	});
+
+	it("HARD-blocks: passes :disabled=holdActive to the Composer (greys the box + blocks typing)", () => {
+		const c = chatSrc.indexOf("<Composer");
+		expect(c, "ChatView must render the Composer").not.toBe(-1);
+		const end = chatSrc.indexOf(">", c);
+		expect(chatSrc.slice(c, end)).toContain(':disabled="holdActive"');
 	});
 
 	it("orders the send-gate maintenance branch between release-update and workspace-resetting", () => {
