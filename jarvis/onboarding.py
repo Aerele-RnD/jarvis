@@ -2070,6 +2070,32 @@ def workspace_reset_state() -> dict:
 	return _workspace_reset_poll()
 
 
+def _resync_after_rebuild(settings) -> None:
+	"""Re-push the BENCH-owned state the fresh container came up empty of, after a rebuild.
+	The control plane re-applies its own carried config, but two things live ONLY on the
+	bench and must be re-synced FROM HERE (never from admin — the LLM-key invariant): the
+	LLM credential and the custom/learned skills.
+
+	- **LLM — only when a real credential exists:** ``request_resync`` re-drives the current
+	  config (direct-leg restart OR pool) and, as of the pool-leg fix, fires both skill
+	  resyncs on either leg. Gated on ``_has_llm_config`` so a revoked / never-configured
+	  tenant is not pushed an empty/broken config (it returns False there).
+	- **Skills — always:** when there is no LLM to drive, still restore skills directly; they
+	  are unrelated to the LLM and the CP holds no copy.
+
+	Idempotent + safe by construction: every push dedups by job_id and none of
+	``request_resync`` / the two skill helpers raises. A repeat call for the same converging
+	container is a deduped no-op."""
+	from jarvis.account import _has_llm_config
+	from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import request_resync
+
+	if _has_llm_config(settings):
+		request_resync(settings)
+	else:
+		settings._resync_custom_skills_after_restart()
+		settings._resync_learned_skills_after_restart()
+
+
 def _workspace_reset_poll() -> dict:
 	settings = frappe.get_single("Jarvis Settings")
 	req: dict = {}
@@ -2105,17 +2131,28 @@ def _workspace_reset_poll() -> dict:
 		# container holds no direct-leg credential yet. Keep the jarvis#841
 		# dedup stamp cleared so the next save always applies for real.
 		settings.db_set("llm_last_apply_fingerprint", "")
+		# Skills live only on the bench (the CP holds no copy) and the rebuilt container's
+		# skill dirs are empty; re-push them here WITHOUT touching last_sync_status (they use
+		# their own status fields), so the reset's terminal "ok" stands. The LLM is NOT driven
+		# from this terminal branch: a normal tenant only reaches Ready once its credential is
+		# applied (the reachable-not-ready branch drove it while converging), and a
+		# revoke-reconnect reset intentionally has none (the customer reconnects).
+		settings._resync_custom_skills_after_restart()
+		settings._resync_learned_skills_after_restart()
 		_bust_chat_gate()
 		frappe.db.commit()
 	elif _resetting() and data.get("agent_url") and not (settings.get("agent_url") or ""):
-		# New container reachable but not Ready yet: reconnect the transport and,
-		# for a pool tenant, re-push the stored spec + subscription blobs — OAuth
-		# creds never ride a rebuild, so without this a subscription pool stays
-		# "blocked" forever. Hands convergence to the standard pending-applying
-		# machinery (marker replaced; runs once — agent_url is set after this).
+		# New container reachable but not Ready yet: reconnect the transport, then re-push
+		# the bench-owned state the fresh container is missing. Previously this re-pushed
+		# ONLY a pool tenant's spec/subscription blobs; it now covers every cohort via
+		# _resync_after_rebuild — the LLM credential (direct api-key + pool + OAuth; the CP
+		# never carries the key, it is bench-sourced) AND the custom/learned skills (the CP
+		# holds no copy). Without this a rebuilt DIRECT tenant stayed key-less and a
+		# subscription pool stayed "blocked" forever, and skills were lost for all. Hands
+		# convergence to the standard pending-applying machinery (runs once — agent_url is
+		# set after this; all pushes dedup).
 		write_connection(data)
-		if settings.get("proxy_active"):
-			settings._enqueue_pool_sync()
+		_resync_after_rebuild(settings)
 		frappe.db.commit()
 	return {
 		"ready": ready,
