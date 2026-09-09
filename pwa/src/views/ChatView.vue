@@ -291,7 +291,9 @@ async function loadPending() {
 async function send() {
 	const text = input.value.trim();
 	const ready = attachments.value.filter((a) => a.file_url);
-	if ((!text && !ready.length) || sending.value) return;
+	// Hard block (Stream E maintenance hold): the server refuses every send during a hold and the
+	// composer is disabled; guard here too so a queued/programmatic send can't slip through.
+	if ((!text && !ready.length) || sending.value || holdActive.value) return;
 
 	errorBanner.value = "";
 	input.value = "";
@@ -356,12 +358,12 @@ async function send() {
 			}
 			// Maintenance hold (Stream E): the operator/roll raised an upgrade hold
 			// while this tab was open. Raise the persistent top-of-app strip + self-
-			// heal by re-checking the CP; no reload (a hold is transient), composer
-			// stays enabled, so the next send lands the moment the roll clears.
+			// heal by re-checking the CP; no reload (a hold is transient). This HARD-
+			// blocks the composer (disabled until the hold lifts, then re-enabled).
 			if (res.reason === "maintenance") {
 				raiseHold(res.message);
 				recheckMaintenance();
-				input.value = text; // keep their typed text - the composer stays enabled, they can retry
+				input.value = text; // keep their draft so it's ready when the hold lifts
 				return;
 			}
 			errorBanner.value = res.reason || "Couldn't send that message.";
@@ -892,6 +894,7 @@ onUnmounted(() => {
 		:sending="sending"
 		:attachments="attachments"
 		:mic-enabled="micEnabled"
+		:disabled="holdActive"
 		@send="send"
 		@stop="stop"
 		@attach="attach"
