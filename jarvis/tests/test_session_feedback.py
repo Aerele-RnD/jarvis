@@ -315,3 +315,12 @@ class TestSubmitSessionFeedback(_SessionFeedbackTestCase):
 			frappe.set_user("Administrator")
 			_delete_conv(other)
 			frappe.set_user(TEST_USER)
+
+	def test_is_post_only(self):
+		"""It WRITES (a compare-and-set claim plus an explicit commit) and forwards
+		to admin, exactly like its pulse siblings (see
+		test_pulse_feedback.py::test_both_endpoints_are_post_only) - reached over
+		GET, Frappe would not enforce CSRF on it."""
+		self.assertEqual(
+			frappe.allowed_http_methods_for_whitelisted_func[submit_session_feedback], ["POST"]
+		)

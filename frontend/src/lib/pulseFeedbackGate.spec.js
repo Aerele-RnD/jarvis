@@ -53,4 +53,30 @@ describe("pulseFeedbackGate", () => {
 		expect(pulseFeedbackOpen.value).toBe(false);
 		expect(pulseFeedbackContext.value).not.toBeNull();
 	});
+
+	// The "dismissed this page load" flag is module-private state with no
+	// reset hook (by design -- it is meant to last for the page's lifetime,
+	// only a real reload clears it), so a plain `it` block sharing the
+	// already-imported module would see whatever an earlier test in this file
+	// left behind (e.g. the "closePulseFeedback closes..." case above already
+	// dismisses it). vi.resetModules() + a fresh dynamic import gives this
+	// test its own module instance, the same isolation announcementGate.spec.js
+	// uses for its own module-private state.
+	it("does not call pulseContext() again after the survey was dismissed this page load", async () => {
+		vi.resetModules();
+		const fresh = await import("./pulseFeedbackGate");
+		apiModule.pulseContext.mockResolvedValue({ due: true, features_offered: [] });
+
+		await fresh.maybeOpenPulseFeedback();
+		expect(apiModule.pulseContext).toHaveBeenCalledTimes(1);
+		expect(fresh.pulseFeedbackOpen.value).toBe(true);
+
+		fresh.closePulseFeedback();
+		await fresh.maybeOpenPulseFeedback();
+
+		// Still exactly one call: the second maybeOpenPulseFeedback() returned
+		// early instead of hitting the backend again -- switching conversations
+		// after "Maybe later" must not re-offer (and re-burn the monthly cap).
+		expect(apiModule.pulseContext).toHaveBeenCalledTimes(1);
+	});
 });

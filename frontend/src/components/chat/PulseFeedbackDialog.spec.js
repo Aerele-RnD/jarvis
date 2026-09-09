@@ -4,7 +4,14 @@ import { mount } from "@vue/test-utils";
 vi.mock("frappe-ui", () => ({
 	Dialog: {
 		props: ["modelValue", "options"],
-		template: "<div><slot name='body-content'/><slot name='actions'/></div>",
+		emits: ["update:modelValue"],
+		// Exposes a `close` button standing in for Dialog's own Escape / outside
+		// -click / X-button close paths, none of which are driven by the
+		// consumer's "Maybe later" button - they all funnel through Dialog's
+		// internal close(), which only ever emits update:modelValue (see real
+		// Dialog.vue). A plain v-model here would bypass closePulseFeedback().
+		template:
+			"<div><slot name='body-content'/><slot name='actions'/><button data-test='dialog-escape' @click=\"$emit('update:modelValue', false)\">escape</button></div>",
 	},
 	Button: {
 		props: ["label", "variant", "disabled"],
@@ -25,9 +32,21 @@ vi.mock("@/api", () => ({
 	submitPulseFeedback: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+// Real gate behavior, but with closePulseFeedback spied so a test can tell
+// "went through the one dismiss path" apart from "the ref just happened to
+// end up false" -- both look identical if you only check pulseFeedbackOpen.
+vi.mock("@/lib/pulseFeedbackGate", async (importOriginal) => {
+	const actual = await importOriginal();
+	return { ...actual, closePulseFeedback: vi.fn(actual.closePulseFeedback) };
+});
+
 import * as api from "@/api";
 import PulseFeedbackDialog from "./PulseFeedbackDialog.vue";
-import { pulseFeedbackOpen, pulseFeedbackContext } from "@/lib/pulseFeedbackGate";
+import {
+	pulseFeedbackOpen,
+	pulseFeedbackContext,
+	closePulseFeedback,
+} from "@/lib/pulseFeedbackGate";
 
 describe("PulseFeedbackDialog", () => {
 	beforeEach(() => {
@@ -84,7 +103,7 @@ describe("PulseFeedbackDialog", () => {
 			["file_box"],
 			["file_box"],
 			"",
-			""
+			"",
 		);
 	});
 
@@ -98,5 +117,19 @@ describe("PulseFeedbackDialog", () => {
 			.trigger("click");
 		expect(api.submitPulseFeedback).not.toHaveBeenCalled();
 		expect(pulseFeedbackOpen.value).toBe(false);
+	});
+
+	it("Escape/outside-click/X (Dialog's own close, not the Maybe later button) still counts as a dismissal", async () => {
+		// Dialog drives these three itself and only ever emits
+		// update:modelValue(false) - never a click on "Maybe later". Before this
+		// fix, a plain v-model wrote pulseFeedbackOpen.value = false directly on
+		// that emit, skipping closePulseFeedback() entirely, so the "one offer
+		// per page load" rule silently didn't apply to these three closes.
+		pulseFeedbackContext.value = { period_label: "This month", features_offered: [] };
+		pulseFeedbackOpen.value = true;
+		const w = mount(PulseFeedbackDialog);
+		await w.find("[data-test='dialog-escape']").trigger("click");
+		expect(pulseFeedbackOpen.value).toBe(false);
+		expect(closePulseFeedback).toHaveBeenCalledTimes(1);
 	});
 });

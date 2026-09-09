@@ -155,7 +155,7 @@ def session_feedback_status(conversation: str) -> dict:
 	return {"due": bool(due)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_session_feedback(
 	conversation: str, chip_value: str | None = None, note: str | None = None
 ) -> dict:

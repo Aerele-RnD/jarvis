@@ -8,7 +8,18 @@ import { pulseContext } from "@/api";
 export const pulseFeedbackOpen = ref(false);
 export const pulseFeedbackContext = ref(null); // {period_label, period_key, features_offered}
 
+// Client-side "at most one offer per page load" rule. The server enforces its
+// own 3-per-month cap (see pulse_context's docstring), but that cap is keyed
+// only to the calendar period, not to a single browsing session: without this
+// flag, dismissing the survey ("Maybe later") in one conversation and then
+// switching to another conversation re-triggers _checkPulseOnce, which calls
+// pulse_context() again, which is still due -- reopening the survey and
+// burning another one of the three monthly offers. A page reload resets this
+// (module state, not persisted), which is the intended boundary.
+let _dismissedThisLoad = false;
+
 export async function maybeOpenPulseFeedback() {
+	if (_dismissedThisLoad) return;
 	try {
 		const ctx = await pulseContext();
 		if (ctx && ctx.due) {
@@ -22,4 +33,5 @@ export async function maybeOpenPulseFeedback() {
 
 export function closePulseFeedback() {
 	pulseFeedbackOpen.value = false;
+	_dismissedThisLoad = true;
 }

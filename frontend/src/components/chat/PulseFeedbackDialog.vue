@@ -5,7 +5,8 @@
      claimed by pulse_context()); this component only renders + submits. -->
 <template>
 	<Dialog
-		v-model="open"
+		:model-value="open"
+		@update:model-value="onDialogModelUpdate"
 		:options="{ title: `How is ${agentName} doing for your business?`, size: 'md' }"
 	>
 		<template #body-content>
@@ -129,6 +130,16 @@ function toggleFeature(f) {
 
 function close() {
 	closePulseFeedback();
+}
+
+// A plain `v-model="open"` would let Dialog write `pulseFeedbackOpen.value =
+// false` directly on Escape, the X button, or an outside click -- all close
+// paths Dialog drives itself, bypassing closePulseFeedback() and its
+// "dismissed this page load" bookkeeping (see pulseFeedbackGate.js). Routing
+// every close through here, same as the "Maybe later" button already does,
+// makes ALL dismissals count, not just the explicit one.
+function onDialogModelUpdate(value) {
+	if (!value) closePulseFeedback();
 }
 
 async function submit() {
