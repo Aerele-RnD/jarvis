@@ -236,6 +236,7 @@
 			@input="onInputInternal"
 			@keydown="onKeydownInternal"
 			@paste="onPasteInternal"
+			:disabled="disabled"
 			rows="1"
 			:placeholder="placeholder"
 			style="
@@ -250,7 +251,10 @@
 				background: transparent;
 				padding: 8px 8px 4px;
 			"
-			:style="{ maxHeight: maxHeight + 'px' }"
+			:style="{
+				maxHeight: maxHeight + 'px',
+				...(disabled ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+			}"
 		></textarea>
 		<input
 			ref="fileInputEl"
@@ -389,6 +393,9 @@ const props = defineProps({
 	attachments: { type: Array, default: () => [] },
 	// A turn is in flight: swaps Send for Stop and the hint for "Stop".
 	busy: { type: Boolean, default: false },
+	// Hard block (Stream E maintenance hold): greys the box + kills Send/Enter so the user
+	// cannot type or submit while a hold is active (the banner above says why). Default false.
+	disabled: { type: Boolean, default: false },
 	// Optional override for whether Send is armed. `null` (the default) derives
 	// it from text/attachments; chat passes its own (it also blocks on
 	// `sending` and a suspended subscription).
@@ -432,11 +439,12 @@ const text = computed({
 	set: (v) => emit("update:modelValue", v),
 });
 
-const sendable = computed(() =>
-	props.canSend === null
+const sendable = computed(() => {
+	if (props.disabled) return false;
+	return props.canSend === null
 		? props.modelValue.trim().length > 0 || props.attachments.length > 0
-		: props.canSend
-);
+		: props.canSend;
+});
 
 // ---- auto-grow ----
 function autoGrow() {

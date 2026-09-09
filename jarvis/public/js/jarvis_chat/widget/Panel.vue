@@ -614,7 +614,7 @@
 						class="jvp-cib"
 						type="button"
 						aria-label="Attach a file"
-						:disabled="uploading"
+						:disabled="uploading || maintenanceActive"
 						@click="pickFile"
 					>
 						<svg
@@ -638,6 +638,8 @@
 							contextText ? `Ask about ${contextText}…` : 'Ask Jarvis anything…'
 						"
 						v-model="draft"
+						:disabled="maintenanceActive"
+						:style="maintenanceActive ? 'opacity:0.55;cursor:not-allowed' : null"
 						@focus="composerFocused = true"
 						@blur="composerFocused = false"
 						@input="onComposerInput"
@@ -650,7 +652,7 @@
 						:class="{ 'jvp-cib--rec': recording }"
 						type="button"
 						:aria-label="recording ? 'Stop recording' : 'Dictate a message'"
-						:disabled="transcribing"
+						:disabled="transcribing || maintenanceActive"
 						@click="toggleVoice"
 					>
 						<svg
@@ -692,7 +694,7 @@
 						class="jvp-send"
 						type="button"
 						aria-label="Send message"
-						:disabled="!canSend"
+						:disabled="!canSend || maintenanceActive"
 						@click="send"
 					>
 						<svg
@@ -1583,6 +1585,9 @@ async function send() {
 	// never onboarded. Unresolved counts too: sending into a verdict that has not
 	// landed is exactly how a message got swallowed by the arriving gate.
 	if (readiness.value === null || readiness.value === "gate") return;
+	// Maintenance HARD block: guard the direct send() callers (retryLast etc.); the composer is
+	// disabled too. First mid-session send has maintenanceActive false, so detection is preserved.
+	if (maintenanceActive.value) return;
 	const text = draft.value.trim();
 	const atts = attachments.value.slice();
 	if ((!text && !atts.length) || sending.value || stream.value.live) return;
