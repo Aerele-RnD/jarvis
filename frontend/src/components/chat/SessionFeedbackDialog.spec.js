@@ -4,6 +4,7 @@ import { mount } from "@vue/test-utils";
 vi.mock("frappe-ui", () => ({
 	Dialog: {
 		props: ["modelValue", "options"],
+		emits: ["close"],
 		template: "<div><slot name='body-content'/><slot name='actions'/></div>",
 	},
 	Button: {
@@ -24,6 +25,7 @@ vi.mock("@/api", () => ({
 }));
 
 import * as api from "@/api";
+import { Dialog } from "frappe-ui";
 import SessionFeedbackDialog from "./SessionFeedbackDialog.vue";
 import {
 	sessionFeedbackOpen,
@@ -99,6 +101,19 @@ describe("SessionFeedbackDialog", () => {
 			.findAll("button")
 			.find((b) => b.text() === "Skip")
 			.trigger("click");
+		expect(api.submitSessionFeedback).toHaveBeenCalledWith("conv-1", null, "");
+		expect(sessionFeedbackOpen.value).toBe(false);
+	});
+
+	it("an Escape/X/outside-click dismissal (Dialog's close event) claims the offer exactly like Skip", async () => {
+		// Regression: frappe-ui's Dialog fires `close` on Escape, its ghost X
+		// button, and an outside click — all bypass this component's own Skip/
+		// Send handlers. Without @close wired to skip(), session_feedback_asked_at
+		// never gets stamped, so the next reply re-polls as still due and the
+		// popup reopens on top of it (and burns feedbackGate's IGNORE_CAP).
+		openSessionFeedback("conv-1");
+		const w = mount(SessionFeedbackDialog);
+		await w.findComponent(Dialog).vm.$emit("close");
 		expect(api.submitSessionFeedback).toHaveBeenCalledWith("conv-1", null, "");
 		expect(sessionFeedbackOpen.value).toBe(false);
 	});

@@ -8678,6 +8678,20 @@ let _shownConvId = null;
 // ResizeObserver, cancelled by any deliberate scroll.
 let _restoreTop = null;
 let _restoreUntil = 0;
+// One-shot guard for the business-pulse check, separate from _shownConvId
+// (which loadConversation alone owns, for scroll-restore). THREE places can
+// make a conversation id newly "current": loadConversation's genuine-switch
+// branch, newChat(), and the send-from-home id-adoption in send() — a fresh
+// chat's first reply reloads via loadConversation on the SAME id newChat()
+// already checked, which _sameConv alone doesn't catch (loadConversation
+// never ran for that id before, so _sameConv reads false again). Keying on
+// the id itself instead makes the check idempotent across all three sites.
+let _pulseCheckedConvId = null;
+function _checkPulseOnce(id) {
+	if (!id || _pulseCheckedConvId === id) return;
+	_pulseCheckedConvId = id;
+	maybeOpenPulseFeedback();
+}
 
 async function loadConversation(id) {
 	// Preserve the reader's position across an in-place resync. Captured BEFORE
@@ -8838,9 +8852,10 @@ async function loadConversation(id) {
 	// in-place resync of the conversation already on screen (tab-focus onResync,
 	// a turn settling, a card apply/discard — all re-run loadConversation on the
 	// SAME id). `_sameConv` above already draws exactly this distinction for the
-	// scroll-position logic, so reuse it here. Cheap and self-gating server-side
-	// (pulse_context), so no await needed.
-	if (!_sameConv) maybeOpenPulseFeedback();
+	// scroll-position logic; `_checkPulseOnce` additionally guards against a
+	// fresh chat's first reload here re-firing what newChat()/send() already
+	// checked for this same id. Cheap and self-gating server-side (pulse_context).
+	if (!_sameConv) _checkPulseOnce(id);
 	_shownConvId = id;
 	await nextTick();
 	if (_keepScrollTop !== null && threadEl.value) {
@@ -9125,7 +9140,9 @@ async function newChat() {
 	// check there never fires for a new chat — this is a genuine chat-open
 	// event too (pulse is gated per-user-period, not per-conversation, so an
 	// empty fresh chat is a valid open). Cheap and self-gating; no await needed.
-	maybeOpenPulseFeedback();
+	// _checkPulseOnce (keyed on this id, not _shownConvId) keeps this from
+	// double-firing when the first reply's loadConversation reload runs next.
+	_checkPulseOnce(currentId.value);
 	// loadConversation does not run on this path (see below), so reload THIS
 	// conversation's own connector-focus pick here instead of leaving the ref
 	// on whatever the PREVIOUS chat had armed - createOrFocusEmpty can return
@@ -9634,6 +9651,12 @@ async function send(textArg, resendAck) {
 					originOf.value = "";
 					if (route.params.id !== r.conversation_id)
 						router.replace("/c/" + r.conversation_id);
+					// A brand-new/fallback conversation becoming current is a genuine
+					// chat-open too (e.g. the very first message sent from the home/
+					// welcome screen, never touching newChat() or loadConversation).
+					// _checkPulseOnce keys on the id itself, so this can't double-fire
+					// with the loadConversation/newChat sites either.
+					_checkPulseOnce(r.conversation_id);
 				}
 				// Empties are hidden from the sidebar; surface the row now it has a message.
 				if (!store.conversations.some((c) => c.name === currentId.value))

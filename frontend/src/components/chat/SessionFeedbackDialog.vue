@@ -3,7 +3,11 @@
      WhatsNewDialog + noticeGate's whatsNewOpen. The server is the real gate
      (session_feedback_asked_at); this component only renders + submits. -->
 <template>
-	<Dialog v-model="open" :options="{ title: 'How did this session go?', size: 'sm' }">
+	<Dialog
+		v-model="open"
+		:options="{ title: 'How did this session go?', size: 'sm' }"
+		@close="skip"
+	>
 		<template #body-content>
 			<p class="mb-3 text-sm text-ink-gray-6">
 				Takes 2 seconds. Helps us improve {{ agentName }}.
@@ -84,6 +88,15 @@ async function submit() {
 	}
 }
 
+// Also wired to the Dialog's `@close` (Escape / the ghost X button / an
+// outside click) so ANY dismissal claims the offer, not just this explicit
+// button — otherwise session_feedback_asked_at never gets stamped, the next
+// reply re-polls as still due, and the popup reopens on top of it, silently
+// burning through feedbackGate's IGNORE_CAP on repeat Escapes. Safe to call
+// more than once: closeSessionFeedback()/submitSessionFeedback are idempotent
+// no-ops on an already-closed dialog, and the explicit Skip click here never
+// re-triggers Dialog's `close` emit (that only fires from Dialog's OWN
+// internal state changes, not from this ref being set externally).
 async function skip() {
 	const conversation = sessionFeedbackConversation.value;
 	closeSessionFeedback();
