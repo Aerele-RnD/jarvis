@@ -373,42 +373,41 @@
 
 						<!-- A turn that failed server-side. Shows the same headline the
 						     full chat uses; the raw provider text (an OAuth 401 arrives
-						     as a JSON blob) stays folded away behind "Show details" so it
+						     as a JSON blob) stays folded away behind "Details" so it
 						     cannot swamp a 400px panel. -->
 						<div v-if="turnError" class="jvp-turn-err" role="alert">
 							<div class="jvp-turn-err-h">{{ turnErrorHeadline }}</div>
-							<div v-if="turnErrorHint" class="jvp-turn-err-hint">
-								{{ turnErrorHint }}
-							</div>
-							<a
+							<div
+								v-if="turnErrorHint || turnErrorDetails.statusUrl || turnErrorHasDetail"
 								class="jvp-turn-err-hint"
-								style="display: inline-block; margin-top: 2px; text-decoration: underline"
-								v-if="turnErrorDetails.statusUrl"
-								:href="turnErrorDetails.statusUrl"
-								target="_blank"
-								rel="noopener noreferrer"
-								>{{ turnErrorDetails.statusLabel }} &#8599;</a
 							>
+								{{ turnErrorHint }}
+								<a
+									v-if="turnErrorDetails.statusUrl"
+									class="jvp-turn-err-link"
+									:href="turnErrorDetails.statusUrl"
+									target="_blank"
+									rel="noopener noreferrer"
+									>{{ turnErrorDetails.statusLabel }} &#8599;</a
+								>
+								<template v-if="turnErrorHasDetail">
+									<span aria-hidden="true"> &middot; </span>
+									<button
+										type="button"
+										class="jvp-turn-err-link"
+										:aria-expanded="turnErrorOpen ? 'true' : 'false'"
+										@click="turnErrorOpen = !turnErrorOpen"
+									>
+										{{ turnErrorOpen ? "Hide details" : "Details" }}
+									</button>
+								</template>
+							</div>
 							<pre v-if="turnErrorOpen" class="jvp-turn-err-raw">{{
 								turnError
 							}}</pre>
-							<div class="jvp-turn-err-acts">
-								<button
-									v-if="turnErrorDetails.retryable"
-									class="jvp-btn-subtle"
-									type="button"
-									@click="retryLast"
-								>
+							<div v-if="turnErrorDetails.retryable" class="jvp-turn-err-acts">
+								<button class="jvp-btn-subtle" type="button" @click="retryLast">
 									Retry
-								</button>
-								<button
-									v-if="turnErrorHasDetail"
-									class="jvp-btn-subtle"
-									type="button"
-									:aria-expanded="turnErrorOpen ? 'true' : 'false'"
-									@click="turnErrorOpen = !turnErrorOpen"
-								>
-									{{ turnErrorOpen ? "Hide details" : "Show details" }}
 								</button>
 							</div>
 						</div>
@@ -814,7 +813,7 @@ const turnErrorCode = ref("");
 // its persisted `provider` (which model actually served the turn) is what
 // decides the status link, exactly as the full chat passes m.provider.
 const turnErrorMsgId = ref("");
-const turnErrorOpen = ref(false); // "Show details" disclosure
+const turnErrorOpen = ref(false); // "Details" disclosure
 const turnErrorDetails = computed(() => {
 	const id = turnErrorMsgId.value;
 	const row = id ? messages.value.find((m) => m.name === id) : undefined;
@@ -2208,6 +2207,16 @@ defineExpose({ load, startNewChat, convId });
 	line-height: 1.4;
 	color: var(--jv-text-2, inherit);
 	opacity: 0.85;
+}
+.jvp-turn-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 .jvp-turn-err-raw {
 	margin: 0;

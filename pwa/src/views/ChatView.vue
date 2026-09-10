@@ -79,6 +79,13 @@ const errorBanner = ref("");
 // the failure differently for the SAME event - the exact #702 defect this
 // feature exists to fix, reproduced across two elements on one screen.
 const errorMeta = ref({});
+// Failed messages whose raw error text is expanded ("Details" in the card).
+const rawOpen = ref(new Set());
+function toggleRaw(key) {
+	const next = new Set(rawOpen.value);
+	next.has(key) ? next.delete(key) : next.add(key);
+	rawOpen.value = next;
+}
 const attachments = ref([]);
 const pending = ref([]); // parked writes awaiting approval
 // Ordered the SAME way the server orders the parked list, because a typed
@@ -839,22 +846,29 @@ onUnmounted(() => {
 						</svg>
 					</a>
 					<SkillChips :names="it.view.skills" />
-					<div v-if="it.err" class="jv-msg-error" role="alert">
+										<div v-if="it.err" class="jv-msg-error" role="alert">
 						<strong>{{ it.err.headline }}</strong>
-						<p>{{ it.err.hint }}</p>
-						<a
-							style="display: inline-block; margin-top: 2px; color: inherit; text-decoration: underline"
-							v-if="it.err.statusUrl"
-							:href="it.err.statusUrl"
-							target="_blank"
-							rel="noopener noreferrer"
-						>
-							{{ it.err.statusLabel }} &#8599;
-						</a>
-						<details>
-							<summary>Show details</summary>
-							{{ it.msg.error }}
-						</details>
+						<p>
+							{{ it.err.hint }}
+							<a
+								v-if="it.err.statusUrl"
+								class="jv-err-link"
+								:href="it.err.statusUrl"
+								target="_blank"
+								rel="noopener noreferrer"
+								>{{ it.err.statusLabel }} &#8599;</a
+							>
+							<span aria-hidden="true"> &middot; </span>
+							<button
+								type="button"
+								class="jv-err-link"
+								:aria-expanded="rawOpen.has(it.key) ? 'true' : 'false'"
+								@click="toggleRaw(it.key)"
+							>
+								{{ rawOpen.has(it.key) ? "Hide details" : "Details" }}
+							</button>
+						</p>
+						<pre v-if="rawOpen.has(it.key)" class="jv-msg-error-raw">{{ it.msg.error }}</pre>
 					</div>
 					<MessageMedia
 						:items="it.msg.canvas"
@@ -1115,6 +1129,25 @@ onUnmounted(() => {
 	font-size: 12px;
 	line-height: 1.4;
 	color: var(--red);
+}
+.jv-msg-error p {
+	margin: 2px 0 0;
+}
+.jv-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.jv-msg-error-raw {
+	margin: 4px 0 0;
+	font: inherit;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 /* The stop marker is muted (--ink5), never the error tone above it: the user
    pressed Stop on purpose, so this states what happened, it doesn't warn. */
