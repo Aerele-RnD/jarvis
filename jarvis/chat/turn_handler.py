@@ -1181,6 +1181,30 @@ def handle_chat_send(payload: dict) -> None:
 					"status": "waking",
 				},
 			)
+		# Connect-first device pairing (Mechanism A): a bench that has not yet
+		# obtained its device token must (re)pair before it can reach the gateway.
+		# The connect below drives that one-time pairing (NOT_PAIRED -> approved ->
+		# token) and can take tens of seconds, so tell the user we're setting the
+		# assistant up rather than leaving a dead spinner. On the fail-closed cap
+		# the connect raises an honest "still getting ready" error handled below.
+		# Cheap + best-effort: only fires when no device token is persisted yet
+		# (steady-state turns skip it); a UX hint must never break the turn.
+		try:
+			from jarvis.chat.device import has_paired_token
+
+			if not has_paired_token(settings):
+				_publish_to_user(
+					user,
+					{
+						"kind": "run:status",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+						"status": "pairing",
+					},
+				)
+		except Exception:
+			pass
 		try:
 			t_checkout = time.monotonic()
 			with agent_session_pool.checkout(gateway_url) as sess:
