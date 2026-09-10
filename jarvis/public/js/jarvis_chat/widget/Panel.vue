@@ -380,11 +380,24 @@
 							<div v-if="turnErrorHint" class="jvp-turn-err-hint">
 								{{ turnErrorHint }}
 							</div>
+							<a
+								style="text-decoration: underline"
+								v-if="turnErrorDetails.statusUrl"
+								:href="turnErrorDetails.statusUrl"
+								target="_blank"
+								rel="noopener noreferrer"
+								>{{ turnErrorDetails.statusLabel }}</a
+							>
 							<pre v-if="turnErrorOpen" class="jvp-turn-err-raw">{{
 								turnError
 							}}</pre>
 							<div class="jvp-turn-err-acts">
-								<button class="jvp-btn-subtle" type="button" @click="retryLast">
+								<button
+									v-if="turnErrorDetails.retryable"
+									class="jvp-btn-subtle"
+									type="button"
+									@click="retryLast"
+								>
 									Retry
 								</button>
 								<button
@@ -659,6 +672,7 @@
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
+import { turnErrorInfo } from "../../turn_errors.mjs";
 import { contextLabel } from "./desk_context.mjs";
 import { isDarkNow, watchTheme } from "./desk_theme.mjs";
 import { renderReply } from "./panel_markdown.mjs";
@@ -791,76 +805,14 @@ const loadError = ref("");
 // reload it triggers, and the panel showed nothing at all. A dead LLM credential
 // (auth_permanent) looked exactly like a reply that never came.
 const turnError = ref("");
+// The live run:error event's own code, when this session saw it - always
+// wins over reclassifying `turnError` from text alone (mirrors the full
+// chat's errorMeta). Not persisted, so a reload has only the string.
+const turnErrorCode = ref("");
 const turnErrorOpen = ref(false); // "Show details" disclosure
-// Mirrors the full chat's turnErrorInfo / classifyTurnErrorCode
-// (frontend/src/lib/errors.js, formerly ChatView.vue's own ERROR_HEADLINES /
-// classifyErrorCode before #702) so both surfaces name the same failure the
-// same way. This widget is a separate Desk-bundled build with no import path
-// into frontend/src/lib, so the mapping is kept here as its own copy - keep
-// this in sync by hand whenever errors.js's taxonomy changes (#702 review:
-// this copy had silently drifted once already, still showing the old
-// generic "Something went wrong" for the exact failure #702 was filed on).
-// Raw provider errors are unreadable here - an OAuth 401 arrives as a
-// multi-line JSON blob - so the headline is what shows and the raw text
-// hides behind "Show details".
-const _ERROR_HEADLINES = {
-	unreachable: "I couldn't reach the assistant",
-	timeout: "That took too long",
-	provider: "The model is busy right now",
-	"recovery-expired": "This took too long, so I stopped waiting",
-	gateway: "A temporary problem interrupted this",
-	internal: "Something went wrong",
-	cancelled: "This message was cancelled",
-};
-const _ERROR_HINTS = {
-	unreachable: "Check your connection, then try again.",
-	timeout: "This can happen on a large request. Try again, or ask for less at once.",
-	provider:
-		"This looks like a provider limit or billing issue. Check your plan, then try again.",
-	"recovery-expired": "Send your message again to start a fresh run.",
-	gateway: "This is usually a brief hiccup on our side. Try sending your message again.",
-	internal: "Try again. If it keeps happening, contact support.",
-};
-function classifyErrorCode(raw) {
-	const low = String(raw ?? "").toLowerCase();
-	if (
-		low.startsWith("you cancelled this message") ||
-		low.startsWith("waited too long in the queue")
-	)
-		return "cancelled";
-	if (low.startsWith("unexpected worker error")) return "internal";
-	if (
-		low.includes("ws open failed") ||
-		low.includes("unreachable") ||
-		low.includes("connection timed out")
-	)
-		return "unreachable";
-	if (low.includes("recovery window")) return "recovery-expired";
-	if (low.includes("timed out") || low.includes("timeout") || low.includes("deadline"))
-		return "timeout";
-	if (
-		[
-			"quota",
-			"rate limit",
-			"rate-limit",
-			"cooldown",
-			"overloaded",
-			"insufficient",
-			"credit",
-			"billing",
-		].some((k) => low.includes(k))
-	)
-		return "provider";
-	// #702: a run that reached here already started - a mid-run gateway/relay
-	// hiccup, not "internal". See errors.js's classifyTurnErrorCode for the
-	// full reasoning (this is the fallback that regressed once already).
-	return "gateway";
-}
-const turnErrorCode = computed(() => classifyErrorCode(turnError.value));
-const turnErrorHeadline = computed(
-	() => _ERROR_HEADLINES[turnErrorCode.value] || "Something went wrong"
-);
-const turnErrorHint = computed(() => _ERROR_HINTS[turnErrorCode.value] || "");
+const turnErrorDetails = computed(() => turnErrorInfo(turnError.value, turnErrorCode.value));
+const turnErrorHeadline = computed(() => turnErrorDetails.value.headline);
+const turnErrorHint = computed(() => turnErrorDetails.value.hint);
 // Only offer the raw text when it says more than the headline already does.
 const turnErrorHasDetail = computed(() => {
 	const t = (turnError.value || "").trim();
@@ -868,6 +820,7 @@ const turnErrorHasDetail = computed(() => {
 });
 function clearTurnError() {
 	turnError.value = "";
+	turnErrorCode.value = "";
 	turnErrorOpen.value = false;
 }
 const draft = ref("");
@@ -1623,7 +1576,10 @@ function onRealtime(payload) {
 		// A failed turn has to outlive the reload it just triggered, so it goes to
 		// turnError, which load() leaves alone. Sending it to loadError meant
 		// load()'s own reset erased it before it ever rendered.
-		if (next.error) turnError.value = next.error;
+		if (next.error) {
+			turnError.value = next.error;
+			turnErrorCode.value = payload?.code || "";
+		}
 		load();
 		return;
 	}
@@ -1633,7 +1589,10 @@ function onRealtime(payload) {
 		sending.value = false;
 		stickToBottom();
 	}
-	if (next.error) turnError.value = next.error;
+	if (next.error) {
+		turnError.value = next.error;
+		turnErrorCode.value = payload?.code || "";
+	}
 }
 
 // Load lazily on first open, not at mount: the FAB is on every Desk page and

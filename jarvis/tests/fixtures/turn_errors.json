@@ -1,0 +1,210 @@
+[
+  {
+    "error": "Error: EPERM: operation not permitted, chmod /home/node/.openclaw/agents/main/agent/openclaw-agent.sqlite",
+    "code": "runtime-permission"
+  },
+  {
+    "error": "EACCES: permission denied, open agent.db",
+    "code": "runtime-permission"
+  },
+  {
+    "error": "EROFS: read-only file system",
+    "code": "runtime-permission"
+  },
+  {
+    "error": "ENOSPC: no space left on device",
+    "code": "storage"
+  },
+  {
+    "error": "disk quota exceeded",
+    "code": "storage"
+  },
+  {
+    "error": "database is locked",
+    "code": "storage"
+  },
+  {
+    "error": "ENOENT: no such file or directory",
+    "code": "runtime-setup"
+  },
+  {
+    "error": "pairing required",
+    "code": "runtime-setup"
+  },
+  {
+    "error": "No API key found for provider anthropic",
+    "code": "runtime-setup"
+  },
+  {
+    "error": "ws open failed ECONNREFUSED",
+    "code": "unreachable"
+  },
+  {
+    "error": "connection timed out",
+    "code": "unreachable"
+  },
+  {
+    "error": "Run exceeded recovery window",
+    "code": "recovery-expired"
+  },
+  {
+    "error": "400 context_length_exceeded",
+    "code": "context-limit"
+  },
+  {
+    "error": "prompt is too long",
+    "code": "context-limit"
+  },
+  {
+    "error": "413 request too large",
+    "code": "request-size"
+  },
+  {
+    "error": "429 insufficient_quota",
+    "code": "billing"
+  },
+  {
+    "error": "insufficient credit",
+    "code": "billing"
+  },
+  {
+    "error": "402 Payment Required",
+    "code": "billing"
+  },
+  {
+    "error": "429 rate_limit_error",
+    "code": "rate-limit"
+  },
+  {
+    "error": "resource_exhausted",
+    "code": "rate-limit"
+  },
+  {
+    "error": "provider quota exceeded",
+    "code": "quota"
+  },
+  {
+    "error": "401 Unauthorized",
+    "code": "authentication"
+  },
+  {
+    "error": "OAuth token has expired",
+    "code": "authentication"
+  },
+  {
+    "error": "invalid_grant",
+    "code": "authentication"
+  },
+  {
+    "error": "403 content_policy_violation",
+    "code": "safety"
+  },
+  {
+    "error": "blocked for safety reasons",
+    "code": "safety"
+  },
+  {
+    "error": "404 model_not_found",
+    "code": "model-unavailable"
+  },
+  {
+    "error": "model is not available",
+    "code": "model-unavailable"
+  },
+  {
+    "error": "403 permission_denied",
+    "code": "permission"
+  },
+  {
+    "error": "400 invalid_request_error",
+    "code": "invalid-request"
+  },
+  {
+    "error": "unsupported image format",
+    "code": "invalid-request"
+  },
+  {
+    "error": "404 Not Found",
+    "code": "not-found"
+  },
+  {
+    "error": "Anthropic 529 overloaded_error",
+    "code": "service-unavailable"
+  },
+  {
+    "error": "OpenAI 503 Service Unavailable",
+    "code": "service-unavailable"
+  },
+  {
+    "error": "502 Bad Gateway",
+    "code": "service-unavailable"
+  },
+  {
+    "error": "Gemini deadline exceeded",
+    "code": "timeout"
+  },
+  {
+    "error": "504 Gateway Timeout",
+    "code": "timeout"
+  },
+  {
+    "error": "ECONNRESET socket hang up",
+    "code": "connection"
+  },
+  {
+    "error": "TLS handshake failed",
+    "code": "connection"
+  },
+  {
+    "error": "unexpected worker error: TypeError",
+    "code": "internal"
+  },
+  {
+    "error": "You cancelled this message.",
+    "code": "cancelled"
+  },
+  {
+    "error": "LLM request failed: network connection error.",
+    "code": "gateway"
+  },
+  {
+    "error": "Something new failed",
+    "code": "gateway"
+  },
+  {
+    "error": "",
+    "code": "gateway"
+  },
+  {
+    "error": "auth_permanent",
+    "code": "authentication"
+  },
+  {
+    "error": "oauth_expired",
+    "code": "authentication"
+  },
+  {
+    "error": "agent_url not set on Jarvis Settings",
+    "code": "runtime-setup"
+  },
+  {
+    "error": "Invoice 503 could not be processed",
+    "code": "gateway"
+  },
+  {
+    "error": "Cannot process 401 records",
+    "code": "gateway"
+  },
+  {
+    "error": "HTTPError: 503",
+    "code": "service-unavailable"
+  },
+  {
+    "error": "{\"error\":{\"status_code\":503}}",
+    "code": "service-unavailable"
+  },
+  {
+    "error": "All models failed: Anthropic 401 Unauthorized; OpenAI 503 Service Unavailable",
+    "code": "models-exhausted"
+  }
+]

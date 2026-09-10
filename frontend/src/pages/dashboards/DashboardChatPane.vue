@@ -71,7 +71,20 @@
 					     is what the user needs to read here. -->
 					<div v-else-if="m.error" class="flex">
 						<div class="max-w-[95%] text-sm text-ink-red-4">
-							{{ errorNote(m) }}
+							<strong>{{ errorNote(m).headline }}</strong>
+							<p>{{ errorNote(m).hint }}</p>
+							<a
+								class="underline"
+								v-if="errorNote(m).statusUrl"
+								:href="errorNote(m).statusUrl"
+								target="_blank"
+								rel="noopener noreferrer"
+								>{{ errorNote(m).statusLabel }}</a
+							>
+							<details>
+								<summary>Show details</summary>
+								{{ m.error }}
+							</details>
 						</div>
 					</div>
 					<!-- assistant: markdown, same renderer + prose classes as the
@@ -359,7 +372,7 @@ import {
 	compactConversation,
 } from "@/api";
 import { agentName } from "@/branding";
-import { errHtml } from "@/lib/errors";
+import { errHtml, turnErrorInfo } from "@/lib/errors";
 import { compactFailureCopy } from "@/lib/compact";
 import { sendRejectionCopy } from "@/lib/sendRejectionCopy";
 
@@ -613,8 +626,7 @@ const bubbles = computed(() =>
 	)
 );
 function errorNote(m) {
-	const reason = typeof m.error === "string" ? m.error.trim() : "";
-	return reason || String(m.content || "").trim() || "That didn't go through. Try again.";
+	return turnErrorInfo(m.error, "", { provider: m.provider });
 }
 
 // ChatView's stripBlocks, minimal subset: internal fenced blocks (actions,
