@@ -843,13 +843,13 @@ onUnmounted(() => {
 						<strong>{{ it.err.headline }}</strong>
 						<p>{{ it.err.hint }}</p>
 						<a
-							style="text-decoration: underline"
+							style="display: inline-block; margin-top: 2px; color: inherit; text-decoration: underline"
 							v-if="it.err.statusUrl"
 							:href="it.err.statusUrl"
 							target="_blank"
 							rel="noopener noreferrer"
 						>
-							{{ it.err.statusLabel }}
+							{{ it.err.statusLabel }} &#8599;
 						</a>
 						<details>
 							<summary>Show details</summary>

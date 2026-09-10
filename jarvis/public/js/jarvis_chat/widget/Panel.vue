@@ -439,12 +439,13 @@
 								{{ turnErrorHint }}
 							</div>
 							<a
-								style="text-decoration: underline"
+								class="jvp-turn-err-hint"
+								style="display: inline-block; margin-top: 2px; text-decoration: underline"
 								v-if="turnErrorDetails.statusUrl"
 								:href="turnErrorDetails.statusUrl"
 								target="_blank"
 								rel="noopener noreferrer"
-								>{{ turnErrorDetails.statusLabel }}</a
+								>{{ turnErrorDetails.statusLabel }} &#8599;</a
 							>
 							<pre v-if="turnErrorOpen" class="jvp-turn-err-raw">{{
 								turnError
