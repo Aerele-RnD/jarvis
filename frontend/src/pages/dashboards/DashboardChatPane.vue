@@ -69,8 +69,12 @@
 					     A run that failed before any reply leaves an EMPTY content and
 					     the reason in `error` (a rate limit, a provider outage), which
 					     is what the user needs to read here. -->
+					<!-- a cancelled / aged-out queued turn: muted note, not a failure -->
+					<div v-else-if="m.error && m.err.code === 'cancelled'" class="flex">
+						<div class="text-xs text-ink-gray-5" role="status">{{ m.err.headline }}</div>
+					</div>
 					<div v-else-if="m.error" class="flex">
-						<div class="max-w-[95%] text-sm text-ink-red-4">
+						<div class="max-w-[95%] text-sm text-ink-red-4" role="status">
 							<strong>{{ m.err.headline }}</strong>
 							<p>
 								{{ m.err.hint }}
@@ -80,13 +84,14 @@
 									:href="m.err.statusUrl"
 									target="_blank"
 									rel="noopener noreferrer"
-									>{{ m.err.statusLabel }} &#8599;</a
+									>{{ m.err.statusLabel }} <span aria-hidden="true">&#8599;</span></a
 								>
-								<span aria-hidden="true"> &middot; </span>
+								<span v-if="m.err.hint" aria-hidden="true"> &middot; </span>
 								<button
 									type="button"
 									class="underline underline-offset-2"
 									:aria-expanded="rawOpen.has(m.name) ? 'true' : 'false'"
+									:aria-controls="`dash-err-raw-${m.name}`"
 									@click="toggleRaw(m.name)"
 								>
 									{{ rawOpen.has(m.name) ? "Hide details" : "Details" }}
@@ -94,6 +99,7 @@
 							</p>
 							<pre
 								v-if="rawOpen.has(m.name)"
+								:id="`dash-err-raw-${m.name}`"
 								class="mt-1 whitespace-pre-wrap break-words font-sans text-xs"
 								>{{ m.error }}</pre
 							>

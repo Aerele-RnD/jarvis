@@ -206,5 +206,33 @@
   {
     "error": "All models failed: Anthropic 401 Unauthorized; OpenAI 503 Service Unavailable",
     "code": "models-exhausted"
+  },
+  {
+    "error": "429 model_not_found",
+    "code": "model-unavailable"
+  },
+  {
+    "error": "503 Service Unavailable: upstream not found",
+    "code": "service-unavailable"
+  },
+  {
+    "error": "No endpoints found for this model",
+    "code": "service-unavailable"
+  },
+  {
+    "error": "insufficient funds",
+    "code": "billing"
+  },
+  {
+    "error": "your credit expired",
+    "code": "billing"
+  },
+  {
+    "error": "Waited too long in the queue and was cancelled. Please try again.",
+    "code": "cancelled"
+  },
+  {
+    "error": "İnvalid api key",
+    "code": "gateway"
   }
 ]

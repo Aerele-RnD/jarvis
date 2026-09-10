@@ -34,6 +34,12 @@ Desk chat, dashboard chat, and mobile chat use the shared formatter.
 | Cancelled | Muted cancellation, without retry advice |
 | Unknown | Explain that the error did not establish a clear cause |
 
+Classification reads at most the first 8 KB of the error text and matches
+ASCII-only on both engines (Python uses `re.ASCII`), so a reload agrees with
+the live event even for non-ASCII text. `message.provider` is stamped only on
+replies that finished; on failed rows the provider is usually inferred from the
+text, and a text that names two routing hosts links to neither.
+
 More specific rules precede broad HTTP codes: disk quota is storage, not model
 quota; `429 insufficient_quota` is billing, not a transient rate limit; a 404
 with `model_not_found` is a model configuration failure. A bare 429 cannot
