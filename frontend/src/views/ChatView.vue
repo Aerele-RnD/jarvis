@@ -1069,7 +1069,11 @@
 										     raw-detail toggle inline at its end, the way production chat
 										     UIs keep a failed turn to a title + one action line. -->
 										<div
-											v-if="errorInfo(m).hint || errorInfo(m).statusUrl || m.error"
+											v-if="
+												errorInfo(m).hint ||
+												errorInfo(m).statusUrl ||
+												m.error
+											"
 											style="
 												font-size: 12.5px;
 												color: var(--text-2);
@@ -1091,10 +1095,16 @@
 												<button
 													type="button"
 													class="jv-err-link"
-													:aria-expanded="rawOpen[m.name] ? 'true' : 'false'"
+													:aria-expanded="
+														rawOpen[m.name] ? 'true' : 'false'
+													"
 													@click="toggleRaw(m.name)"
 												>
-													{{ rawOpen[m.name] ? "Hide details" : "Details" }}
+													{{
+														rawOpen[m.name]
+															? "Hide details"
+															: "Details"
+													}}
 												</button>
 											</template>
 										</div>
