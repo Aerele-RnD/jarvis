@@ -1076,6 +1076,19 @@
 										>
 											{{ errorInfo(m).hint }}
 										</div>
+										<a
+											v-if="errorInfo(m).statusUrl"
+											:href="errorInfo(m).statusUrl"
+											target="_blank"
+											rel="noopener noreferrer"
+											style="
+												display: inline-block;
+												margin-top: 6px;
+												text-decoration: underline;
+											"
+										>
+											{{ errorInfo(m).statusLabel }}
+										</a>
 										<details style="margin-top: 4px">
 											<summary
 												style="
@@ -1100,6 +1113,7 @@
 											</div>
 										</details>
 										<button
+											v-if="errorInfo(m).retryable"
 											class="jv-retry"
 											@click="retry(m.name)"
 											:disabled="retrying"
@@ -5708,7 +5722,10 @@ function queuedChipLabel(pos, state) {
 // `noChange` flag, which is per-event metadata, not part of the taxonomy.
 function errorInfo(m) {
 	const meta = errorMeta.value[m.name] || {};
-	return { ...turnErrorInfo(m.error, meta.code), noChange: meta.changed_data === false };
+	return {
+		...turnErrorInfo(m.error, meta.code, { provider: m.provider }),
+		noChange: meta.changed_data === false,
+	};
 }
 // Live elapsed timer shown next to the status line so a long turn reads as
 // "still working" (time ticking) rather than a frozen spinner. Hidden for the

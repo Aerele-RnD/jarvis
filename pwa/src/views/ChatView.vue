@@ -42,6 +42,7 @@ import Composer from "../components/Composer.vue";
 import DecisionCard from "../components/DecisionCard.vue";
 import DecisionSheet from "../components/DecisionSheet.vue";
 import FilePreviewSheet from "../components/FilePreviewSheet.vue";
+import { turnErrorInfo } from "../../../jarvis/public/js/turn_errors.mjs";
 import MessageMedia from "../components/MessageMedia.vue";
 import RecordCards from "../components/RecordCards.vue";
 import Sheet from "../components/Sheet.vue";
@@ -71,6 +72,13 @@ const input = ref("");
 const loading = ref(false);
 const sendBusy = ref(false);
 const errorBanner = ref("");
+// { [message_id]: code } from a live run:error event; not persisted, so a
+// reload (messages re-fetched via load()) falls back to classifying the
+// persisted error string alone. Without this, the banner above (which does
+// get the live code) and this same message's inline error card would name
+// the failure differently for the SAME event - the exact #702 defect this
+// feature exists to fix, reproduced across two elements on one screen.
+const errorMeta = ref({});
 const attachments = ref([]);
 const pending = ref([]); // parked writes awaiting approval
 // Ordered the SAME way the server orders the parked list, because a typed
@@ -167,6 +175,14 @@ const view = (m) => {
 			!m.stopped,
 	};
 };
+
+// Mirrors ChatView.vue's (desktop) errorInfo(): a live run:error's code, when
+// this session saw it, always wins over reclassifying the persisted string
+// (errorMeta above). Computed once per render rather than inline in the
+// template several times over - the same reason view() above is precomputed.
+function errorNote(m) {
+	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", m);
+}
 
 // ── thread assembly ─────────────────────────────────────────────────────────
 // Tool rows BELONG to the assistant turn that ran them. The worker creates the
@@ -583,7 +599,11 @@ function onEvent(p) {
 		case "run:error":
 			sendBusy.value = false;
 			live.value = null;
-			if (!ignored) errorBanner.value = p.error || "That turn failed.";
+			if (!ignored) {
+				const info = turnErrorInfo(p.error, p.code);
+				errorBanner.value = `${info.headline}. ${info.hint}`;
+			}
+			if (p.message_id) errorMeta.value = { ...errorMeta.value, [p.message_id]: p.code || "" };
 			// C2 self-heal (mirror run:end): a card parked in a turn that then errors
 			// must still auto-recover — drain p.pending here too, not only on run:end.
 			// Deduped by token; a conv-less token ("") binds to this conversation; a
@@ -811,7 +831,23 @@ onUnmounted(() => {
 						</svg>
 					</a>
 					<SkillChips :names="it.view.skills" />
-					<div v-if="it.msg.error" class="jv-msg-error">{{ it.msg.error }}</div>
+					<div v-if="it.msg.error" class="jv-msg-error" role="alert">
+						<strong>{{ errorNote(it.msg).headline }}</strong>
+						<p>{{ errorNote(it.msg).hint }}</p>
+						<a
+							style="text-decoration: underline"
+							v-if="errorNote(it.msg).statusUrl"
+							:href="errorNote(it.msg).statusUrl"
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							{{ errorNote(it.msg).statusLabel }}
+						</a>
+						<details>
+							<summary>Show details</summary>
+							{{ it.msg.error }}
+						</details>
+					</div>
 					<MessageMedia
 						:items="it.msg.canvas"
 						:message-name="it.msg.name"
