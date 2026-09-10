@@ -603,7 +603,8 @@ function onEvent(p) {
 				const info = turnErrorInfo(p.error, p.code);
 				errorBanner.value = `${info.headline}. ${info.hint}`;
 			}
-			if (p.message_id) errorMeta.value = { ...errorMeta.value, [p.message_id]: p.code || "" };
+			if (p.message_id)
+				errorMeta.value = { ...errorMeta.value, [p.message_id]: p.code || "" };
 			// C2 self-heal (mirror run:end): a card parked in a turn that then errors
 			// must still auto-recover — drain p.pending here too, not only on run:end.
 			// Deduped by token; a conv-less token ("") binds to this conversation; a
