@@ -2454,6 +2454,9 @@ def take_finding_to_chat(finding: str) -> dict:
 			"doctype": CONV,
 			"title": f"Finding: {title}"[:140],
 			"status": "Active",
+			# Opened by the act-on-a-finding button with a pre-filled prompt, not
+			# by the user starting a chat - excluded from the session popup.
+			"agent_initiated": 1,
 		}
 	)
 	conv.insert()  # owned by the current user; respects perms

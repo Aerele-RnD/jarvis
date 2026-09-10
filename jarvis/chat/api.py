@@ -1258,6 +1258,7 @@ def send_message(
 	thinking_override: str | None = None,
 	background: int = 0,
 	approval_tokens: str | list | None = None,
+	voice: bool = False,
 ) -> dict:
 	"""Validate, persist the user message, enqueue the worker.
 
@@ -1299,6 +1300,10 @@ def send_message(
 	resets to the model default. None leaves the existing value unchanged.
 	Note: this differs from `model_override`, which treats both None and empty
 	string as "leave the existing value alone".
+
+	`voice` (optional): True when this message's text came from mic dictation
+	rather than typing. Stamped verbatim onto the created user message's
+	`via_voice` column; no other behaviour changes.
 
 	Returns {ok: True, run_id, message_id, conversation_id} on success or
 	{ok: False, reason: str} on validation failure. A human (non-delegated) send
@@ -1505,6 +1510,7 @@ def send_message(
 			"content": display_content,
 			"streaming": 0,
 			"canvas": canvas_json,
+			"via_voice": 1 if voice else 0,
 		}
 	)
 	# Delegated re-entry (scheduler/approval-resume/agent-run/File-Box): the

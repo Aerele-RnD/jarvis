@@ -692,7 +692,19 @@ class TestReceiptRefStamping(SkillToolsTestCase):
 			filters={"title": self.CONV_TITLE},
 			pluck="name",
 		):
+			# The receipts themselves, not just their conversation: a role=tool
+			# message left behind here is counted by usage_push's tenant-wide
+			# top_tools scan for the month and broke
+			# test_turn_usage.test_top_tools_tenant_wide_cap whenever CI sharded
+			# this module ahead of it.
+			for msg in frappe.get_all("Jarvis Chat Message", filters={"conversation": name}, pluck="name"):
+				frappe.delete_doc("Jarvis Chat Message", msg, force=True, ignore_permissions=True)
 			frappe.delete_doc("Jarvis Conversation", name, force=True, ignore_permissions=True)
+		# Make the cleanup durable: persist_tool_receipt COMMITS (durability
+		# before its realtime publish), so the rows above outlive the class
+		# rollback while an uncommitted delete here does not, and the next
+		# module in the shard inherits them.
+		frappe.db.commit()
 		super().tearDown()
 
 	def _conv(self) -> str:

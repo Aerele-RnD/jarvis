@@ -203,8 +203,12 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 		frappe.throw(_(_BLOCK_MESSAGE.get(blocked, "This macro cannot run right now.")))
 
 	# Fresh conversation titled after the macro, seeded with an intro so the
-	# transcript reads as a self-contained run.
-	conv = frappe.get_doc({"doctype": CONV, "title": doc.macro_name[:140], "status": "Active"})
+	# transcript reads as a self-contained run. agent_initiated: that run log is
+	# not a chat session the user chose to start (and unlike skip_confirmation,
+	# this marker is NOT cleared when the run ends).
+	conv = frappe.get_doc(
+		{"doctype": CONV, "title": doc.macro_name[:140], "status": "Active", "agent_initiated": 1}
+	)
 	conv.flags.ignore_permissions = True
 	conv.insert()
 	intro = frappe.get_doc(

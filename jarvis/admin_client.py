@@ -1827,6 +1827,40 @@ def push_chat_feedback(item: dict) -> dict:
 	return _post(path=_m("api.tenant.ingest_chat_feedback"), body={"item": item})
 
 
+# Short timeout for the two feedback pushes below, for the same reason as
+# _MODEL_CATALOG_TIMEOUT_S: they run SYNCHRONOUSLY inside a customer web request
+# (submit_session_feedback / submit_pulse_feedback, neither is enqueued), so at
+# the DEFAULT_TIMEOUT_S = 150 an admin that hangs rather than refuses would pin
+# a web worker for 2.5 minutes per submit. Both callers already treat any
+# failure as "lost response, acceptable", so a timeout is just the same loss
+# reached sooner. Admin's ingest is a single upsert; 10s is generous for it.
+# push_chat_feedback above predates this and keeps the default on purpose: it
+# is out of this change's scope, not a considered exception.
+_FEEDBACK_TIMEOUT_S = 10
+
+
+def push_session_feedback(item: dict) -> dict:
+	"""Push one once-per-session popup response to admin. Called best-effort
+	from jarvis.chat.feedback._forward_session, which swallows failures -- a
+	lost response is acceptable, a blocked popup is not.
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
+	return _post(
+		path=_m("api.tenant.ingest_session_feedback"),
+		body={"item": item},
+		timeout_s=_FEEDBACK_TIMEOUT_S,
+	)
+
+
+def push_pulse_feedback(item: dict) -> dict:
+	"""Push one periodic business-pulse response to admin. Same best-effort
+	contract as push_session_feedback."""
+	return _post(
+		path=_m("api.tenant.ingest_pulse_feedback"),
+		body={"item": item},
+		timeout_s=_FEEDBACK_TIMEOUT_S,
+	)
+
+
 def pair_chat_device(public_key: str, device_id: str, *, request_timeout_s: int = 30) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
 	to write a PairedDevice record into the customer's agent container and

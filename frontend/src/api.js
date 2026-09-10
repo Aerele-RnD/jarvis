@@ -26,6 +26,35 @@ export const submitFeedback = (message, rating, note) =>
 		rating,
 		note: note || "",
 	});
+// Once-per-session popup ("How did this session go?"): status poll (is it due
+// for this conversation right now?) and the answer/Skip submission. Mirrors
+// submitFeedback's best-effort contract - see SessionFeedbackDialog.vue.
+export const sessionFeedbackStatus = (conversation) =>
+	call("jarvis.chat.feedback.session_feedback_status", { conversation });
+export const submitSessionFeedback = (conversation, chip_value, note) =>
+	call("jarvis.chat.feedback.submit_session_feedback", {
+		conversation,
+		chip_value: chip_value || undefined,
+		note: note || "",
+	});
+// Periodic "business pulse" survey: a due-check run on chat open (also CLAIMS
+// the offer server-side, see feedback.pulse_context) and the answer submission.
+// Mirrors submitFeedback's best-effort contract - see PulseFeedbackDialog.vue.
+export const pulseContext = () => call("jarvis.chat.feedback.pulse_context", {});
+export const submitPulseFeedback = (
+	stars,
+	features_offered,
+	features_selected,
+	use_case_text,
+	note
+) =>
+	call("jarvis.chat.feedback.submit_pulse_feedback", {
+		stars,
+		features_offered: JSON.stringify(features_offered || []),
+		features_selected: JSON.stringify(features_selected || []),
+		use_case_text: use_case_text || "",
+		note: note || "",
+	});
 export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation });
 // Danger zone: permanently delete ALL of the user's conversations + messages.
@@ -245,12 +274,18 @@ export async function sendMessage(
 	modelOverride,
 	attachments,
 	context,
-	approvalTokens
+	approvalTokens,
+	voice
 ) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty
 	// conversation itself and returns its id as `conversation_id` - saves the
 	// SPA a createOrFocusEmpty round-trip before the first send (latency plan).
 	const args = { conversation: conversation || "", message };
+	// Dictated-and-sent flag (via_voice on the persisted Jarvis Chat Message):
+	// true only when ChatView's send() found a non-empty voice-ack token for
+	// this payload. Omitted (not even `voice: 0`) for every ordinary typed
+	// send, matching every existing caller that doesn't pass this arg.
+	if (voice) args.voice = 1;
 	if (modelOverride) args.model_override = modelOverride;
 	if (attachments && attachments.length) args.attachments = JSON.stringify(attachments);
 	// The ordered tokens of the confirmation cards on screen. A typed "confirm 2"
