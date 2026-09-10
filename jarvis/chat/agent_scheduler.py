@@ -743,8 +743,16 @@ def _launch_audit(
 	try:
 		# Fresh conversation. ROW ownership is the human owner (reassigned below) so
 		# if_owner visibility works; the ERP-read identity is the run-as user.
-		# ignore_permissions matches the macro engine.
-		conv = frappe.get_doc({"doctype": CONV, "title": f"{listing.title} audit"[:140], "status": "Active"})
+		# ignore_permissions matches the macro engine. agent_initiated: a scheduled
+		# audit run log, not a chat session the user chose to start.
+		conv = frappe.get_doc(
+			{
+				"doctype": CONV,
+				"title": f"{listing.title} audit"[:140],
+				"status": "Active",
+				"agent_initiated": 1,
+			}
+		)
 		conv.flags.ignore_permissions = True
 		conv.insert()
 

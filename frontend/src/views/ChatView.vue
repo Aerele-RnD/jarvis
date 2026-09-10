@@ -1958,6 +1958,11 @@
 										</button>
 									</div>
 								</div>
+								<FeedbackBar
+									v-if="feedbackFor === m.name"
+									@rate="onFeedbackRate"
+									@close="onFeedbackClose"
+								/>
 							</template>
 						</Message>
 					</template>
@@ -4344,6 +4349,14 @@
 		     banner via the shared whatsNewOpen ref in noticeGate. -->
 		<WhatsNewDialog />
 
+		<!-- Once-per-session "how did this session go?" popup: opened by
+		     maybeCheckSessionFeedback below, following the same shared-ref
+		     pattern as WhatsNewDialog/noticeGate. -->
+		<SessionFeedbackDialog />
+		<!-- Periodic business-pulse survey: opened by maybeOpenPulseFeedback,
+		     checked once per genuine chat-open event. -->
+		<PulseFeedbackDialog />
+
 		<!-- Preview a file the user attached in the composer (before send). Images
 		     enlarge, PDFs/others render in-app; loads over the session cookie so a
 		     private File just works. Sent-message attachments use the artifact
@@ -4383,6 +4396,8 @@ import { myUsage, loadMyUsage, takeUsage } from "@/stores/usage";
 import CompactDialog from "@/components/chat/CompactDialog.vue";
 import { parseCompactCommand, compactFailureCopy } from "@/lib/compact";
 import * as api from "@/api";
+import FeedbackBar from "@/components/chat/FeedbackBar.vue";
+import { shouldOfferFeedback, markRated, markIgnored } from "@/lib/feedbackGate";
 import * as voice from "@/api/voice";
 import { agentName, isWhitelabeled } from "@/branding";
 import { useAudioRecorder } from "@/composables/useAudioRecorder";
@@ -4436,6 +4451,10 @@ import VersionPill from "@/components/chat/VersionPill.vue";
 import UpdateBanner from "@/components/chat/UpdateBanner.vue";
 import AnnouncementBanner from "@/components/chat/AnnouncementBanner.vue";
 import WhatsNewDialog from "@/components/chat/WhatsNewDialog.vue";
+import SessionFeedbackDialog from "@/components/chat/SessionFeedbackDialog.vue";
+import PulseFeedbackDialog from "@/components/chat/PulseFeedbackDialog.vue";
+import { openSessionFeedback } from "@/lib/sessionFeedbackGate";
+import { maybeOpenPulseFeedback } from "@/lib/pulseFeedbackGate";
 import { showBanner } from "@/noticeGate";
 import { showAnnouncement } from "@/announcementGate";
 
@@ -4559,6 +4578,73 @@ const promptHistory = ref([]);
 const histIdx = ref(null);
 const histDraft = ref("");
 const sending = ref(false);
+
+// ---- post-reply feedback line (lib/feedbackGate decides IF/when it appears) ----
+const feedbackFor = ref(null); // message name currently showing the feedback bar
+const feedbackRated = ref(false); // did the user rate the current bar?
+const feedbackEvaluated = new Set(); // message names already run through the gate
+function maybeOfferFeedback(m) {
+	if (!m || m.role !== "assistant" || m.error || m.stopped) return;
+	if (feedbackEvaluated.has(m.name)) return;
+	feedbackEvaluated.add(m.name); // gate each reply exactly once
+	const secs = parseFloat(elapsedOf(m)) || 0;
+	if (shouldOfferFeedback(secs * 1000)) {
+		feedbackFor.value = m.name;
+		feedbackRated.value = false;
+	}
+}
+// Session popup takes priority over the per-message thumbs bar on the SAME
+// reply: if it fires, FeedbackBar is suppressed for this reply (maybeOfferFeedback,
+// the only writer of feedbackFor, is simply never called for this m) and the
+// popup counts against feedbackGate's own per-day cap (markIgnored keeps the
+// bar's cooldown/cap bookkeeping consistent either way).
+async function maybeCheckSessionFeedback(m) {
+	if (!m || m.role !== "assistant" || m.error || m.stopped) return;
+	// Same one-shot guard maybeOfferFeedback uses, checked up front so a reply
+	// already evaluated (belt-and-braces alongside the CDX-3 run:end fence
+	// upstream, which already blocks a repeat equal-epoch terminal) never
+	// re-polls the server or double-counts.
+	if (feedbackEvaluated.has(m.name)) return;
+	const conv = currentId.value;
+	if (!conv) {
+		maybeOfferFeedback(m);
+		return;
+	}
+	let due = false;
+	try {
+		const status = await api.sessionFeedbackStatus(conv);
+		due = !!(status && status.due);
+	} catch (e) {
+		due = false; // offline / error: fall back to the thumbs bar behavior
+	}
+	// The user may have switched conversations while this read was in flight.
+	// Never surface a popup for a chat no longer on screen (matches "never on
+	// history load" — the reply just gets no prompt), and re-check the guard
+	// in case a second run:end for this same reply raced in during the await.
+	if (currentId.value !== conv || feedbackEvaluated.has(m.name)) return;
+	if (due) {
+		feedbackEvaluated.add(m.name); // gate this reply exactly once, like maybeOfferFeedback
+		markIgnored();
+		openSessionFeedback(conv);
+	} else {
+		maybeOfferFeedback(m);
+	}
+}
+function onFeedbackRate({ rating, note }) {
+	feedbackRated.value = true;
+	markRated(); // any rating stops further asks this session
+	const target = feedbackFor.value;
+	if (target) api.submitFeedback(target, rating, note || "").catch(() => {}); // best-effort
+}
+function onFeedbackClose() {
+	feedbackFor.value = null;
+}
+function dismissFeedback() {
+	// Starting the next query clears a still-unanswered bar (counts as an ignore).
+	if (!feedbackFor.value) return;
+	if (!feedbackRated.value) markIgnored();
+	feedbackFor.value = null;
+}
 const waiting = ref(false);
 // Phase-0 admission (chat concurrency): when a send is accepted but QUEUED
 // (all in-flight slots taken), the reply hasn't started - we show a "~N ahead"
@@ -8457,6 +8543,20 @@ let _shownConvId = null;
 // ResizeObserver, cancelled by any deliberate scroll.
 let _restoreTop = null;
 let _restoreUntil = 0;
+// One-shot guard for the business-pulse check, separate from _shownConvId
+// (which loadConversation alone owns, for scroll-restore). THREE places can
+// make a conversation id newly "current": loadConversation's genuine-switch
+// branch, newChat(), and the send-from-home id-adoption in send() — a fresh
+// chat's first reply reloads via loadConversation on the SAME id newChat()
+// already checked, which _sameConv alone doesn't catch (loadConversation
+// never ran for that id before, so _sameConv reads false again). Keying on
+// the id itself instead makes the check idempotent across all three sites.
+let _pulseCheckedConvId = null;
+function _checkPulseOnce(id) {
+	if (!id || _pulseCheckedConvId === id) return;
+	_pulseCheckedConvId = id;
+	maybeOpenPulseFeedback();
+}
 
 async function loadConversation(id) {
 	// Preserve the reader's position across an in-place resync. Captured BEFORE
@@ -8606,6 +8706,14 @@ async function loadConversation(id) {
 	// after a turn settles (or after a card is applied/discarded) used to fling a
 	// reader who had scrolled up back to the bottom, which is exactly what makes a
 	// long reply unreadable. Restore where they were and let the arrow stand.
+	// Business-pulse survey check: fire once per GENUINE chat open, not on an
+	// in-place resync of the conversation already on screen (tab-focus onResync,
+	// a turn settling, a card apply/discard — all re-run loadConversation on the
+	// SAME id). `_sameConv` above already draws exactly this distinction for the
+	// scroll-position logic; `_checkPulseOnce` additionally guards against a
+	// fresh chat's first reload here re-firing what newChat()/send() already
+	// checked for this same id. Cheap and self-gating server-side (pulse_context).
+	if (!_sameConv) _checkPulseOnce(id);
 	_shownConvId = id;
 	await nextTick();
 	if (_keepScrollTop !== null && threadEl.value) {
@@ -8886,6 +8994,19 @@ async function newChat() {
 	swapDraft(null);
 	resetRunState();
 	currentId.value = conv?.name || conv;
+	// loadConversation does not run on this path, so the `!_sameConv` pulse
+	// check there never fires for a new chat — this is a genuine chat-open
+	// event too (pulse is gated per-user-period, not per-conversation, so an
+	// empty fresh chat is a valid open). Cheap and self-gating; no await needed.
+	// _checkPulseOnce (keyed on this id, not _shownConvId) keeps this from
+	// double-firing when the first reply's loadConversation reload runs next.
+	_checkPulseOnce(currentId.value);
+	// loadConversation does not run on this path (see below), so reload THIS
+	// conversation's own connector-focus pick here instead of leaving the ref
+	// on whatever the PREVIOUS chat had armed - createOrFocusEmpty can return
+	// an already-existing empty conversation, so this is a real reload (its
+	// own stored pick, if any), not just a reset to null.
+	connectorFocus.value = _loadConnectorFocusFor(currentId.value);
 	// This conversation IS the unsaved new-chat composer getting its id. The recovered/typed
 	// new-chat draft (already restored into `input` by swapDraft above) and its still-retained
 	// voice records lived under the _NEW_CHAT_SCOPE sentinel — migrate draft + records + mirror +
@@ -9033,6 +9154,7 @@ async function send(textArg, resendAck) {
 	// send() directly (AskCard/answer/resend/prefill), not just the disabled composer. On the FIRST
 	// mid-session send holdActive is still false, so the detection branch below is preserved.
 	if (holdActive.value) return;
+	dismissFeedback(); // sending the next turn clears any pending feedback line
 	// Don't race a dictation that hasn't landed: sending now would drop the spoken words (the
 	// transcript would arrive AFTER the message left the composer). Block on the real busy
 	// signal — recording, or a recording still being transcribed — NOT hasUnfinished(), which
@@ -9198,7 +9320,12 @@ async function send(textArg, resendAck) {
 			undefined,
 			attachments,
 			sendCtx,
-			approvalTokens
+			approvalTokens,
+			// Same voice-ack token voiceDictationStore.captureSentInPayload already
+			// computed above (for releasing local audio blobs) — non-empty iff this
+			// payload's text came from a dictation, so reuse it verbatim rather than
+			// adding new detection logic.
+			!!(_voiceAck && _voiceAck.length)
 		);
 		// A typed go-ahead was consumed as an approval, not rejected as a send, so it
 		// must not fall into the rejection branch below even when the confirmation
@@ -9369,6 +9496,12 @@ async function send(textArg, resendAck) {
 					originOf.value = "";
 					if (route.params.id !== r.conversation_id)
 						router.replace("/c/" + r.conversation_id);
+					// A brand-new/fallback conversation becoming current is a genuine
+					// chat-open too (e.g. the very first message sent from the home/
+					// welcome screen, never touching newChat() or loadConversation).
+					// _checkPulseOnce keys on the id itself, so this can't double-fire
+					// with the loadConversation/newChat sites either.
+					_checkPulseOnce(r.conversation_id);
 				}
 				// Empties are hidden from the sidebar; surface the row now it has a message.
 				if (!store.conversations.some((c) => c.name === currentId.value))
@@ -9752,6 +9885,11 @@ function onEvent(p) {
 					},
 				};
 			}
+			// Post-reply feedback line: offer it (throttled) now the reply is
+			// finalized and its duration is stamped. Only here - never on history load.
+			// The once-per-session popup takes priority on this same reply (see
+			// maybeCheckSessionFeedback) - never both prompts on one reply.
+			if (m) maybeCheckSessionFeedback(m);
 			// The compacted after-chip and the compacting lock are both scoped to a
 			// single turn: the NEXT run:end always clears them and refetches the
 			// meter, whether or not this particular turn itself compacted.
@@ -10982,6 +11120,7 @@ function openUserFile(a) {
 // ---- mentions (@ user, / doctype·tool) ----
 let _mentionSeq = 0;
 function onInput() {
+	dismissFeedback(); // starting the next query clears any pending feedback line
 	histIdx.value = null; // typing exits prompt-history navigation
 	const el = composerRef.value?.el;
 	if (!el) return;

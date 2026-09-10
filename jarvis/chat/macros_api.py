@@ -584,6 +584,7 @@ def summarize_macro(name: str) -> dict:
 			"doctype": "Jarvis Conversation",
 			"title": f"Merge: {doc.macro_name}"[:140],
 			"status": "Active",  # enqueue against Active; hidden right after
+			"agent_initiated": 1,  # a merge run log, not a chat the user started
 		}
 	)
 	conv.flags.ignore_permissions = True
