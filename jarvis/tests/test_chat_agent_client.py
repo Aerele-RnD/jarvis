@@ -24,7 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import websocket
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat.agent_client import AgentSession
@@ -1194,3 +1194,322 @@ class TestCompactSession(FrappeTestCase):
 		with self.assertRaises(AgentUnreachableError) as cm:
 			sess.compact_session(key, None, timeout_s=5)
 		self.assertEqual(cm.exception.code, "compact-timeout")
+
+
+# --- Mechanism A: connect-first device pairing ------------------------------
+
+
+def _make_bootstrap_creds(gateway_token: str = "gw-tok") -> ChatDeviceCredentials:
+	"""A Mechanism-A pairing with a stable keypair but NO device token yet."""
+	import hashlib
+
+	priv = Ed25519PrivateKey.generate()
+	pub_raw = priv.public_key().public_bytes(
+		encoding=serialization.Encoding.Raw,
+		format=serialization.PublicFormat.Raw,
+	)
+	return ChatDeviceCredentials(
+		device_id=hashlib.sha256(pub_raw).hexdigest(),
+		public_key=_b64u(pub_raw),
+		private_key=priv,
+		device_token="",
+		bootstrap_token=gateway_token,
+	)
+
+
+def _not_paired_error(ws) -> str:
+	"""the agent's connect-first PENDING wire shape (spike invariant #3)."""
+	return _frame(
+		{
+			"type": "res",
+			"id": ws.sent[-1]["id"],
+			"ok": False,
+			"error": {
+				"code": "NOT_PAIRED",
+				"message": "pairing required",
+				"details": {"code": "PAIRING_REQUIRED", "reason": "not-paired"},
+			},
+		}
+	)
+
+
+class TestIsNotPaired(FrappeTestCase):
+	"""The NOT_PAIRED classifier is strictly typed (code/details only, never
+	message text) and DISJOINT from the stale-pairing classifier - the two never
+	both fire, so a NOT_PAIRED response can never reach the keypair-wiping repair
+	path (plan-check gap #3)."""
+
+	def _err(self, *, code=None, details=None):
+		return AgentUnreachableError("x", code=code, details=details)
+
+	def test_outer_code_not_paired(self):
+		from jarvis.chat.agent_client import _is_not_paired
+
+		self.assertTrue(_is_not_paired(self._err(code="NOT_PAIRED")))
+
+	def test_details_code_pairing_required(self):
+		from jarvis.chat.agent_client import _is_not_paired
+
+		self.assertTrue(
+			_is_not_paired(self._err(code="INVALID_REQUEST", details={"code": "PAIRING_REQUIRED"}))
+		)
+
+	def test_details_auth_reason_not_paired(self):
+		from jarvis.chat.agent_client import _is_not_paired
+
+		self.assertTrue(
+			_is_not_paired(self._err(code="INVALID_REQUEST", details={"authReason": "not-paired"}))
+		)
+
+	def test_details_reason_not_paired(self):
+		from jarvis.chat.agent_client import _is_not_paired
+
+		self.assertTrue(_is_not_paired(self._err(code="INVALID_REQUEST", details={"reason": "not-paired"})))
+
+	def test_no_code_or_details_is_false(self):
+		from jarvis.chat.agent_client import _is_not_paired
+
+		self.assertFalse(_is_not_paired(self._err()))
+		self.assertFalse(_is_not_paired(self._err(code="INVALID_REQUEST", details="not-a-dict")))
+
+	def test_disjoint_from_stale_pairing(self):
+		"""A stale-token rejection classifies as stale, NOT as not-paired, and a
+		not-paired classifies as not-paired, NOT as stale - the two are mutually
+		exclusive so the bootstrap loop and the stale-repair path never overlap."""
+		from jarvis.chat.agent_client import _is_not_paired, _is_stale_pairing
+
+		stale = self._err(
+			code="INVALID_REQUEST",
+			details={"code": "AUTH_DEVICE_TOKEN_MISMATCH", "authReason": "device_token_mismatch"},
+		)
+		self.assertTrue(_is_stale_pairing(stale))
+		self.assertFalse(_is_not_paired(stale))
+
+		pending = self._err(code="NOT_PAIRED", details={"reason": "not-paired"})
+		self.assertTrue(_is_not_paired(pending))
+		self.assertFalse(_is_stale_pairing(pending))
+
+
+class TestBootstrapPairConnect(FrappeTestCase):
+	"""Connect-first pairing (Mechanism A): the bench presents the gateway token,
+	drives NOT_PAIRED -> approved on its own bounded timer, and adopts the
+	reissued device token - WITHOUT ever wiping the stable keypair."""
+
+	def _pending_then_approved(self, token: str = "tok-issued"):
+		first = _ScriptedWS([_challenge(), None])
+		second = _ScriptedWS([_challenge(), None])
+		first._frames[1] = lambda: _not_paired_error(first)
+		second._frames[1] = lambda: _frame(
+			{
+				"type": "res",
+				"id": second.sent[-1]["id"],
+				"ok": True,
+				"payload": {"auth": {"deviceToken": token}},
+			}
+		)
+		return first, second
+
+	def test_not_paired_then_approved_adopts_token(self):
+		first, second = self._pending_then_approved("tok-issued")
+		ws_iter = iter([first, second])
+		creds = _make_bootstrap_creds("gw-tok")
+		update_mock = MagicMock(return_value=True)
+		clear_mock = MagicMock()
+		with (
+			patch(
+				"jarvis.chat.agent_client.websocket.create_connection",
+				side_effect=lambda *a, **kw: next(ws_iter),
+			),
+			patch("jarvis.chat.agent_client.ensure_paired", return_value=creds),
+			patch("jarvis.chat.agent_client.update_device_token", update_mock),
+			patch("jarvis.chat.agent_client.clear_credentials", clear_mock),
+			patch("jarvis.chat.agent_client.time.sleep"),
+		):
+			sess = AgentSession.connect("ws://t")
+		# The reissued token was adopted, in-memory and persisted.
+		self.assertEqual(sess._creds.device_token, "tok-issued")
+		update_mock.assert_called_once_with("tok-issued", device_id=creds.device_id)
+		# DISJOINT from the stale-pairing self-heal: the keypair was NEVER wiped.
+		clear_mock.assert_not_called()
+		self.assertTrue(first.closed)
+		sess.close()
+
+	def test_not_paired_never_wipes_keypair_and_fails_closed_at_cap(self):
+		"""At the deadline with no approval: fail closed (D-d) with the honest
+		user message, and NEVER call clear_credentials (gap #3)."""
+		from jarvis.chat import agent_client
+
+		ws = _ScriptedWS([_challenge(), None])
+		ws._frames[1] = lambda: _not_paired_error(ws)
+		clear_mock = MagicMock()
+		with (
+			patch("jarvis.chat.agent_client.websocket.create_connection", return_value=ws),
+			patch("jarvis.chat.agent_client.ensure_paired", return_value=_make_bootstrap_creds("gw-tok")),
+			patch("jarvis.chat.agent_client.clear_credentials", clear_mock),
+			patch("jarvis.chat.agent_client.time.sleep"),
+			patch("jarvis.chat.agent_client.PAIRING_APPROVAL_DEADLINE_SECONDS", 0),
+		):
+			with self.assertRaises(AgentUnreachableError) as cm:
+				AgentSession.connect("ws://t")
+		self.assertEqual(cm.exception.code, "pairing-pending")
+		self.assertEqual(str(cm.exception), agent_client.PAIRING_PENDING_USER_MESSAGE)
+		clear_mock.assert_not_called()  # the #1 trap: NOT_PAIRED must never wipe the keypair
+		self.assertTrue(ws.closed)
+
+	def test_non_not_paired_error_does_not_loop(self):
+		"""A non-NOT_PAIRED rejection during bootstrap is a real error: raise
+		immediately, no retry loop, no keypair wipe."""
+		ws = _ScriptedWS([_challenge(), None])
+		ws._frames[1] = lambda: _frame(
+			{
+				"type": "res",
+				"id": ws.sent[-1]["id"],
+				"ok": False,
+				"error": {"code": "UNAUTHORIZED", "message": "bad signature"},
+			}
+		)
+		cc = MagicMock(return_value=ws)
+		clear_mock = MagicMock()
+		with (
+			patch("jarvis.chat.agent_client.websocket.create_connection", cc),
+			patch("jarvis.chat.agent_client.ensure_paired", return_value=_make_bootstrap_creds("gw-tok")),
+			patch("jarvis.chat.agent_client.clear_credentials", clear_mock),
+			patch("jarvis.chat.agent_client.time.sleep"),
+		):
+			with self.assertRaises(AgentUnreachableError) as cm:
+				AgentSession.connect("ws://t")
+		self.assertIn("UNAUTHORIZED", str(cm.exception))
+		self.assertEqual(cc.call_count, 1)  # no reconnect loop on a real error
+		clear_mock.assert_not_called()
+
+	def test_approved_but_no_token_fails_closed(self):
+		"""An approved connect that issues no device token fails closed rather
+		than proceeding token-less."""
+		ws = _ScriptedWS([_challenge(), None])
+		ws._frames[1] = lambda: _frame(
+			{"type": "res", "id": ws.sent[-1]["id"], "ok": True, "payload": {"auth": {}}}
+		)
+		update_mock = MagicMock(return_value=True)
+		with (
+			patch("jarvis.chat.agent_client.websocket.create_connection", return_value=ws),
+			patch("jarvis.chat.agent_client.ensure_paired", return_value=_make_bootstrap_creds("gw-tok")),
+			patch("jarvis.chat.agent_client.update_device_token", update_mock),
+			patch("jarvis.chat.agent_client.time.sleep"),
+		):
+			with self.assertRaises(AgentUnreachableError) as cm:
+				AgentSession.connect("ws://t")
+		self.assertEqual(cm.exception.code, "pairing-no-token")
+		update_mock.assert_not_called()
+
+	def test_missing_gateway_token_fails_closed_without_opening_ws(self):
+		"""The bootstrap guard: no gateway token -> fail closed before any connect
+		(can neither present nor sign an auth block)."""
+		import hashlib
+
+		priv = Ed25519PrivateKey.generate()
+		pub_raw = priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+		creds = ChatDeviceCredentials(
+			device_id=hashlib.sha256(pub_raw).hexdigest(),
+			public_key=_b64u(pub_raw),
+			private_key=priv,
+			device_token="",
+			bootstrap_token="",
+		)
+		cc = MagicMock()
+		with patch("jarvis.chat.agent_client.websocket.create_connection", cc):
+			with self.assertRaises(AgentUnreachableError) as cm:
+				AgentSession._bootstrap_pair_connect("ws://t", creds)
+		self.assertEqual(cm.exception.code, "pairing-no-bootstrap-token")
+		cc.assert_not_called()
+
+
+def _verify_connect_signature(sent_connect: dict, presented_token: str, public_key_b64u: str) -> None:
+	"""Rebuild the v3 payload the client MUST have signed (token slot ==
+	``presented_token``) and verify the sent signature against the public key.
+	Raises cryptography.InvalidSignature if the client signed with a DIFFERENT
+	token than it presented - i.e. this is the invariant #2 guard."""
+	from jarvis.chat.agent_client import (
+		_CLIENT_ID,
+		_CLIENT_MODE,
+		_PLATFORM,
+		_REQUESTED_SCOPES,
+		_ROLE,
+	)
+	from jarvis.chat.device import build_payload_v3
+
+	dev = sent_connect["device"]
+	payload = build_payload_v3(
+		device_id=dev["id"],
+		client_id=_CLIENT_ID,
+		client_mode=_CLIENT_MODE,
+		role=_ROLE,
+		scopes=_REQUESTED_SCOPES,
+		signed_at_ms=dev["signedAt"],
+		device_token=presented_token,
+		nonce=dev["nonce"],
+		platform=_PLATFORM,
+		device_family="",
+	)
+	sig = base64.urlsafe_b64decode(dev["signature"] + "=" * (-len(dev["signature"]) % 4))
+	pub_raw = base64.urlsafe_b64decode(public_key_b64u + "=" * (-len(public_key_b64u) % 4))
+	Ed25519PublicKey.from_public_bytes(pub_raw).verify(sig, payload.encode("utf-8"))
+
+
+class TestHandshakeSignsPresentedToken(FrappeTestCase):
+	"""Spike invariant #2: the agent derives the signed payload's token slot as
+	auth.token ?? auth.deviceToken ?? auth.bootstrapToken, so the bench MUST sign
+	the slot with the SAME token it presents in ``auth``. These verify the
+	signature end-to-end for both connect modes."""
+
+	def test_steady_state_presents_and_signs_device_token(self):
+		creds = _make_creds()  # device_token="tok-test"
+
+		def _ok():
+			return _frame({"type": "res", "id": ws.sent[-1]["id"], "ok": True, "payload": {}})
+
+		ws = _ScriptedWS([_challenge(), _ok])
+		with (
+			patch("jarvis.chat.agent_client.websocket.create_connection", return_value=ws),
+			patch("jarvis.chat.agent_client.ensure_paired", return_value=creds),
+		):
+			sess = AgentSession.connect("ws://t")
+		sent = ws.sent[0]["params"]
+		self.assertEqual(sent["auth"], {"deviceToken": "tok-test"})
+		# Signature verifies against the PRESENTED token...
+		_verify_connect_signature(sent, "tok-test", creds.public_key)
+		# ...and would NOT verify against any other token (invariant #2 mutation guard).
+		with self.assertRaises(Exception):
+			_verify_connect_signature(sent, "some-other-token", creds.public_key)
+		sess.close()
+
+	def test_bootstrap_presents_and_signs_gateway_token(self):
+		creds = _make_bootstrap_creds("gw-tok")
+
+		def _ok():
+			return _frame(
+				{
+					"type": "res",
+					"id": ws.sent[-1]["id"],
+					"ok": True,
+					"payload": {"auth": {"deviceToken": "tok-issued"}},
+				}
+			)
+
+		ws = _ScriptedWS([_challenge(), _ok])
+		with (
+			patch("jarvis.chat.agent_client.websocket.create_connection", return_value=ws),
+			patch("jarvis.chat.agent_client.ensure_paired", return_value=creds),
+			patch("jarvis.chat.agent_client.update_device_token", MagicMock(return_value=True)),
+			patch("jarvis.chat.agent_client.time.sleep"),
+		):
+			sess = AgentSession.connect("ws://t")
+		sent = ws.sent[0]["params"]
+		# Bootstrap presents auth.token (the gateway token), NOT a deviceToken.
+		self.assertEqual(sent["auth"], {"token": "gw-tok"})
+		self.assertNotIn("deviceToken", sent["auth"])
+		# Signature verifies against the presented gateway token (invariant #2)...
+		_verify_connect_signature(sent, "gw-tok", creds.public_key)
+		# ...and NOT against the empty device_token the pre-fix code would have signed.
+		with self.assertRaises(Exception):
+			_verify_connect_signature(sent, "", creds.public_key)
+		sess.close()
