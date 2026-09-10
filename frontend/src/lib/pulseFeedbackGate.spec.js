@@ -79,4 +79,25 @@ describe("pulseFeedbackGate", () => {
 		// after "Maybe later" must not re-offer (and re-burn the monthly cap).
 		expect(apiModule.pulseContext).toHaveBeenCalledTimes(1);
 	});
+
+	// Two chat opens in quick succession both pass the "dismissed?" gate before
+	// either pulseContext() call returns. If the survey the first one opened is
+	// dismissed while the second request is still in flight, the second must
+	// not reopen it on top of the dismissal: the gate has to be re-checked
+	// AFTER the await, not only before it.
+	it("does not reopen when the survey was dismissed while a check was still in flight", async () => {
+		vi.resetModules();
+		const fresh = await import("./pulseFeedbackGate");
+		let resolveInFlight;
+		apiModule.pulseContext.mockImplementation(
+			() => new Promise((resolve) => (resolveInFlight = resolve))
+		);
+
+		const inFlight = fresh.maybeOpenPulseFeedback(); // passes the gate, awaits
+		fresh.closePulseFeedback(); // user dismisses meanwhile
+		resolveInFlight({ due: true, features_offered: [] });
+		await inFlight;
+
+		expect(fresh.pulseFeedbackOpen.value).toBe(false);
+	});
 });
