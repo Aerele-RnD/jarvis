@@ -1084,10 +1084,14 @@
 											style="
 												display: inline-block;
 												margin-top: 6px;
+												font-size: 12.5px;
+												line-height: 1.5;
+												color: var(--text-2);
 												text-decoration: underline;
+												text-underline-offset: 2px;
 											"
 										>
-											{{ errorInfo(m).statusLabel }}
+											{{ errorInfo(m).statusLabel }} &#8599;
 										</a>
 										<details style="margin-top: 4px">
 											<summary

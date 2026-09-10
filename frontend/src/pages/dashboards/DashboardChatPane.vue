@@ -79,7 +79,7 @@
 								:href="m.err.statusUrl"
 								target="_blank"
 								rel="noopener noreferrer"
-								>{{ m.err.statusLabel }}</a
+								>{{ m.err.statusLabel }} &#8599;</a
 							>
 							<details>
 								<summary>Show details</summary>
