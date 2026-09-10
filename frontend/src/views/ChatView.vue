@@ -4480,6 +4480,7 @@ import {
 } from "@/lib/draftApply";
 import { stripBlocks } from "@/lib/chatBlocks";
 import { shouldFollowBottom } from "@/lib/chatScroll";
+import { preConnectStatusLabel } from "@/lib/statusPhrase";
 import { createRevealer } from "@/lib/streamReveal";
 import { sortPendingCards } from "@/lib/sortPendingCards";
 import { errMessage, turnErrorInfo } from "@/lib/errors";
@@ -5768,7 +5769,10 @@ function toolPhrase(tool) {
 	return tpl + "…";
 }
 const liveStatus = computed(() => {
-	if (statusPhase.value === "waking") return "Waking up your assistant…";
+	// Pre-connect phases ("waking" / "pairing") win over tool/thinking phrases:
+	// the turn is still blocked on the WS connect, no tool is running yet.
+	const preConnect = preConnectStatusLabel(statusPhase.value);
+	if (preConnect) return preConnect;
 	if (currentTool.value) return toolPhrase(currentTool.value);
 	if (statusPhase.value === "analyzing") return "Analyzing the results…";
 	if (waiting.value || sending.value || statusPhase.value === "model") return "Working on it…";
@@ -9653,6 +9657,9 @@ function onEvent(p) {
 			// Lightweight progress signal (e.g. waking a cold container) between
 			// run:start and the first token — keeps the connect window honest.
 			if (p.status === "waking") statusPhase.value = "waking";
+			// One-time device (re)pair (agent 9.3 connect-first): shown as
+			// "Setting up your assistant…" while the bench pairs with the gateway.
+			if (p.status === "pairing") statusPhase.value = "pairing";
 			if (p.status === "compacting") {
 				statusPhase.value = "compacting";
 				compacting.value = true;
