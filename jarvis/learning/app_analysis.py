@@ -728,6 +728,7 @@ def start_run(run_name: str) -> None:
 				"doctype": CONV,
 				"title": f"App learning: {run.app}"[:140],
 				"status": "Active",
+				"agent_initiated": 1,  # an unattended run log, not a chat session
 			}
 		)
 		conv.flags.ignore_permissions = True

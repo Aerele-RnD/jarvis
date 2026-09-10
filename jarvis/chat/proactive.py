@@ -31,7 +31,8 @@ def start_conversation(message: str, *, title: str | None = None, user: str | No
 		frappe.throw("message is required")
 	title = (title or "Message from Jarvis")[:140]
 
-	conv = frappe.get_doc({"doctype": CONV, "title": title, "status": "Active"})
+	# agent_initiated: Jarvis opened this thread; the user did not ask for it.
+	conv = frappe.get_doc({"doctype": CONV, "title": title, "status": "Active", "agent_initiated": 1})
 	conv.flags.ignore_permissions = True
 	conv.insert()
 
