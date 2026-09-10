@@ -117,6 +117,10 @@ CONNECT_OPEN_RETRY_BACKOFF_SECONDS = 2.0
 # openclaw accepts — send one of the seeded values, NOT a bare "http://localhost"
 # (which the old "*" config used to wave through and now gets rejected).
 _GATEWAY_ORIGIN = "http://127.0.0.1:18789"
+# The primary (default) agent id the fleet-agent template keys the main roster
+# entry as; named on sessions.create when a 2026.9+ multi-agent roster requires
+# explicit agent selection (see create_session).
+_PRIMARY_AGENT_ID = "main"
 # Wall-clock cap on one agent turn waiting for the WS lifecycle to
 # complete (final lifecycle "end" frame from openclaw). Was 180s when
 # the bench + openclaw container ran on the same host (sub-ms WS
@@ -870,7 +874,32 @@ class AgentSession:
 	# -- protocol methods -------------------------------------------------
 
 	def create_session(self, label: str = "jarvis-chat") -> str:
-		res = self._request("sessions.create", {"label": label}, timeout_s=CONNECT_TIMEOUT_SECONDS)
+		params = {"label": label}
+		try:
+			res = self._request("sessions.create", params, timeout_s=CONNECT_TIMEOUT_SECONDS)
+		except AgentUnreachableError as e:
+			# openclaw 2026.9+ makes a MULTI-AGENT roster (>=1 marketplace-agent
+			# delegate installed) reject an unscoped session and demand the caller
+			# name an agent. Retry naming the primary agent (the fleet-agent template
+			# keys it "main" - see _PRIMARY_AGENT_ID). Kept as a fallback rather than
+			# sent upfront so single-agent tenants and pre-2026.9 gateways - whose
+			# sessions.create rejects an unknown agentId - are untouched.
+			#
+			# openclaw sends only the GENERIC code "INVALID_REQUEST" with details=None
+			# for this (verified against 2026.9.3), so - unlike the structured
+			# _STALE_PAIRING_* classifier above - the code alone can't distinguish it
+			# from other INVALID_REQUEST rejections; the message substring is the only
+			# specific signal available. Gate on both (code narrows the class, prose
+			# pins the case). test_chat_agent_client pins the exact wire message so a
+			# future reword breaks CI instead of silently disabling the retry; if a
+			# later image adds a structured reason, prefer it.
+			if e.code != "INVALID_REQUEST" or "no explicit owner" not in str(e).lower():
+				raise
+			res = self._request(
+				"sessions.create",
+				{**params, "agentId": _PRIMARY_AGENT_ID},
+				timeout_s=CONNECT_TIMEOUT_SECONDS,
+			)
 		key = (res.get("payload") or {}).get("key")
 		if not key:
 			raise AgentUnreachableError(f"sessions.create returned no key: {res}")

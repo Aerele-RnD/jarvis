@@ -279,6 +279,76 @@ class TestCreateSession(FrappeTestCase):
 		with self.assertRaises(AgentUnreachableError):
 			sess.create_session()
 
+	# The EXACT wire message the create_session fallback keys off (a 2026.9+
+	# multi-agent gateway). Pinned here so a gateway reword breaks CI instead of
+	# silently disabling the retry -> dead chat for every multi-agent tenant.
+	_NO_OWNER_MSG = (
+		'Multiple agents are configured, but session key "main" has no explicit '
+		"owner. Pass agentId or use an agent-prefixed session key."
+	)
+
+	def _reject(self, ws, code, message):
+		def _resp():
+			return _frame(
+				{
+					"type": "res",
+					"id": ws.sent[-1]["id"],
+					"ok": False,
+					"error": {"code": code, "message": message},
+				}
+			)
+
+		return _resp
+
+	def _ok(self, ws, key):
+		def _resp():
+			return _frame({"type": "res", "id": ws.sent[-1]["id"], "ok": True, "payload": {"key": key}})
+
+		return _resp
+
+	def test_retries_naming_primary_agent_on_no_explicit_owner(self):
+		sess, ws = _build_session()
+		ws._frames.append(self._reject(ws, "INVALID_REQUEST", self._NO_OWNER_MSG))
+		ws._frames.append(self._ok(ws, "session-xyz"))
+
+		key = sess.create_session()
+
+		self.assertEqual(key, "session-xyz")
+		# First create is unscoped; the retry names the primary agent "main".
+		self.assertEqual(len(ws.sent), 2)
+		self.assertNotIn("agentId", ws.sent[0]["params"])
+		self.assertEqual(ws.sent[1]["params"]["agentId"], "main")
+		self.assertEqual(ws.sent[1]["params"]["label"], ws.sent[0]["params"]["label"])
+
+	def test_second_no_owner_rejection_propagates_without_looping(self):
+		sess, ws = _build_session()
+		ws._frames.append(self._reject(ws, "INVALID_REQUEST", self._NO_OWNER_MSG))
+		ws._frames.append(self._reject(ws, "INVALID_REQUEST", self._NO_OWNER_MSG))
+
+		with self.assertRaises(AgentUnreachableError):
+			sess.create_session()
+		# Retried exactly once (single-shot fallback), no infinite loop.
+		self.assertEqual(len(ws.sent), 2)
+
+	def test_other_invalid_request_raises_without_retry(self):
+		# A different INVALID_REQUEST (no "no explicit owner") must NOT retry -
+		# single-agent + pre-2026.9 gateways stay byte-identical.
+		sess, ws = _build_session()
+		ws._frames.append(self._reject(ws, "INVALID_REQUEST", "some other validation failure"))
+
+		with self.assertRaises(AgentUnreachableError):
+			sess.create_session()
+		self.assertEqual(len(ws.sent), 1)
+
+	def test_non_invalid_request_code_raises_without_retry(self):
+		# Even if the phrase appeared under a different code, the code gate blocks the retry.
+		sess, ws = _build_session()
+		ws._frames.append(self._reject(ws, "UNAVAILABLE", self._NO_OWNER_MSG))
+
+		with self.assertRaises(AgentUnreachableError):
+			sess.create_session()
+		self.assertEqual(len(ws.sent), 1)
+
 
 # --- TestStreamAgentTurn --------------------------------------------------
 
