@@ -71,7 +71,7 @@
 					     is what the user needs to read here. -->
 					<div v-else-if="m.error" class="flex">
 						<div class="max-w-[95%] text-sm text-ink-red-4">
-														<strong>{{ m.err.headline }}</strong>
+							<strong>{{ m.err.headline }}</strong>
 							<p>
 								{{ m.err.hint }}
 								<a

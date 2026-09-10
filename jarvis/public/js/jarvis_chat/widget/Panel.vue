@@ -436,7 +436,11 @@
 						<div v-if="turnError" class="jvp-turn-err" role="alert">
 							<div class="jvp-turn-err-h">{{ turnErrorHeadline }}</div>
 							<div
-								v-if="turnErrorHint || turnErrorDetails.statusUrl || turnErrorHasDetail"
+								v-if="
+									turnErrorHint ||
+									turnErrorDetails.statusUrl ||
+									turnErrorHasDetail
+								"
 								class="jvp-turn-err-hint"
 							>
 								{{ turnErrorHint }}
