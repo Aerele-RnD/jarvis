@@ -846,7 +846,7 @@ onUnmounted(() => {
 						</svg>
 					</a>
 					<SkillChips :names="it.view.skills" />
-										<div v-if="it.err" class="jv-msg-error" role="alert">
+					<div v-if="it.err" class="jv-msg-error" role="alert">
 						<strong>{{ it.err.headline }}</strong>
 						<p>
 							{{ it.err.hint }}
@@ -868,7 +868,9 @@ onUnmounted(() => {
 								{{ rawOpen.has(it.key) ? "Hide details" : "Details" }}
 							</button>
 						</p>
-						<pre v-if="rawOpen.has(it.key)" class="jv-msg-error-raw">{{ it.msg.error }}</pre>
+						<pre v-if="rawOpen.has(it.key)" class="jv-msg-error-raw">{{
+							it.msg.error
+						}}</pre>
 					</div>
 					<MessageMedia
 						:items="it.msg.canvas"
