@@ -1,0 +1,470 @@
+"""Unit tests for the native-media (``MEDIA:`` marker) consumer in
+``jarvis.chat.generated_media`` — detection, stripping, the size-bounded
+gateway fetch, and the seed/dedup logic. The R2 wiring into the three chat
+transports is covered by the worker / pump / recovery tests.
+"""
+
+import unittest
+from unittest.mock import Mock, patch
+
+from jarvis.chat import generated_media as gm
+
+# Import the root rather than re-hardcoding it — a Q2 rename that updates the
+# production constant must not leave the tests validating the old path.
+_ROOT = gm._MEDIA_ROOT
+_IMG = _ROOT + "tool-image-generation/black-hole---4de239c0-8d05-41e5-9f52-e404ee9f0b21.png"
+_IMG_REL = _IMG[len(_ROOT) :]
+
+
+class TestDetectMediaPaths(unittest.TestCase):
+	def test_local_image_marker(self):
+		self.assertEqual(gm.detect_media_paths(f"Here you go:\nMEDIA:{_IMG}"), [_IMG])
+
+	def test_case_insensitive(self):
+		self.assertEqual(gm.detect_media_paths(f"media:{_IMG}"), [_IMG])
+		self.assertEqual(gm.detect_media_paths(f"Media:{_IMG}"), [_IMG])
+
+	def test_surrounding_backticks(self):
+		self.assertEqual(gm.detect_media_paths(f"MEDIA:`{_IMG}`"), [_IMG])
+
+	def test_multiple_markers(self):
+		a = _ROOT + "tool-image-generation/a.png"
+		b = _ROOT + "tool-image-generation/b.jpg"
+		self.assertEqual(gm.detect_media_paths(f"MEDIA:{a}\nMEDIA:{b}"), [a, b])
+
+	def test_unicode_filename(self):
+		u = _ROOT + "tool-image-generation/图片---abcd1234.png"
+		self.assertEqual(gm.detect_media_paths(f"MEDIA:{u}"), [u])
+
+	def test_fenced_marker_is_consumed(self):
+		# Fence-UNAWARE by design (D2 leak-safety): a marker inside a balanced fence
+		# is detected too. Preserving a fenced example is a nicety we forgo so an
+		# UNbalanced fence can never swallow a real trailing marker.
+		self.assertEqual(gm.detect_media_paths(f"```\nMEDIA:{_IMG}\n```"), [_IMG])
+		self.assertEqual(gm.detect_media_paths(f"~~~\nMEDIA:{_IMG}\n~~~"), [_IMG])
+
+	def test_unbalanced_fence_does_not_swallow_real_marker(self):
+		# THE critical case: an odd number of fence lines before the real trailing
+		# marker. A fence-toggle scanner would be "in fence" and miss it -> leak +
+		# no image. Fence-unaware detection finds it.
+		reply = f"Here's the API:\n```python\nimport foo\nMEDIA:{_IMG}\n"
+		self.assertEqual(gm.detect_media_paths(reply), [_IMG])
+
+	def test_unicode_whitespace_indent_detected(self):
+		# the agent runtime's trimStart() strips NBSP / ideographic space; \s* matches.
+		self.assertEqual(gm.detect_media_paths(f" MEDIA:{_IMG}"), [_IMG])
+		self.assertEqual(gm.detect_media_paths(f"　MEDIA:{_IMG}"), [_IMG])
+
+	def test_ignored_mid_line(self):
+		self.assertEqual(gm.detect_media_paths(f"see the file MEDIA:{_IMG} inline"), [])
+
+	def test_external_url_excluded(self):
+		self.assertEqual(gm.detect_media_paths("MEDIA:https://example.com/x.png"), [])
+
+	def test_outside_media_root_excluded(self):
+		self.assertEqual(gm.detect_media_paths("MEDIA:/home/node/.openclaw/credentials/x.png"), [])
+		self.assertEqual(gm.detect_media_paths("MEDIA:/etc/passwd.png"), [])
+
+	def test_traversal_excluded(self):
+		self.assertEqual(gm.detect_media_paths(f"MEDIA:{_ROOT}../../etc/passwd.png"), [])
+
+	def test_non_image_excluded(self):
+		self.assertEqual(gm.detect_media_paths(f"MEDIA:{_ROOT}tool-image-generation/report.pdf"), [])
+		# .svg is deliberately NOT in the raster-only allowlist
+		self.assertEqual(gm.detect_media_paths(f"MEDIA:{_ROOT}tool-image-generation/chart.svg"), [])
+
+	def test_empty_rel_excluded(self):
+		self.assertEqual(gm.detect_media_paths(f"MEDIA:{_ROOT}"), [])
+
+	def test_cap_per_turn(self):
+		many = "\n".join(f"MEDIA:{_ROOT}tool-image-generation/c{i}.png" for i in range(12))
+		self.assertEqual(len(gm.detect_media_paths(many)), gm._MAX_MEDIA_PER_TURN)
+
+	def test_empty_and_none(self):
+		self.assertEqual(gm.detect_media_paths(""), [])
+		self.assertEqual(gm.detect_media_paths(None), [])
+
+	def test_has_media_marker(self):
+		# True for any MEDIA: line (qualifying OR not); False otherwise.
+		self.assertTrue(gm.has_media_marker(f"MEDIA:{_IMG}"))
+		self.assertTrue(gm.has_media_marker(f"MEDIA:{_ROOT}tool-image-generation/report.pdf"))  # non-raster
+		self.assertTrue(gm.has_media_marker("MEDIA:https://example.com/x.png"))  # external
+		self.assertFalse(gm.has_media_marker("a plain reply"))
+		self.assertFalse(gm.has_media_marker(""))
+		self.assertFalse(gm.has_media_marker(None))
+
+
+class TestStripMediaLines(unittest.TestCase):
+	def test_strips_handled_marker(self):
+		self.assertEqual(gm.strip_media_lines(f"Here:\nMEDIA:{_IMG}"), "Here:")
+
+	def test_strips_external_and_malformed(self):
+		self.assertEqual(gm.strip_media_lines("MEDIA:https://example.com/x.png\nok"), "ok")
+		# D2: a prose line that merely starts "MEDIA:" is removed (broader than the runtime)
+		self.assertEqual(gm.strip_media_lines("MEDIA: coverage was extensive\ndone"), "done")
+
+	def test_fenced_marker_is_stripped(self):
+		# Fence-UNAWARE (D2): even a fenced MEDIA line is stripped. The fence markers
+		# themselves remain.
+		out = gm.strip_media_lines(f"```\nMEDIA:{_IMG}\n```")
+		self.assertNotIn("MEDIA:", out)
+		self.assertNotIn("/home/node", out)
+
+	def test_unbalanced_fence_marker_is_stripped(self):
+		# THE critical leak case: a real trailing marker after an unbalanced fence
+		# must still be removed (no raw path survives).
+		out = gm.strip_media_lines(f"See:\n```python\nx=1\nMEDIA:{_IMG}\n")
+		self.assertNotIn("MEDIA:", out)
+		self.assertNotIn("/home/node", out)
+
+	def test_interior_backtick_line_is_stripped(self):
+		# An interior backtick must not let the line evade the strip (leak-safety).
+		out = gm.strip_media_lines(f"MEDIA: {_ROOT}tool-image-generation/foo`bar.png\nok")
+		self.assertNotIn("/home/node", out)
+		self.assertEqual(out, "ok")
+
+	def test_collapses_blank_runs(self):
+		text = f"Line one\n\nMEDIA:{_IMG}\n\nLine two"
+		self.assertEqual(gm.strip_media_lines(text), "Line one\n\nLine two")
+
+	def test_no_marker_returns_verbatim(self):
+		text = "A normal reply.\n\nWith paragraphs.\n"
+		self.assertEqual(gm.strip_media_lines(text), text)
+
+	def test_empty(self):
+		self.assertEqual(gm.strip_media_lines(""), "")
+		self.assertIsNone(gm.strip_media_lines(None))
+
+
+def _streamed_response(status=200, body=b"PNGDATA", chunk=64 * 1024):
+	"""A Mock mimicking requests' streamed response context manager."""
+	resp = Mock()
+	resp.status_code = status
+	resp.iter_content = Mock(return_value=[body[i : i + chunk] for i in range(0, len(body), chunk)] or [b""])
+	cm = Mock()
+	cm.__enter__ = Mock(return_value=resp)
+	cm.__exit__ = Mock(return_value=False)
+	return cm
+
+
+class TestFetchMedia(unittest.TestCase):
+	def test_url_header_and_ws_to_http(self):
+		with patch("requests.get", return_value=_streamed_response()) as rget:
+			out = gm.fetch_media("ws://agent.host:9000", "tok123", _IMG)
+		self.assertEqual(out, b"PNGDATA")
+		args, kwargs = rget.call_args
+		url = args[0]
+		self.assertTrue(url.startswith("http://agent.host:9000/__openclaw__/assistant-media?source="))
+		# the path is URL-encoded (slashes -> %2F), not raw
+		self.assertNotIn("/home/node", url.split("source=", 1)[1])
+		self.assertEqual(kwargs["headers"]["Authorization"], "Bearer tok123")
+		self.assertFalse(kwargs["allow_redirects"])
+		self.assertTrue(kwargs["stream"])
+
+	def test_wss_to_https(self):
+		with patch("requests.get", return_value=_streamed_response()) as rget:
+			gm.fetch_media("wss://agent.host:9000", "t", _IMG)
+		self.assertTrue(rget.call_args[0][0].startswith("https://agent.host:9000/"))
+
+	def test_non_200_returns_none(self):
+		for code in (302, 404, 500):
+			with patch("requests.get", return_value=_streamed_response(status=code)):
+				self.assertIsNone(gm.fetch_media("ws://h:1", "t", _IMG))
+
+	def test_oversize_aborts(self):
+		big = b"x" * (gm._MAX_MEDIA_BYTES + 1)
+		with patch("requests.get", return_value=_streamed_response(body=big)):
+			self.assertIsNone(gm.fetch_media("ws://h:1", "t", _IMG))
+
+	def test_oversize_stops_reading_early(self):
+		# Guards the "streamed, do NOT buffer whole" property: a lazy body that
+		# raises if read past the cap must NOT be fully consumed.
+		chunk = 64 * 1024
+
+		def gen():
+			for _ in range((gm._MAX_MEDIA_BYTES // chunk) + 1):
+				yield b"x" * chunk
+			raise AssertionError("fetch_media kept reading past the size cap")
+
+		resp = Mock()
+		resp.status_code = 200
+		resp.iter_content = Mock(return_value=gen())
+		cm = Mock()
+		cm.__enter__ = Mock(return_value=resp)
+		cm.__exit__ = Mock(return_value=False)
+		with patch("requests.get", return_value=cm):
+			self.assertIsNone(gm.fetch_media("ws://h:1", "t", _IMG))
+
+	def test_missing_base_or_token(self):
+		self.assertIsNone(gm.fetch_media("", "t", _IMG))
+		self.assertIsNone(gm.fetch_media("ws://h:1", "", _IMG))
+
+	def test_request_exception_returns_none(self):
+		with patch("requests.get", side_effect=RuntimeError("boom")):
+			self.assertIsNone(gm.fetch_media("ws://h:1", "t", _IMG))
+
+
+class TestSeedMedia(unittest.TestCase):
+	def _patch_db(self, existing_canvas=None):
+		"""Patch frappe DB + save_file; capture the final set_value payload."""
+		self.saved = []
+		self.set_values = []
+
+		def fake_save_file(name, content, dt, dn, is_private=1):
+			self.saved.append(name)
+			return Mock(file_url=f"/private/files/{name}")
+
+		def fake_get_value(dt, dn, field):
+			return existing_canvas
+
+		def fake_set_value(dt, dn, field, value):
+			self.set_values.append(value)
+
+		p1 = patch("frappe.utils.file_manager.save_file", side_effect=fake_save_file)
+		p2 = patch("frappe.db.get_value", side_effect=fake_get_value)
+		p3 = patch("frappe.db.set_value", side_effect=fake_set_value)
+		p4 = patch("frappe.db.commit")
+		return p1, p2, p3, p4
+
+	def test_seeds_and_builds_item(self):
+		a = _ROOT + "tool-image-generation/black-hole---abcd1234.png"
+		ps = self._patch_db(existing_canvas=None)
+		with ps[0], ps[1], ps[2], ps[3], patch.object(gm, "fetch_media", return_value=b"PNG"):
+			items = gm.seed_media("MSG-1", "ws://h:1", "tok", [a])
+		self.assertEqual(len(items), 1)
+		it = items[0]
+		self.assertEqual(it["type"], "image")
+		# source is the RELATIVE path (dedup key), NOT the brand/path-bearing absolute
+		self.assertEqual(it["source"], a[len(_ROOT) :])
+		self.assertNotIn("/home/node", it["source"])
+		self.assertEqual(it["title"], "Black Hole")  # uuid + ext stripped
+		self.assertTrue(it["file_url"].startswith("/private/files/jarvis-media-"))
+
+	def test_skips_failed_fetch_and_logs(self):
+		ps = self._patch_db(existing_canvas=None)
+		with (
+			ps[0],
+			ps[1],
+			ps[2],
+			ps[3],
+			patch.object(gm, "fetch_media", return_value=None),
+			patch("frappe.log_error") as log,
+		):
+			items = gm.seed_media("MSG-1", "ws://h:1", "tok", [_IMG])
+		self.assertEqual(items, [])
+		self.assertEqual(self.set_values, [])  # nothing written
+		log.assert_called_once()  # a silent fleet-wide degradation stays visible
+
+	def test_dedups_by_source(self):
+		import json
+
+		# existing canvas stores the RELATIVE source key (what seed_media writes)
+		existing = json.dumps([{"name": "x", "type": "image", "source": _IMG_REL}])
+		ps = self._patch_db(existing_canvas=existing)
+		with ps[0], ps[1], ps[2], ps[3], patch.object(gm, "fetch_media", return_value=b"PNG") as fm:
+			items = gm.seed_media("MSG-1", "ws://h:1", "tok", [_IMG])
+		self.assertEqual(items, [])
+		fm.assert_not_called()  # already present (by rel key) -> never fetched
+
+	def test_empty_sources(self):
+		with patch.object(gm, "fetch_media") as fm:
+			self.assertEqual(gm.seed_media("MSG-1", "ws://h:1", "tok", []), [])
+			fm.assert_not_called()
+
+
+class TestTitleAndFilename(unittest.TestCase):
+	def test_pretty_title_strips_uuid(self):
+		self.assertEqual(
+			gm._pretty_media_title("black-hole---4de239c0-8d05-41e5-9f52-e404ee9f0b21.png"),
+			"Black Hole",
+		)
+		self.assertEqual(gm._pretty_media_title("sales_report.png"), "Sales Report")
+
+	def test_pretty_title_length_capped(self):
+		self.assertLessEqual(len(gm._pretty_media_title("a" * 500 + ".png")), 80)
+
+	def test_safe_filename(self):
+		self.assertTrue(gm._safe_media_filename("a.png").startswith("jarvis-media-"))
+		self.assertTrue(gm._safe_media_filename("a.png").endswith(".png"))
+		# non-image ext -> forced .png
+		self.assertTrue(gm._safe_media_filename("weird.bin").endswith(".png"))
+
+
+class TestRedactFinalWithMedia(unittest.TestCase):
+	"""The shared terminal helper: consume the marker BEFORE egress, return
+	(redacted-and-stripped text, media_rels)."""
+
+	def test_strips_before_redact_and_returns_rels(self):
+		from jarvis.chat import egress_rules
+
+		# Identity redact so we isolate the strip+detect behaviour from DB rules.
+		with patch("jarvis.chat.egress_rules.redact_and_flag", side_effect=lambda t, **k: t):
+			text, rels, marked = egress_rules.redact_final_with_media(
+				f"Here you go:\nMEDIA:{_IMG}", run_id="R1"
+			)
+		self.assertEqual(text, "Here you go:")  # MEDIA line stripped before redact
+		self.assertEqual(rels, [_IMG])
+		self.assertTrue(marked)
+
+	def test_non_raster_marker_stripped_flag_without_rels(self):
+		from jarvis.chat import egress_rules
+
+		# A .pdf marker under the media root: stripped (marker_stripped True) but NOT
+		# a fetchable image (rels empty) -> the gate still forces the content clear.
+		pdf = _ROOT + "tool-image-generation/report.pdf"
+		with patch("jarvis.chat.egress_rules.redact_and_flag", side_effect=lambda t, **k: t):
+			text, rels, marked = egress_rules.redact_final_with_media(f"MEDIA:{pdf}")
+		self.assertEqual(text, "")
+		self.assertEqual(rels, [])
+		self.assertTrue(marked)
+
+	def test_no_marker_returns_empty_rels(self):
+		from jarvis.chat import egress_rules
+
+		with patch("jarvis.chat.egress_rules.redact_and_flag", side_effect=lambda t, **k: t):
+			text, rels, marked = egress_rules.redact_final_with_media("A plain reply.", run_id="R1")
+		self.assertEqual(text, "A plain reply.")
+		self.assertEqual(rels, [])
+		self.assertFalse(marked)
+
+	def test_none_text(self):
+		from jarvis.chat import egress_rules
+
+		with patch("jarvis.chat.egress_rules.redact_and_flag", side_effect=lambda t, **k: t):
+			text, rels, marked = egress_rules.redact_final_with_media(None)
+		self.assertIsNone(text)
+		self.assertEqual(rels, [])
+		self.assertFalse(marked)
+
+
+class TestPumpThreading(unittest.TestCase):
+	"""finalize._effect_rich_outputs must re-read media_rels off the Turn row and
+	pass it to persist_rich_outputs — the pump (default) transport delivery path
+	that a direct-relay-only wiring would silently drop."""
+
+	def test_effect_reads_media_rels_from_turn_row(self):
+		import json
+
+		from jarvis.chat import finalize
+
+		ctx = Mock()
+		ctx.turn = {"assistant_message": "MSG-1"}
+		ctx.conversation = "C1"
+		ctx.owner = "u@x"
+		ctx.run_id = "R1"
+
+		payload_json = json.dumps({"text": "clean reply", "media_rels": [_IMG]})
+
+		def fake_get_value(dt, dn, field):
+			if field == "terminal_payload":
+				return payload_json
+			return "2026-09-10 00:00:00"  # dispatching_at for _turn_start_ms
+
+		with (
+			patch("frappe.db.get_value", side_effect=fake_get_value),
+			patch("jarvis.chat.turn_handler.persist_rich_outputs") as pro,
+		):
+			finalize._effect_rich_outputs(ctx)
+
+		pro.assert_called_once()
+		self.assertEqual(pro.call_args.kwargs.get("media_rels"), [_IMG])
+
+	def test_effect_no_media_rels_passes_none(self):
+		import json
+
+		from jarvis.chat import finalize
+
+		ctx = Mock()
+		ctx.turn = {"assistant_message": "MSG-1"}
+		ctx.conversation = "C1"
+		ctx.owner = "u@x"
+		ctx.run_id = "R1"
+
+		def fake_get_value(dt, dn, field):
+			if field == "terminal_payload":
+				return json.dumps({"text": "clean reply"})
+			return "2026-09-10 00:00:00"
+
+		with (
+			patch("frappe.db.get_value", side_effect=fake_get_value),
+			patch("jarvis.chat.turn_handler.persist_rich_outputs") as pro,
+		):
+			finalize._effect_rich_outputs(ctx)
+
+		self.assertIsNone(pro.call_args.kwargs.get("media_rels"))
+
+
+class TestSeedBlockWiring(unittest.TestCase):
+	"""persist_rich_outputs' third block: when media_rels is present it must call
+	seed_media with the right args and publish a cumulative 'canvas' event."""
+
+	def test_media_block_seeds_and_publishes_cumulative(self):
+		import json
+
+		from jarvis.chat import turn_handler
+
+		settings = Mock(agent_url="ws://h:1")
+		settings.get_password = Mock(return_value="tok")
+
+		def fake_get_value(dt, dn, field):
+			if field == "content":
+				return ""  # no canvas refs, no "imagegen" -> first two blocks no-op
+			if field == "canvas":
+				return json.dumps([{"name": "chart", "type": "svg"}, {"name": "img", "type": "image"}])
+			return None
+
+		media_item = {"name": "img", "type": "image", "source": _IMG_REL}
+		published = []
+		with (
+			patch("frappe.get_single", return_value=settings),
+			patch("frappe.db.get_value", side_effect=fake_get_value),
+			patch("jarvis.chat.canvas.persist_canvases", return_value=[]),
+			patch("jarvis.chat.generated_media.seed_media", return_value=[media_item]) as sm,
+			patch("jarvis.chat.turn_handler._publish_to_user", side_effect=lambda u, p: published.append(p)),
+		):
+			turn_handler.persist_rich_outputs("MSG-1", "C1", "u@x", "run1", 0, media_rels=[_IMG])
+
+		sm.assert_called_once_with("MSG-1", "ws://h:1", "tok", [_IMG])
+		canvas_pubs = [p for p in published if p.get("kind") == "canvas"]
+		self.assertEqual(len(canvas_pubs), 1)
+		# cumulative: the published items include the pre-existing chart, not just media
+		self.assertEqual(len(canvas_pubs[0]["items"]), 2)
+
+	def test_no_media_rels_skips_seed(self):
+		from jarvis.chat import turn_handler
+
+		settings = Mock(agent_url="ws://h:1")
+		settings.get_password = Mock(return_value="tok")
+		with (
+			patch("frappe.get_single", return_value=settings),
+			patch("frappe.db.get_value", return_value=""),
+			patch("jarvis.chat.canvas.persist_canvases", return_value=[]),
+			patch("jarvis.chat.generated_media.seed_media") as sm,
+			patch("jarvis.chat.turn_handler._publish_to_user"),
+		):
+			turn_handler.persist_rich_outputs("MSG-1", "C1", "u@x", "run1", 0, media_rels=None)
+		sm.assert_not_called()
+
+
+class TestRecoveryStrip(unittest.TestCase):
+	"""Recovery (D1): _latest_assistant_text strips the marker at each return
+	(string / block-list / text), leaking no raw path, delivering no image."""
+
+	def test_string_content_marker_stripped(self):
+		from jarvis.chat import turn_recovery
+
+		out = turn_recovery._latest_assistant_text([{"role": "assistant", "content": f"done\nMEDIA:{_IMG}"}])
+		self.assertNotIn("MEDIA:", out)
+		self.assertNotIn("/home/node", out)
+
+	def test_block_list_content_marker_stripped(self):
+		from jarvis.chat import turn_recovery
+
+		msg = {"role": "assistant", "content": [{"type": "text", "text": f"ok\nMEDIA:{_IMG}"}]}
+		out = turn_recovery._latest_assistant_text([msg])
+		self.assertNotIn("MEDIA:", out)
+		self.assertNotIn("/home/node", out)
+
+
+if __name__ == "__main__":
+	unittest.main()
