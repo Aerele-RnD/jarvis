@@ -1,6 +1,6 @@
 [
   {
-    "error": "Error: EPERM: operation not permitted, chmod /home/node/.openclaw/agents/main/agent/openclaw-agent.sqlite",
+    "error": "Error: EPERM: operation not permitted, chmod /home/node/.agent/agents/main/agent/agent.sqlite",
     "code": "runtime-permission"
   },
   {
