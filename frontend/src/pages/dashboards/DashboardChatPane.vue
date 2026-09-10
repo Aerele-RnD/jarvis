@@ -69,9 +69,43 @@
 					     A run that failed before any reply leaves an EMPTY content and
 					     the reason in `error` (a rate limit, a provider outage), which
 					     is what the user needs to read here. -->
+					<!-- a cancelled / aged-out queued turn: muted note, not a failure -->
+					<div v-else-if="m.error && m.err.code === 'cancelled'" class="flex">
+						<div class="text-xs text-ink-gray-5" role="status">
+							{{ m.err.headline }}
+						</div>
+					</div>
 					<div v-else-if="m.error" class="flex">
-						<div class="max-w-[95%] text-sm text-ink-red-4">
-							{{ errorNote(m) }}
+						<div class="max-w-[95%] text-sm text-ink-red-4" role="status">
+							<strong>{{ m.err.headline }}</strong>
+							<p>
+								{{ m.err.hint }}
+								<a
+									v-if="m.err.statusUrl"
+									class="underline underline-offset-2"
+									:href="m.err.statusUrl"
+									target="_blank"
+									rel="noopener noreferrer"
+									>{{ m.err.statusLabel }}
+									<span aria-hidden="true">&#8599;</span></a
+								>
+								<span v-if="m.err.hint" aria-hidden="true"> &middot; </span>
+								<button
+									type="button"
+									class="underline underline-offset-2"
+									:aria-expanded="rawOpen.has(m.name) ? 'true' : 'false'"
+									:aria-controls="`dash-err-raw-${m.name}`"
+									@click="toggleRaw(m.name)"
+								>
+									{{ rawOpen.has(m.name) ? "Hide details" : "Details" }}
+								</button>
+							</p>
+							<pre
+								v-if="rawOpen.has(m.name)"
+								:id="`dash-err-raw-${m.name}`"
+								class="mt-1 whitespace-pre-wrap break-words font-sans text-xs"
+								>{{ m.error }}</pre
+							>
 						</div>
 					</div>
 					<!-- assistant: markdown, same renderer + prose classes as the
@@ -359,7 +393,7 @@ import {
 	compactConversation,
 } from "@/api";
 import { agentName } from "@/branding";
-import { errHtml } from "@/lib/errors";
+import { errHtml, turnErrorInfo } from "@/lib/errors";
 import { compactFailureCopy } from "@/lib/compact";
 import { sendRejectionCopy } from "@/lib/sendRejectionCopy";
 
@@ -605,17 +639,30 @@ const scroller = ref(null);
 // An errored assistant row usually has NO content (the run died before its
 // first token), so it must pass on `error` alone or the failure is invisible
 // and the composer just silently unlocks.
-const bubbles = computed(() =>
-	messages.value.filter(
-		(m) =>
-			(m.role === "user" || m.role === "assistant") &&
-			(String(m.content || "").trim() || (m.role === "assistant" && m.error))
-	)
-);
-function errorNote(m) {
-	const reason = typeof m.error === "string" ? m.error.trim() : "";
-	return reason || String(m.content || "").trim() || "That didn't go through. Try again.";
+// { [message_id]: code } from a live run:error event, so this pane names a
+// failure the same way ChatView does for the same event. Not persisted: a
+// reload has only the row's error text and reclassifies from that.
+const errorMeta = ref({});
+// Failed bubbles whose raw error text is expanded ("Details" in the note).
+const rawOpen = ref(new Set());
+function toggleRaw(name) {
+	const next = new Set(rawOpen.value);
+	next.has(name) ? next.delete(name) : next.add(name);
+	rawOpen.value = next;
 }
+function errorNote(m) {
+	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", { provider: m.provider });
+}
+// `err` is classified once here, not per template read (five reads per bubble).
+const bubbles = computed(() =>
+	messages.value
+		.filter(
+			(m) =>
+				(m.role === "user" || m.role === "assistant") &&
+				(String(m.content || "").trim() || (m.role === "assistant" && m.error))
+		)
+		.map((m) => ({ ...m, err: m.error ? errorNote(m) : null }))
+);
 
 // ChatView's stripBlocks, minimal subset: internal fenced blocks (actions,
 // confirms, cards…) never render as raw fences in the pane. `jarvis-ask` is
@@ -1134,6 +1181,8 @@ function onEvent(p) {
 			activeTools.value = [];
 			waitingFirstTool.value = false;
 			compacting.value = false;
+			if (p.message_id)
+				errorMeta.value = { ...errorMeta.value, [p.message_id]: p.code || "" };
 			loadContext();
 			break;
 		case "context:compacted":
