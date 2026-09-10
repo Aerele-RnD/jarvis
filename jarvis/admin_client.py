@@ -1885,6 +1885,38 @@ def pair_chat_device(public_key: str, device_id: str, *, request_timeout_s: int 
 	)
 
 
+def request_chat_pairing(public_key: str, device_id: str, *, request_timeout_s: int = 30) -> dict:
+	"""Additive successor to ``pair_chat_device`` for the agent 9.3
+	device-pairing fix (Mechanism A). POSTs the customer's chat device pubkey to
+	the CP, which decides - per its own per-tenant gate - HOW this tenant pairs
+	and returns an ACK describing the ``mode`` (NOT necessarily a token):
+
+	  - ``{"mode": "legacy", "device_token": "..."}`` - un-upgraded / 6.8 tenant:
+	    the CP forged a device token synchronously (identical to what
+	    ``pair_chat_device`` returns today). The bench presents that token
+	    (steady-state connect, unchanged).
+	  - ``{"mode": "mechanism_a", "accepted": true}`` - 9.x tenant: NO token yet.
+	    The CP has told the fleet-agent to poll + approve this deviceId; the
+	    gateway issues the device token on the bench's approved connect. The bench
+	    connects token-less (gateway-token bootstrap) and adopts the reissued token
+	    (see ``jarvis.chat.device._pair_mechanism_a`` / ``agent_client``).
+
+	Additive on purpose (plan-check gap #1 / D-b): ``pair_chat_device`` is left
+	intact for old/6.8 benches so a CP deploy never flips pairing semantics under
+	a not-yet-upgraded bench. Authenticates the caller as the tenant exactly like
+	``pair_chat_device`` (same signed ``_post`` transport). ``request_timeout_s``
+	is the budget the bench asks the CP to allow for its CP -> fleet-agent leg
+	(the CP clamps it), same contract as ``pair_chat_device``."""
+	return _post(
+		path=_m("api.tenant.request_chat_pairing"),
+		body={
+			"public_key": public_key,
+			"device_id": device_id,
+			"request_timeout_s": request_timeout_s,
+		},
+	)
+
+
 def get_account_summary() -> dict:
 	"""Fetch the customer's plan + validity + upgrade-eligible plans. Used by
 	the /jarvis/billing SPA page to render the plan cards and the settings
