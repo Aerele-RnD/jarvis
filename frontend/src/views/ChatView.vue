@@ -1068,10 +1068,13 @@
 										     `.jv-ae-hint`, so a turn failure gets the same headline + hint +
 										     expandable-raw-detail treatment an ACTION-card failure already
 										     does (headline/hint from errorInfo(m); the raw detail is m.error,
-										     shown in the "Show details" block below), instead of a bare
+										     shown behind the inline "Details" toggle), instead of a bare
 										     message with no next step. -->
+										<!-- One guidance line: the hint, then the status link and the
+										     raw-detail toggle inline at its end, the way production chat
+										     UIs keep a failed turn to a title + one action line. -->
 										<div
-											v-if="errorInfo(m).hint"
+											v-if="errorInfo(m).hint || errorInfo(m).statusUrl || m.error"
 											style="
 												font-size: 12.5px;
 												color: var(--text-2);
@@ -1080,47 +1083,39 @@
 											"
 										>
 											{{ errorInfo(m).hint }}
+											<a
+												v-if="errorInfo(m).statusUrl"
+												:href="errorInfo(m).statusUrl"
+												target="_blank"
+												rel="noopener noreferrer"
+												class="jv-err-link"
+												>{{ errorInfo(m).statusLabel }} &#8599;</a
+											>
+											<template v-if="m.error">
+												<span aria-hidden="true"> &middot; </span>
+												<button
+													type="button"
+													class="jv-err-link"
+													:aria-expanded="rawOpen[m.name] ? 'true' : 'false'"
+													@click="toggleRaw(m.name)"
+												>
+													{{ rawOpen[m.name] ? "Hide details" : "Details" }}
+												</button>
+											</template>
 										</div>
-										<a
-											v-if="errorInfo(m).statusUrl"
-											:href="errorInfo(m).statusUrl"
-											target="_blank"
-											rel="noopener noreferrer"
+										<div
+											v-if="rawOpen[m.name]"
 											style="
-												display: inline-block;
-												margin-top: 6px;
-												font-size: 12.5px;
-												line-height: 1.5;
+												font-size: 12px;
 												color: var(--text-2);
-												text-decoration: underline;
-												text-underline-offset: 2px;
+												margin-top: 4px;
+												line-height: 1.5;
+												white-space: pre-wrap;
+												overflow-wrap: anywhere;
 											"
 										>
-											{{ errorInfo(m).statusLabel }} &#8599;
-										</a>
-										<details style="margin-top: 4px">
-											<summary
-												style="
-													font-size: 11.5px;
-													color: var(--text-3);
-													cursor: pointer;
-												"
-											>
-												Show details
-											</summary>
-											<div
-												style="
-													font-size: 12px;
-													color: var(--text-2);
-													margin-top: 4px;
-													line-height: 1.5;
-													white-space: pre-wrap;
-													overflow-wrap: anywhere;
-												"
-											>
-												{{ m.error }}
-											</div>
-										</details>
+											{{ m.error }}
+										</div>
 										<button
 											v-if="errorInfo(m).retryable"
 											class="jv-retry"
@@ -5583,6 +5578,11 @@ const currentRunId = ref(null);
 const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
+// Raw error text disclosure per failed message ("Details" in the guidance line).
+const rawOpen = ref({});
+function toggleRaw(id) {
+	rawOpen.value = { ...rawOpen.value, [id]: !rawOpen.value[id] };
+}
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
 // Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3 + CDX-12). The pure fence
 // logic lives in @/utils/eventFence.js (extracted so it is unit-tested by a real node test
@@ -15926,5 +15926,15 @@ onUnmounted(() => {
 .jv-slide-enter-from .jv-artifact-panel,
 .jv-slide-leave-to .jv-artifact-panel {
 	transform: translateX(100%);
+}
+.jv-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 </style>

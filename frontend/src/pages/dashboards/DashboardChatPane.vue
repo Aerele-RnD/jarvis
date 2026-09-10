@@ -71,20 +71,32 @@
 					     is what the user needs to read here. -->
 					<div v-else-if="m.error" class="flex">
 						<div class="max-w-[95%] text-sm text-ink-red-4">
-							<strong>{{ m.err.headline }}</strong>
-							<p>{{ m.err.hint }}</p>
-							<a
-								class="underline"
-								v-if="m.err.statusUrl"
-								:href="m.err.statusUrl"
-								target="_blank"
-								rel="noopener noreferrer"
-								>{{ m.err.statusLabel }} &#8599;</a
+														<strong>{{ m.err.headline }}</strong>
+							<p>
+								{{ m.err.hint }}
+								<a
+									v-if="m.err.statusUrl"
+									class="underline underline-offset-2"
+									:href="m.err.statusUrl"
+									target="_blank"
+									rel="noopener noreferrer"
+									>{{ m.err.statusLabel }} &#8599;</a
+								>
+								<span aria-hidden="true"> &middot; </span>
+								<button
+									type="button"
+									class="underline underline-offset-2"
+									:aria-expanded="rawOpen.has(m.name) ? 'true' : 'false'"
+									@click="toggleRaw(m.name)"
+								>
+									{{ rawOpen.has(m.name) ? "Hide details" : "Details" }}
+								</button>
+							</p>
+							<pre
+								v-if="rawOpen.has(m.name)"
+								class="mt-1 whitespace-pre-wrap break-words font-sans text-xs"
+								>{{ m.error }}</pre
 							>
-							<details>
-								<summary>Show details</summary>
-								{{ m.error }}
-							</details>
 						</div>
 					</div>
 					<!-- assistant: markdown, same renderer + prose classes as the
@@ -622,6 +634,13 @@ const scroller = ref(null);
 // failure the same way ChatView does for the same event. Not persisted: a
 // reload has only the row's error text and reclassifies from that.
 const errorMeta = ref({});
+// Failed bubbles whose raw error text is expanded ("Details" in the note).
+const rawOpen = ref(new Set());
+function toggleRaw(name) {
+	const next = new Set(rawOpen.value);
+	next.has(name) ? next.delete(name) : next.add(name);
+	rawOpen.value = next;
+}
 function errorNote(m) {
 	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", { provider: m.provider });
 }
