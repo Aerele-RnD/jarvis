@@ -42,6 +42,7 @@ import Composer from "../components/Composer.vue";
 import DecisionCard from "../components/DecisionCard.vue";
 import DecisionSheet from "../components/DecisionSheet.vue";
 import FilePreviewSheet from "../components/FilePreviewSheet.vue";
+import { turnErrorInfo } from "../../../jarvis/public/js/turn_errors.mjs";
 import MessageMedia from "../components/MessageMedia.vue";
 import RecordCards from "../components/RecordCards.vue";
 import Sheet from "../components/Sheet.vue";
@@ -71,6 +72,20 @@ const input = ref("");
 const loading = ref(false);
 const sendBusy = ref(false);
 const errorBanner = ref("");
+// { [message_id]: code } from a live run:error event; not persisted, so a
+// reload (messages re-fetched via load()) falls back to classifying the
+// persisted error string alone. Without this, the banner above (which does
+// get the live code) and this same message's inline error card would name
+// the failure differently for the SAME event - the exact #702 defect this
+// feature exists to fix, reproduced across two elements on one screen.
+const errorMeta = ref({});
+// Failed messages whose raw error text is expanded ("Details" in the card).
+const rawOpen = ref(new Set());
+function toggleRaw(key) {
+	const next = new Set(rawOpen.value);
+	next.has(key) ? next.delete(key) : next.add(key);
+	rawOpen.value = next;
+}
 const attachments = ref([]);
 const pending = ref([]); // parked writes awaiting approval
 // Ordered the SAME way the server orders the parked list, because a typed
@@ -168,6 +183,14 @@ const view = (m) => {
 	};
 };
 
+// Mirrors ChatView.vue's (desktop) errorInfo(): a live run:error's code, when
+// this session saw it, always wins over reclassifying the persisted string
+// (errorMeta above). Called once per assistant item from `items` below (as
+// `err`), never from the template, for the same reason view() is precomputed.
+function errorNote(m) {
+	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", { provider: m.provider });
+}
+
 // ── thread assembly ─────────────────────────────────────────────────────────
 // Tool rows BELONG to the assistant turn that ran them. The worker creates the
 // assistant placeholder first and appends each tool row after it, so in `seq`
@@ -201,7 +224,14 @@ const items = computed(() => {
 			}
 			current.tools.push(m);
 		} else {
-			current = { type: "assistant", key: m.name, msg: m, view: view(m), tools: [] };
+			current = {
+				type: "assistant",
+				key: m.name,
+				msg: m,
+				view: view(m),
+				err: m.error ? errorNote(m) : null,
+				tools: [],
+			};
 			out.push(current);
 		}
 	}
@@ -583,7 +613,12 @@ function onEvent(p) {
 		case "run:error":
 			sendBusy.value = false;
 			live.value = null;
-			if (!ignored) errorBanner.value = p.error || "That turn failed.";
+			if (!ignored) {
+				const info = turnErrorInfo(p.error, p.code);
+				errorBanner.value = `${info.headline}. ${info.hint}`;
+			}
+			if (p.message_id)
+				errorMeta.value = { ...errorMeta.value, [p.message_id]: p.code || "" };
 			// C2 self-heal (mirror run:end): a card parked in a turn that then errors
 			// must still auto-recover — drain p.pending here too, not only on run:end.
 			// Deduped by token; a conv-less token ("") binds to this conversation; a
@@ -811,7 +846,46 @@ onUnmounted(() => {
 						</svg>
 					</a>
 					<SkillChips :names="it.view.skills" />
-					<div v-if="it.msg.error" class="jv-msg-error">{{ it.msg.error }}</div>
+					<!-- A cancelled / aged-out queued turn is a muted note, not a
+					     failure card (same as the desktop chat). -->
+					<div
+						v-if="it.err && it.err.code === 'cancelled'"
+						class="jv-stopped"
+						role="status"
+					>
+						{{ it.err.headline }}
+					</div>
+					<div v-else-if="it.err" class="jv-msg-error">
+						<strong>{{ it.err.headline }}</strong>
+						<p>
+							{{ it.err.hint }}
+							<a
+								v-if="it.err.statusUrl"
+								class="jv-err-link"
+								:href="it.err.statusUrl"
+								target="_blank"
+								rel="noopener noreferrer"
+								>{{ it.err.statusLabel }}
+								<span aria-hidden="true">&#8599;</span></a
+							>
+							<span v-if="it.err.hint" aria-hidden="true"> &middot; </span>
+							<button
+								type="button"
+								class="jv-err-link"
+								:aria-expanded="rawOpen.has(it.key) ? 'true' : 'false'"
+								:aria-controls="`jv-err-raw-${it.key}`"
+								@click="toggleRaw(it.key)"
+							>
+								{{ rawOpen.has(it.key) ? "Hide details" : "Details" }}
+							</button>
+						</p>
+						<pre
+							v-if="rawOpen.has(it.key)"
+							:id="`jv-err-raw-${it.key}`"
+							class="jv-msg-error-raw"
+							>{{ it.msg.error }}</pre
+						>
+					</div>
 					<MessageMedia
 						:items="it.msg.canvas"
 						:message-name="it.msg.name"
@@ -1071,6 +1145,25 @@ onUnmounted(() => {
 	font-size: 12px;
 	line-height: 1.4;
 	color: var(--red);
+}
+.jv-msg-error p {
+	margin: 2px 0 0;
+}
+.jv-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.jv-msg-error-raw {
+	margin: 4px 0 0;
+	font: inherit;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 /* The stop marker is muted (--ink5), never the error tone above it: the user
    pressed Stop on purpose, so this states what happened, it doesn't warn. */

@@ -179,7 +179,15 @@ describe("DashboardChatPane surfaces a run that failed before its first token", 
 		await flushPromises();
 		const note = wrapper.find(".text-ink-red-4");
 		expect(note.exists()).toBe(true);
-		expect(note.text()).toContain("API rate limit reached");
+		// The row renders the classified headline and guidance, not the raw
+		// provider text; the raw text sits behind the inline Details toggle.
+		expect(note.text()).toContain("The model’s request limit was reached");
+		expect(note.text()).not.toContain("API rate limit reached");
+		const details = note.findAll("button").find((b) => b.text() === "Details");
+		expect(details).toBeTruthy();
+		await details.trigger("click");
+		expect(note.text()).toContain("API rate limit reached. Please try again later.");
+		expect(note.find("button[aria-expanded='true']").text()).toBe("Hide details");
 		localStorage.removeItem("jarvis-dash-conv-u@x.com");
 	});
 });

@@ -866,7 +866,7 @@ class TestSux11ErrorContract(_PipelineCase):
 		# The run:error event carries today's classification code (SUX-11).
 		err_pub = next(p for p in self._pubs if p.get("kind") == "run:error")
 		self.assertEqual(err_pub["error"], "provider quota exceeded")
-		self.assertEqual(err_pub["code"], "provider", "quota -> 'provider' headline (ERROR_HEADLINES)")
+		self.assertEqual(err_pub["code"], "quota", "quota receives its own usage-limit category")
 		# Turn.error mirrors it too.
 		self.assertEqual(self._val(rid, "error"), "provider quota exceeded")
 
@@ -925,7 +925,10 @@ class TestFailedFinalSettlesAsError(_PipelineCase):
 		self.assertIn("429", err)
 		self.assertIn("quota", err)
 		err_pub = next(p for p in self._pubs if p.get("kind") == "run:error")
-		self.assertEqual(err_pub["code"], "provider", "quota -> 'provider' headline (ERROR_HEADLINES)")
+		# Gemini's text says "check your plan and billing details": the billing
+		# rule precedes the bare-quota rule on purpose, so the customer is sent
+		# to the account owner, not told to wait for a reset.
+		self.assertEqual(err_pub["code"], "billing", "a 429 that names billing is a billing check")
 
 	def test_empty_final_after_tools_settles_errored(self):
 		# Second reproduction: same terminal reached with tools already run and a
