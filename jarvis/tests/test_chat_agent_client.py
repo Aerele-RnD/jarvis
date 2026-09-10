@@ -279,9 +279,9 @@ class TestCreateSession(FrappeTestCase):
 		with self.assertRaises(AgentUnreachableError):
 			sess.create_session()
 
-	# The EXACT wire message the create_session fallback keys off (openclaw 2026.9+
-	# multi-agent). Pinned here so a gateway reword breaks CI instead of silently
-	# disabling the retry -> dead chat for every multi-agent tenant.
+	# The EXACT wire message the create_session fallback keys off (a 2026.9+
+	# multi-agent gateway). Pinned here so a gateway reword breaks CI instead of
+	# silently disabling the retry -> dead chat for every multi-agent tenant.
 	_NO_OWNER_MSG = (
 		'Multiple agents are configured, but session key "main" has no explicit '
 		"owner. Pass agentId or use an agent-prefixed session key."
