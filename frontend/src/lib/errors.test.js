@@ -308,10 +308,7 @@ test("unknown errors do not invent a transient cause or trust an external URL", 
 
 test("prototype property names are not valid error codes", () => {
 	for (const code of ["__proto__", "constructor", "toString"]) {
-		assert.equal(
-			turnErrorInfo("failure", code).headline,
-			"Jarvis hit an unexpected error"
-		);
+		assert.equal(turnErrorInfo("failure", code).headline, "Jarvis hit an unexpected error");
 	}
 });
 
@@ -410,7 +407,10 @@ test("a known provider rewrites the availability copy but keeps the rule's retry
 	assert.equal(info.headline, "OpenAI / ChatGPT could not complete this request");
 	assert.doesNotMatch(info.hint, /below/);
 	assert.equal(info.retryable, true);
-	assert.equal(turnErrorInfo("503 Service Unavailable").headline, "The service could not complete this request");
+	assert.equal(
+		turnErrorInfo("503 Service Unavailable").headline,
+		"The service could not complete this request"
+	);
 });
 
 test("a legacy explicit provider code is refined from the text, or kept", () => {
@@ -421,7 +421,10 @@ test("a legacy explicit provider code is refined from the text, or kept", () => 
 
 test("two named hosts are ambiguous; one host outranks the model brand", () => {
 	assert.equal(turnErrorInfo("openrouter and groq both timed out").statusUrl, "");
-	assert.equal(turnErrorInfo("mistral and groq both timed out").statusUrl, "https://groqstatus.com/");
+	assert.equal(
+		turnErrorInfo("mistral and groq both timed out").statusUrl,
+		"https://groqstatus.com/"
+	);
 	assert.equal(turnErrorInfo("mistral and claude both timed out").statusUrl, "");
 });
 

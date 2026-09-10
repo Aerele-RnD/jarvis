@@ -848,7 +848,11 @@ onUnmounted(() => {
 					<SkillChips :names="it.view.skills" />
 					<!-- A cancelled / aged-out queued turn is a muted note, not a
 					     failure card (same as the desktop chat). -->
-					<div v-if="it.err && it.err.code === 'cancelled'" class="jv-stopped" role="status">
+					<div
+						v-if="it.err && it.err.code === 'cancelled'"
+						class="jv-stopped"
+						role="status"
+					>
 						{{ it.err.headline }}
 					</div>
 					<div v-else-if="it.err" class="jv-msg-error">
@@ -861,7 +865,8 @@ onUnmounted(() => {
 								:href="it.err.statusUrl"
 								target="_blank"
 								rel="noopener noreferrer"
-								>{{ it.err.statusLabel }} <span aria-hidden="true">&#8599;</span></a
+								>{{ it.err.statusLabel }}
+								<span aria-hidden="true">&#8599;</span></a
 							>
 							<span v-if="it.err.hint" aria-hidden="true"> &middot; </span>
 							<button
@@ -874,9 +879,12 @@ onUnmounted(() => {
 								{{ rawOpen.has(it.key) ? "Hide details" : "Details" }}
 							</button>
 						</p>
-						<pre v-if="rawOpen.has(it.key)" :id="`jv-err-raw-${it.key}`" class="jv-msg-error-raw">{{
-							it.msg.error
-						}}</pre>
+						<pre
+							v-if="rawOpen.has(it.key)"
+							:id="`jv-err-raw-${it.key}`"
+							class="jv-msg-error-raw"
+							>{{ it.msg.error }}</pre
+						>
 					</div>
 					<MessageMedia
 						:items="it.msg.canvas"
