@@ -214,6 +214,60 @@ class TestPulseContext(_PulseTestCase):
 			result = pulse_context()
 		self.assertEqual(result["features_offered"], ["file_box", "dashboard_builder"])
 
+	def test_an_answer_during_the_sweep_is_never_overwritten_by_the_offer(self):
+		"""The reviewer's repro: pulse_context reads count=1, then the (slow)
+		feature sweep runs, and in that window the user answers the survey in
+		another tab, which stores PULSE_MAX_OFFERS. A blind ``count + 1`` write
+		afterwards dragged the answered marker back down to 2 and re-offered a
+		survey already filled in. The offer is a compare-and-set now: it loses,
+		reports not due, and the answered marker stays put."""
+		current = current_period_key(PULSE_SURVEY_CADENCE)
+		self._set_pulse(current, 1)
+
+		def answer_in_another_tab(*_args, **_kwargs):
+			# Exactly what submit_pulse_feedback writes, landing mid-sweep.
+			self._set_pulse(current, PULSE_MAX_OFFERS)
+			return {}
+
+		with patch(_FEATURES, side_effect=answer_in_another_tab):
+			result = pulse_context()
+		self.assertFalse(result["due"], "the offer lost the race and must not fire")
+		row = self._pulse()
+		self.assertEqual(row.pulse_offer_count, PULSE_MAX_OFFERS, "answered marker was not dragged back down")
+		self.assertEqual(row.pulse_last_period_key, current)
+
+	def test_two_chat_opens_racing_burn_exactly_one_offer(self):
+		"""Both tabs read count=0 before either writes. Only the first claim sees
+		rowcount 1; the second reads the row as already moved and reports not
+		due instead of burning a second of the three monthly offers."""
+		current = current_period_key(PULSE_SURVEY_CADENCE)
+
+		def other_tab_claims_first(*_args, **_kwargs):
+			# The concurrent open's claim, landing between this call's read and
+			# its own claim: key stamped, count 0 -> 1.
+			self._set_pulse(current, 1)
+			return {}
+
+		with patch(_FEATURES, side_effect=other_tab_claims_first):
+			result = pulse_context()
+		self.assertFalse(result["due"])
+		self.assertEqual(self._pulse().pulse_offer_count, 1, "one offer burned, not two")
+
+	def test_a_rollover_claim_is_conditional_too(self):
+		"""Same race across a period boundary: the stale-key branch must also
+		lose to a write that landed first, not stamp over it."""
+		self._set_pulse(_STALE_KEY, PULSE_MAX_OFFERS)
+		current = current_period_key(PULSE_SURVEY_CADENCE)
+
+		def answer_lands_first(*_args, **_kwargs):
+			self._set_pulse(current, PULSE_MAX_OFFERS)
+			return {}
+
+		with patch(_FEATURES, side_effect=answer_lands_first):
+			result = pulse_context()
+		self.assertFalse(result["due"])
+		self.assertEqual(self._pulse().pulse_offer_count, PULSE_MAX_OFFERS)
+
 
 class TestSubmitPulseFeedback(_PulseTestCase):
 	def _item(self, push):

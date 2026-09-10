@@ -160,6 +160,23 @@ class TestTurnCounter(_SessionFeedbackTestCase):
 		# the raising branch is covered by the stubbed-frappe harness.
 		_bump_turn_count("does-not-exist", "sfrun-missing")
 
+	def test_bump_never_raises_even_when_the_error_log_itself_fails(self):
+		"""A DB outage mid-bump: the UPDATE raises, the rollback raises, and the
+		Error Log INSERT (over the same dead connection) raises too. "NEVER
+		raises" has to hold through all three, or the turn loses its run:end
+		publish and finalize enqueue (settlement calls the bump right before
+		them). rollback/commit are stubbed so the real ones cannot discard this
+		test's own transaction state."""
+		with (
+			patch.object(frappe.db, "sql", side_effect=RuntimeError("db gone")),
+			patch.object(frappe.db, "rollback", side_effect=RuntimeError("still gone")),
+			patch.object(frappe.db, "commit"),
+			patch("frappe.log_error", side_effect=RuntimeError("cannot insert Error Log")) as log,
+		):
+			_bump_turn_count(self.conv, "sfrun-outage")  # must not raise
+		log.assert_called_once()
+		self.assertEqual(self._turn_count(), 0, "nothing was counted during the outage")
+
 
 class TestSessionFeedbackStatus(_SessionFeedbackTestCase):
 	def test_not_due_below_threshold(self):

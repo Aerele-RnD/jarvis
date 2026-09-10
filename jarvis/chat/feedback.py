@@ -326,6 +326,9 @@ def _turns_since(user: str, since) -> int:
 
 def _store_pulse_state(settings_name: str, period_key: str, offer_count: int) -> None:
 	"""Stamp the period key and the offer count on the user's settings row.
+	The ANSWER path's write: unconditional, because an answer always wins over
+	whatever the offer count was. Offers themselves go through
+	``_claim_pulse_offer`` below, which is conditional.
 
 	``update_modified=False``: server-owned app state (permlevel 1), not a user
 	edit of their settings.
@@ -342,6 +345,52 @@ def _store_pulse_state(settings_name: str, period_key: str, offer_count: int) ->
 		{"pulse_last_period_key": period_key, "pulse_offer_count": offer_count},
 		update_modified=False,
 	)
+
+
+def _claim_pulse_offer(settings_name: str, period_key: str, seen_count: int, same_period: bool) -> bool:
+	"""Advance the offer count to ``seen_count + 1`` and return True iff THIS
+	call claimed the offer, i.e. the row still read exactly as the caller saw it.
+
+	A compare-and-set rather than ``_store_pulse_state``, for the same reason
+	``_claim_session_feedback`` is one. ``pulse_context`` reads the count, then
+	runs the comparatively slow feature-usage sweep, then writes. In that window
+	the user can ANSWER the survey in another tab (``submit_pulse_feedback``
+	stores ``PULSE_MAX_OFFERS``), and a blind ``count + 1`` write afterwards
+	would drag the answered marker back DOWN to 2 and re-offer a survey the user
+	already filled in. The same window lets two chat opens racing on one
+	settings row both read 0 and both burn an offer. With the WHERE clause
+	pinned to what was read, exactly one writer sees rowcount 1; the others
+	report "not due" and burn nothing.
+
+	Two predicates, not one NULL-safe expression, because the two branches
+	compare different things:
+	  * same period - the key matches AND the count is still what we read;
+	  * rollover (or a row created moments ago by ``get_or_create_user_settings``,
+	    whose key is NULL and count 0) - the key is anything but the current one.
+	    The count is NOT compared here: last period's total is irrelevant, and
+	    the reset to 1 is the whole point.
+
+	Raw SQL is the standing-rule exception the session claim already takes:
+	``db.set_value`` cannot express a conditional write, and the rowcount is
+	read BEFORE any commit (a commit can reset the cursor), the discipline
+	``turn_state._run_cas`` and ``admission._run_cas`` follow. ``modified`` is
+	left alone: server-owned state, not a user edit."""
+	if same_period:
+		frappe.db.sql(
+			f"""UPDATE `tab{USER_SETTINGS}`
+			SET pulse_offer_count=%(next)s
+			WHERE name=%(n)s AND pulse_last_period_key=%(k)s AND pulse_offer_count=%(seen)s""",
+			{"n": settings_name, "k": period_key, "seen": seen_count, "next": seen_count + 1},
+		)
+	else:
+		frappe.db.sql(
+			f"""UPDATE `tab{USER_SETTINGS}`
+			SET pulse_last_period_key=%(k)s, pulse_offer_count=1
+			WHERE name=%(n)s AND (pulse_last_period_key IS NULL OR pulse_last_period_key != %(k)s)""",
+			{"n": settings_name, "k": period_key},
+		)
+	cursor = getattr(frappe.db, "_cursor", None)
+	return bool(cursor and int(cursor.rowcount) == 1)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -406,7 +455,12 @@ def pulse_context() -> dict:
 		from jarvis.chat.usage import get_or_create_user_settings
 
 		settings_name = get_or_create_user_settings(user).name
-	_store_pulse_state(settings_name, current_key, offer_count + 1)
+	# Conditional on the row still reading as it did above: the sweep just ran
+	# is exactly the window in which an answer in another tab, or a second chat
+	# open, can have moved it. Losing the race means "not due", never a
+	# re-offer of an answered survey (see _claim_pulse_offer).
+	if not _claim_pulse_offer(settings_name, current_key, offer_count, same_period):
+		return {"due": False}
 	return {
 		"due": True,
 		"period_label": _pulse_period_label(),

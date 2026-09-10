@@ -278,7 +278,13 @@ def _bump_turn_count(conversation: str, run_id: str) -> None:
 			frappe.db.rollback()
 		except Exception:
 			pass
-		frappe.log_error(title="settlement.bump_turn_count", message=frappe.get_traceback())
+		# Same guard on the error log: it INSERTs an Error Log row over the very
+		# connection that just failed, so during a DB outage it raises too, and an
+		# escape here would cost the turn its run:end publish and finalize enqueue.
+		try:
+			frappe.log_error(title="settlement.bump_turn_count", message=frappe.get_traceback())
+		except Exception:
+			pass
 
 
 def _extra_with_pending(extra: dict, owner: str | None, conversation: str) -> dict:

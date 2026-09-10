@@ -22,6 +22,11 @@ export async function maybeOpenPulseFeedback() {
 	if (_dismissedThisLoad) return;
 	try {
 		const ctx = await pulseContext();
+		// Re-check after the await: two chat opens in quick succession both pass
+		// the gate above before either request returns. If the first one's
+		// survey was dismissed while the second request was still in flight, the
+		// second must not reopen it on top of the dismissal.
+		if (_dismissedThisLoad) return;
 		if (ctx && ctx.due) {
 			pulseFeedbackContext.value = ctx;
 			pulseFeedbackOpen.value = true;
