@@ -178,8 +178,8 @@ const view = (m) => {
 
 // Mirrors ChatView.vue's (desktop) errorInfo(): a live run:error's code, when
 // this session saw it, always wins over reclassifying the persisted string
-// (errorMeta above). Computed once per render rather than inline in the
-// template several times over - the same reason view() above is precomputed.
+// (errorMeta above). Called once per assistant item from `items` below (as
+// `err`), never from the template, for the same reason view() is precomputed.
 function errorNote(m) {
 	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", m);
 }
@@ -217,7 +217,14 @@ const items = computed(() => {
 			}
 			current.tools.push(m);
 		} else {
-			current = { type: "assistant", key: m.name, msg: m, view: view(m), tools: [] };
+			current = {
+				type: "assistant",
+				key: m.name,
+				msg: m,
+				view: view(m),
+				err: m.error ? errorNote(m) : null,
+				tools: [],
+			};
 			out.push(current);
 		}
 	}
@@ -832,17 +839,17 @@ onUnmounted(() => {
 						</svg>
 					</a>
 					<SkillChips :names="it.view.skills" />
-					<div v-if="it.msg.error" class="jv-msg-error" role="alert">
-						<strong>{{ errorNote(it.msg).headline }}</strong>
-						<p>{{ errorNote(it.msg).hint }}</p>
+					<div v-if="it.err" class="jv-msg-error" role="alert">
+						<strong>{{ it.err.headline }}</strong>
+						<p>{{ it.err.hint }}</p>
 						<a
 							style="text-decoration: underline"
-							v-if="errorNote(it.msg).statusUrl"
-							:href="errorNote(it.msg).statusUrl"
+							v-if="it.err.statusUrl"
+							:href="it.err.statusUrl"
 							target="_blank"
 							rel="noopener noreferrer"
 						>
-							{{ errorNote(it.msg).statusLabel }}
+							{{ it.err.statusLabel }}
 						</a>
 						<details>
 							<summary>Show details</summary>

@@ -39,6 +39,7 @@ import frappe
 
 from jarvis import compat
 from jarvis.chat import agent_session_pool, seq_watermark, vision
+from jarvis.chat.error_taxonomy import classify_error_text
 from jarvis.exceptions import AgentUnreachableError
 from jarvis.jarvis.pool_serialize import compute_pool_mode
 
@@ -2114,9 +2115,10 @@ def _create_assistant_placeholder(conv) -> "frappe.model.document.Document":
 
 
 def _classify_error(err_text: str, exc=None) -> str:
-	"""Classify text consistently with the UI, preserving transport evidence."""
-	from jarvis.chat.error_taxonomy import classify_error_text
+	"""Classify text consistently with the UI, preserving transport evidence.
 
+	The rules module is imported at module load on purpose: a broken rules
+	file then fails at deploy time, not inside the error-reporting path."""
 	if getattr(exc, "code", None) == "turn-timeout":
 		return "timeout"
 	code = classify_error_text(err_text)
