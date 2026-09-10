@@ -1093,16 +1093,17 @@
 												target="_blank"
 												rel="noopener noreferrer"
 												class="jv-err-link"
-												>{{ errorInfo(m).statusLabel }} &#8599;</a
+												>{{ errorInfo(m).statusLabel }} <span aria-hidden="true">&#8599;</span></a
 											>
 											<template v-if="m.error">
-												<span aria-hidden="true"> &middot; </span>
+												<span v-if="errorInfo(m).hint" aria-hidden="true"> &middot; </span>
 												<button
 													type="button"
 													class="jv-err-link"
 													:aria-expanded="
 														rawOpen[m.name] ? 'true' : 'false'
 													"
+													:aria-controls="`jv-err-raw-${m.name}`"
 													@click="toggleRaw(m.name)"
 												>
 													{{
@@ -1115,6 +1116,7 @@
 										</div>
 										<div
 											v-if="rawOpen[m.name]"
+											:id="`jv-err-raw-${m.name}`"
 											style="
 												font-size: 12px;
 												color: var(--text-2);
@@ -5913,12 +5915,23 @@ function queuedChipLabel(pos, state) {
 // #702: {code, headline, hint} for one message's turn error - `turnErrorInfo`
 // (lib/errors.js) is the single, tested classifier; this only adds the
 // `noChange` flag, which is per-event metadata, not part of the taxonomy.
+// Memoised on the inputs that can change the answer: the template reads this
+// several times per failed message per render, and classification is a regex
+// walk over the (capped) error text.
+const errorInfoCache = new Map();
 function errorInfo(m) {
 	const meta = errorMeta.value[m.name] || {};
-	return {
-		...turnErrorInfo(m.error, meta.code, { provider: m.provider }),
-		noChange: meta.changed_data === false,
-	};
+	const key = `${m.name}\u0000${m.error}\u0000${meta.code || ""}\u0000${meta.changed_data}\u0000${m.provider || ""}`;
+	let info = errorInfoCache.get(key);
+	if (!info) {
+		info = {
+			...turnErrorInfo(m.error, meta.code, { provider: m.provider }),
+			noChange: meta.changed_data === false,
+		};
+		if (errorInfoCache.size > 500) errorInfoCache.clear();
+		errorInfoCache.set(key, info);
+	}
+	return info;
 }
 // Live elapsed timer shown next to the status line so a long turn reads as
 // "still working" (time ticking) rather than a frozen spinner. Hidden for the

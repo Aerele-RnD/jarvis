@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { errMessage, turnErrorInfo, GENERIC_ERROR_MESSAGE } from "./errors.js";
+import rules from "../../../jarvis/public/js/turn_error_rules.mjs";
 
 test("extracts the first server message when present", () => {
 	assert.equal(errMessage({ messages: ["Settings -> Developer"] }), "Settings -> Developer");
@@ -227,7 +228,7 @@ test("turnErrorInfo is total: null, undefined, a number and an object never thro
 test("an unrecognized explicit code falls back to the generic headline", () => {
 	const info = turnErrorInfo("does not matter", "some-future-code-v2");
 	assert.equal(info.code, "some-future-code-v2");
-	assert.equal(info.headline, "Jarvis could not complete this request");
+	assert.equal(info.headline, "Jarvis hit an unexpected error");
 	assert.match(info.hint, /support/);
 });
 
@@ -309,7 +310,7 @@ test("prototype property names are not valid error codes", () => {
 	for (const code of ["__proto__", "constructor", "toString"]) {
 		assert.equal(
 			turnErrorInfo("failure", code).headline,
-			"Jarvis could not complete this request"
+			"Jarvis hit an unexpected error"
 		);
 	}
 });
@@ -381,4 +382,53 @@ test("the plain word together never attributes a failure to Together AI", () => 
 		"https://status.together.ai/"
 	);
 	assert.equal(turnErrorInfo("together.ai timeout").statusUrl, "https://status.together.ai/");
+});
+
+// Retry is the headline UX change: pin which codes offer it, in one place.
+test("retryable is pinned per code", () => {
+	const retryable = new Set([
+		"internal",
+		"models-exhausted",
+		"unreachable",
+		"recovery-expired",
+		"rate-limit",
+		"service-unavailable",
+		"timeout",
+		"connection",
+		"gateway",
+	]);
+	for (const { code } of rules) {
+		assert.equal(turnErrorInfo("x", code).retryable, retryable.has(code), code);
+	}
+	assert.equal(turnErrorInfo("No endpoints found").retryable, true);
+	assert.equal(turnErrorInfo("429 model_not_found").retryable, false);
+	assert.equal(turnErrorInfo("503 Service Unavailable: upstream not found").retryable, true);
+});
+
+test("a known provider rewrites the availability copy but keeps the rule's retry", () => {
+	const info = turnErrorInfo("OpenAI 503 Service Unavailable");
+	assert.equal(info.headline, "OpenAI / ChatGPT could not complete this request");
+	assert.doesNotMatch(info.hint, /below/);
+	assert.equal(info.retryable, true);
+	assert.equal(turnErrorInfo("503 Service Unavailable").headline, "The service could not complete this request");
+});
+
+test("a legacy explicit provider code is refined from the text, or kept", () => {
+	assert.equal(turnErrorInfo("insufficient credit", "provider").code, "billing");
+	assert.equal(turnErrorInfo("something odd", "provider").code, "provider");
+	assert.equal(turnErrorInfo("something odd", "gateway").code, "gateway");
+});
+
+test("two named hosts are ambiguous; one host outranks the model brand", () => {
+	assert.equal(turnErrorInfo("openrouter and groq both timed out").statusUrl, "");
+	assert.equal(turnErrorInfo("mistral and groq both timed out").statusUrl, "https://groqstatus.com/");
+	assert.equal(turnErrorInfo("mistral and claude both timed out").statusUrl, "");
+});
+
+test("classification reads at most the first 8 KB", () => {
+	const long = "x".repeat(9000) + " 401 Unauthorized";
+	assert.equal(turnErrorInfo(long).code, "gateway");
+	const started = Date.now();
+	turnErrorInfo("device " + "pairing ".repeat(40000));
+	assert.ok(Date.now() - started < 500, "pathological input must stay fast");
 });

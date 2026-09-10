@@ -6,6 +6,10 @@ const compiled = rules.map((rule) => ({
   test: new RegExp(rule.pattern, "i"),
 }));
 const byCode = Object.fromEntries(compiled.map((rule) => [rule.code, rule]));
+const MAX_CLASSIFY_CHARS = 8192;
+// Routing / inference hosts: when one of these is named it is the provider
+// that answered, whatever model brand the text also mentions.
+const HOSTS = new Set(["openrouter", "groq", "together"]);
 // Official status destinations only; never turn a URL in an error into a link.
 // An OpenAI-compatible endpoint does not identify OpenAI as the provider.
 const providers = [
@@ -68,21 +72,23 @@ function providerFor(raw, context) {
   if (/openai[_ -]compat|\b(ollama|vllm|azure|bedrock|vertex)\b/i.test(raw))
     return;
   const matches = providers.filter(([, , , pattern]) => pattern.test(raw));
-  if (
-    matches[0]?.[0] === "openrouter" ||
-    matches[0]?.[0] === "groq" ||
-    matches[0]?.[0] === "together"
-  )
-    return matches[0];
-  return matches.length === 1 ? matches[0] : undefined;
+  const hosts = matches.filter(([key]) => HOSTS.has(key));
+  // Exactly one host named: it outranks model brands ("claude via openrouter").
+  // Two hosts, or several brands and no host: ambiguous, so no link.
+  if (hosts.length === 1) return hosts[0];
+  return matches.length === 1 && hosts.length === 0 ? matches[0] : undefined;
 }
 
 export function turnErrorInfo(raw, explicitCode, context = {}) {
   try {
-    const text =
+    // Cap what the regexes see: error text is model-supplied and unbounded,
+    // and a few patterns have bounded-but-real backtracking. Same cap as
+    // the Python classifier so both sides read the same prefix.
+    const text = (
       typeof raw === "object" && raw !== null
         ? JSON.stringify(raw)
-        : String(raw ?? "");
+        : String(raw ?? "")
+    ).slice(0, MAX_CLASSIFY_CHARS);
     const inferred =
       compiled.find((rule) => rule.test.test(text))?.code || "gateway";
     // Older servers publish broad gateway/provider codes. Refine those from

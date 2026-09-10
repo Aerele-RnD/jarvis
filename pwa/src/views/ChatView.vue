@@ -188,7 +188,7 @@ const view = (m) => {
 // (errorMeta above). Called once per assistant item from `items` below (as
 // `err`), never from the template, for the same reason view() is precomputed.
 function errorNote(m) {
-	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", m);
+	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", { provider: m.provider });
 }
 
 // ── thread assembly ─────────────────────────────────────────────────────────
@@ -846,7 +846,12 @@ onUnmounted(() => {
 						</svg>
 					</a>
 					<SkillChips :names="it.view.skills" />
-					<div v-if="it.err" class="jv-msg-error" role="alert">
+					<!-- A cancelled / aged-out queued turn is a muted note, not a
+					     failure card (same as the desktop chat). -->
+					<div v-if="it.err && it.err.code === 'cancelled'" class="jv-stopped" role="status">
+						{{ it.err.headline }}
+					</div>
+					<div v-else-if="it.err" class="jv-msg-error">
 						<strong>{{ it.err.headline }}</strong>
 						<p>
 							{{ it.err.hint }}
@@ -856,19 +861,20 @@ onUnmounted(() => {
 								:href="it.err.statusUrl"
 								target="_blank"
 								rel="noopener noreferrer"
-								>{{ it.err.statusLabel }} &#8599;</a
+								>{{ it.err.statusLabel }} <span aria-hidden="true">&#8599;</span></a
 							>
-							<span aria-hidden="true"> &middot; </span>
+							<span v-if="it.err.hint" aria-hidden="true"> &middot; </span>
 							<button
 								type="button"
 								class="jv-err-link"
 								:aria-expanded="rawOpen.has(it.key) ? 'true' : 'false'"
+								:aria-controls="`jv-err-raw-${it.key}`"
 								@click="toggleRaw(it.key)"
 							>
 								{{ rawOpen.has(it.key) ? "Hide details" : "Details" }}
 							</button>
 						</p>
-						<pre v-if="rawOpen.has(it.key)" class="jv-msg-error-raw">{{
+						<pre v-if="rawOpen.has(it.key)" :id="`jv-err-raw-${it.key}`" class="jv-msg-error-raw">{{
 							it.msg.error
 						}}</pre>
 					</div>

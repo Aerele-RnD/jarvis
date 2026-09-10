@@ -12,8 +12,8 @@ export default [
   {
     "code": "internal",
     "pattern": "^unexpected worker error",
-    "headline": "Jarvis could not complete this request",
-    "hint": "Try again. If the error returns, share the details with support.",
+    "headline": "Jarvis hit an unexpected error",
+    "hint": "Try again. If the error returns, share the details with your administrator or support.",
     "retryable": true,
     "status": false
   },
@@ -21,8 +21,8 @@ export default [
     "code": "models-exhausted",
     "pattern": "all (models|providers|fallbacks) failed",
     "headline": "The models tried could not complete this request",
-    "hint": "The model attempts failed. Share the details with your administrator to check each connection.",
-    "retryable": false,
+    "hint": "Try again. If it returns, share the details with your administrator to check each connection.",
+    "retryable": true,
     "status": false
   },
   {
@@ -43,7 +43,7 @@ export default [
   },
   {
     "code": "runtime-setup",
-    "pattern": "\\benoent\\b|cannot find module|module not found|pairing required|device.*(pairing|signature).*invalid|no auth profiles|no api key found|agent_url not set",
+    "pattern": "\\benoent\\b|cannot find module|module not found|pairing required|device.{0,80}(pairing|signature).{0,80}invalid|no auth profiles|no api key found|agent_url not set",
     "headline": "The assistant’s setup needs attention",
     "hint": "Ask your administrator to check the assistant’s configuration. The details below can help identify what needs fixing.",
     "retryable": false,
@@ -67,7 +67,7 @@ export default [
   },
   {
     "code": "context-limit",
-    "pattern": "context[_ ](length[_ ]exceeded|overflow|window)|maximum context length|too many tokens|prompt is too long|input.*exceeds.*token",
+    "pattern": "context[_ ](length[_ ]exceeded|overflow|window)|maximum context length|too many tokens|prompt is too long|input.{0,80}exceeds.{0,80}token",
     "headline": "This conversation is too long for the model",
     "hint": "Start a new chat with a short summary, or send less content.",
     "retryable": false,
@@ -82,8 +82,16 @@ export default [
     "status": false
   },
   {
+    "code": "model-unavailable",
+    "pattern": "model[_ ]not[_ ]found|unknown model|no such model|model.*(does not exist|not available|not supported|decommissioned|not allowed)",
+    "headline": "This model is not available for this connection",
+    "hint": "Choose another available model, or ask your administrator to check the model settings and account access.",
+    "retryable": false,
+    "status": false
+  },
+  {
     "code": "billing",
-    "pattern": "insufficient[_ ](quota|credit|balance)|credit balance|out of credits|billing|payment required|(?:\\b(?:http(?:error)?|status(?:[_ ]code)?|error(?: code)?|code|api|openai|anthropic|claude|gemini|google|groq|mistral|deepseek|openrouter|xai|x\\.ai|together)\\b[\\s\\x22\\x27=:({\\[]*402\\b|^402\\b)|spend(ing)? limit",
+    "pattern": "insufficient[_ ](quota|credit|balance|funds)|credit.{0,20}(expired|exhausted)|credit balance|out of credits|billing|payment required|(?:\\b(?:http(?:error)?|status(?:[_ ]code)?|error(?: code)?|code|api|openai|anthropic|claude|gemini|google|groq|mistral|deepseek|openrouter|xai|x\\.ai|together)\\b[\\s\\x22\\x27=:({\\[]*402\\b|^402\\b)|spend(ing)? limit",
     "headline": "The model account needs a billing check",
     "hint": "Ask the account owner to check the balance, payment details, and spending limit before trying again.",
     "retryable": false,
@@ -117,15 +125,7 @@ export default [
     "code": "safety",
     "pattern": "content[_ ](policy|filter)|safety.*(block|reject)|blocked.*safety|prohibited_content|responsibleaipolicyviolation",
     "headline": "The model declined this request under its safety rules",
-    "hint": "Review your message and attachments. If you think this was a mistake, contact the model provider.",
-    "retryable": false,
-    "status": false
-  },
-  {
-    "code": "model-unavailable",
-    "pattern": "model[_ ]not[_ ]found|unknown model|no such model|model.*(does not exist|not available|not supported|decommissioned|not allowed)|no endpoints found",
-    "headline": "This model is not available for this connection",
-    "hint": "Choose another available model, or ask your administrator to check the model settings and account access.",
+    "hint": "Review your message and attachments. If you think this was a mistake, ask your administrator to raise it with the model provider.",
     "retryable": false,
     "status": false
   },
@@ -146,16 +146,8 @@ export default [
     "status": false
   },
   {
-    "code": "not-found",
-    "pattern": "not[_ ]found|(?:\\b(?:http(?:error)?|status(?:[_ ]code)?|error(?: code)?|code|api|openai|anthropic|claude|gemini|google|groq|mistral|deepseek|openrouter|xai|x\\.ai|together)\\b[\\s\\x22\\x27=:({\\[]*404\\b|^404\\b)",
-    "headline": "Something needed for this request could not be found",
-    "hint": "Check that the referenced item still exists. Share the details with your administrator if you need help.",
-    "retryable": false,
-    "status": false
-  },
-  {
     "code": "service-unavailable",
-    "pattern": "overload|service[_ ]unavailable|temporarily unavailable|high demand|(?:\\b(?:http(?:error)?|status(?:[_ ]code)?|error(?: code)?|code|api|openai|anthropic|claude|gemini|google|groq|mistral|deepseek|openrouter|xai|x\\.ai|together)\\b[\\s\\x22\\x27=:({\\[]*(500|502|503|529)\\b|^(500|502|503|529)\\b)|internal server error|bad gateway|server_error",
+    "pattern": "overload|service[_ ]unavailable|temporarily unavailable|high demand|(?:\\b(?:http(?:error)?|status(?:[_ ]code)?|error(?: code)?|code|api|openai|anthropic|claude|gemini|google|groq|mistral|deepseek|openrouter|xai|x\\.ai|together)\\b[\\s\\x22\\x27=:({\\[]*(500|502|503|529)\\b|^(500|502|503|529)\\b)|internal server error|bad gateway|server_error|no endpoints found",
     "headline": "The service could not complete this request",
     "hint": "Wait a little and try again. If the error returns, share the details with your administrator or support.",
     "retryable": true,
@@ -178,6 +170,14 @@ export default [
     "status": true
   },
   {
+    "code": "not-found",
+    "pattern": "not[_ ]found|(?:\\b(?:http(?:error)?|status(?:[_ ]code)?|error(?: code)?|code|api|openai|anthropic|claude|gemini|google|groq|mistral|deepseek|openrouter|xai|x\\.ai|together)\\b[\\s\\x22\\x27=:({\\[]*404\\b|^404\\b)",
+    "headline": "Something needed for this request could not be found",
+    "hint": "Check that the referenced item still exists. Share the details with your administrator if you need help.",
+    "retryable": false,
+    "status": false
+  },
+  {
     "code": "provider",
     "pattern": "(?!)",
     "headline": "The model provider could not complete this request",
@@ -189,7 +189,7 @@ export default [
     "code": "gateway",
     "pattern": "(?!)",
     "headline": "Jarvis could not complete this request",
-    "hint": "The cause is not clear from the error received. Try again. If it happens again, share the details with support.",
+    "hint": "The cause is not clear from the error received. Try again. If it happens again, share the details with your administrator or support.",
     "retryable": true,
     "status": false
   }
