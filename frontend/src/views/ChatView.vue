@@ -1068,10 +1068,17 @@
 										     `.jv-ae-hint`, so a turn failure gets the same headline + hint +
 										     expandable-raw-detail treatment an ACTION-card failure already
 										     does (headline/hint from errorInfo(m); the raw detail is m.error,
-										     shown in the "Show details" block below), instead of a bare
+										     shown behind the inline "Details" toggle), instead of a bare
 										     message with no next step. -->
+										<!-- One guidance line: the hint, then the status link and the
+										     raw-detail toggle inline at its end, the way production chat
+										     UIs keep a failed turn to a title + one action line. -->
 										<div
-											v-if="errorInfo(m).hint"
+											v-if="
+												errorInfo(m).hint ||
+												errorInfo(m).statusUrl ||
+												m.error
+											"
 											style="
 												font-size: 12.5px;
 												color: var(--text-2);
@@ -1080,31 +1087,52 @@
 											"
 										>
 											{{ errorInfo(m).hint }}
+											<a
+												v-if="errorInfo(m).statusUrl"
+												:href="errorInfo(m).statusUrl"
+												target="_blank"
+												rel="noopener noreferrer"
+												class="jv-err-link"
+												>{{ errorInfo(m).statusLabel }}
+												<span aria-hidden="true">&#8599;</span></a
+											>
+											<template v-if="m.error">
+												<span v-if="errorInfo(m).hint" aria-hidden="true">
+													&middot;
+												</span>
+												<button
+													type="button"
+													class="jv-err-link"
+													:aria-expanded="
+														rawOpen[m.name] ? 'true' : 'false'
+													"
+													:aria-controls="`jv-err-raw-${m.name}`"
+													@click="toggleRaw(m.name)"
+												>
+													{{
+														rawOpen[m.name]
+															? "Hide details"
+															: "Details"
+													}}
+												</button>
+											</template>
 										</div>
-										<details style="margin-top: 4px">
-											<summary
-												style="
-													font-size: 11.5px;
-													color: var(--text-3);
-													cursor: pointer;
-												"
-											>
-												Show details
-											</summary>
-											<div
-												style="
-													font-size: 12px;
-													color: var(--text-2);
-													margin-top: 4px;
-													line-height: 1.5;
-													white-space: pre-wrap;
-													overflow-wrap: anywhere;
-												"
-											>
-												{{ m.error }}
-											</div>
-										</details>
+										<div
+											v-if="rawOpen[m.name]"
+											:id="`jv-err-raw-${m.name}`"
+											style="
+												font-size: 12px;
+												color: var(--text-2);
+												margin-top: 4px;
+												line-height: 1.5;
+												white-space: pre-wrap;
+												overflow-wrap: anywhere;
+											"
+										>
+											{{ m.error }}
+										</div>
 										<button
+											v-if="errorInfo(m).retryable"
 											class="jv-retry"
 											@click="retry(m.name)"
 											:disabled="retrying"
@@ -5565,6 +5593,11 @@ const currentRunId = ref(null);
 const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
+// Raw error text disclosure per failed message ("Details" in the guidance line).
+const rawOpen = ref({});
+function toggleRaw(id) {
+	rawOpen.value = { ...rawOpen.value, [id]: !rawOpen.value[id] };
+}
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
 // Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3 + CDX-12). The pure fence
 // logic lives in @/utils/eventFence.js (extracted so it is unit-tested by a real node test
@@ -5885,9 +5918,25 @@ function queuedChipLabel(pos, state) {
 // #702: {code, headline, hint} for one message's turn error - `turnErrorInfo`
 // (lib/errors.js) is the single, tested classifier; this only adds the
 // `noChange` flag, which is per-event metadata, not part of the taxonomy.
+// Memoised on the inputs that can change the answer: the template reads this
+// several times per failed message per render, and classification is a regex
+// walk over the (capped) error text.
+const errorInfoCache = new Map();
 function errorInfo(m) {
 	const meta = errorMeta.value[m.name] || {};
-	return { ...turnErrorInfo(m.error, meta.code), noChange: meta.changed_data === false };
+	const key = `${m.name}\u0000${m.error}\u0000${meta.code || ""}\u0000${
+		meta.changed_data
+	}\u0000${m.provider || ""}`;
+	let info = errorInfoCache.get(key);
+	if (!info) {
+		info = {
+			...turnErrorInfo(m.error, meta.code, { provider: m.provider }),
+			noChange: meta.changed_data === false,
+		};
+		if (errorInfoCache.size > 500) errorInfoCache.clear();
+		errorInfoCache.set(key, info);
+	}
+	return info;
 }
 // Live elapsed timer shown next to the status line so a long turn reads as
 // "still working" (time ticking) rather than a frozen spinner. Hidden for the
@@ -15905,5 +15954,15 @@ onUnmounted(() => {
 .jv-slide-enter-from .jv-artifact-panel,
 .jv-slide-leave-to .jv-artifact-panel {
 	transform: translateX(100%);
+}
+.jv-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 </style>
