@@ -869,8 +869,16 @@ const turnError = ref("");
 // wins over reclassifying `turnError` from text alone (mirrors the full
 // chat's errorMeta). Not persisted, so a reload has only the string.
 const turnErrorCode = ref("");
+// The failed assistant row's id: after the reload that run:error triggers,
+// its persisted `provider` (which model actually served the turn) is what
+// decides the status link, exactly as the full chat passes m.provider.
+const turnErrorMsgId = ref("");
 const turnErrorOpen = ref(false); // "Show details" disclosure
-const turnErrorDetails = computed(() => turnErrorInfo(turnError.value, turnErrorCode.value));
+const turnErrorDetails = computed(() => {
+	const id = turnErrorMsgId.value;
+	const row = id ? messages.value.find((m) => m.name === id) : undefined;
+	return turnErrorInfo(turnError.value, turnErrorCode.value, { provider: row?.provider });
+});
 const turnErrorHeadline = computed(() => turnErrorDetails.value.headline);
 const turnErrorHint = computed(() => turnErrorDetails.value.hint);
 // Only offer the raw text when it says more than the headline already does.
@@ -881,6 +889,7 @@ const turnErrorHasDetail = computed(() => {
 function clearTurnError() {
 	turnError.value = "";
 	turnErrorCode.value = "";
+	turnErrorMsgId.value = "";
 	turnErrorOpen.value = false;
 }
 const draft = ref("");
@@ -1706,6 +1715,7 @@ function onRealtime(payload) {
 		if (next.error) {
 			turnError.value = next.error;
 			turnErrorCode.value = payload?.code || "";
+			turnErrorMsgId.value = payload?.message_id || "";
 		}
 		load();
 		return;
@@ -1719,6 +1729,7 @@ function onRealtime(payload) {
 	if (next.error) {
 		turnError.value = next.error;
 		turnErrorCode.value = payload?.code || "";
+		turnErrorMsgId.value = payload?.message_id || "";
 	}
 }
 

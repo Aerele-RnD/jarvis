@@ -366,3 +366,19 @@ test("provider status links preserve timeout and connection guidance", () => {
 	assert.match(connection.hint, /administrator/);
 	assert.doesNotMatch(`${timeout.hint} ${connection.hint}`, /is down|outage|our side|hiccup/i);
 });
+
+// "together" is ordinary prose; only the vendor's own name links to Together AI.
+// The routing-service shortlist outranks model authors, so a false match here
+// would also override an explicitly named Anthropic in the same text.
+test("the plain word together never attributes a failure to Together AI", () => {
+	assert.equal(turnErrorInfo("all retries failed together, 503").statusUrl, "");
+	assert.equal(
+		turnErrorInfo("Anthropic overloaded, all retries failed together").statusUrl,
+		"https://status.claude.com/"
+	);
+	assert.equal(
+		turnErrorInfo("Together AI: 503 Service Unavailable").statusUrl,
+		"https://status.together.ai/"
+	);
+	assert.equal(turnErrorInfo("together.ai timeout").statusUrl, "https://status.together.ai/");
+});

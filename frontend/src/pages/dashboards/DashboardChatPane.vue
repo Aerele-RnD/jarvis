@@ -71,15 +71,15 @@
 					     is what the user needs to read here. -->
 					<div v-else-if="m.error" class="flex">
 						<div class="max-w-[95%] text-sm text-ink-red-4">
-							<strong>{{ errorNote(m).headline }}</strong>
-							<p>{{ errorNote(m).hint }}</p>
+							<strong>{{ m.err.headline }}</strong>
+							<p>{{ m.err.hint }}</p>
 							<a
 								class="underline"
-								v-if="errorNote(m).statusUrl"
-								:href="errorNote(m).statusUrl"
+								v-if="m.err.statusUrl"
+								:href="m.err.statusUrl"
 								target="_blank"
 								rel="noopener noreferrer"
-								>{{ errorNote(m).statusLabel }}</a
+								>{{ m.err.statusLabel }}</a
 							>
 							<details>
 								<summary>Show details</summary>
@@ -618,16 +618,23 @@ const scroller = ref(null);
 // An errored assistant row usually has NO content (the run died before its
 // first token), so it must pass on `error` alone or the failure is invisible
 // and the composer just silently unlocks.
-const bubbles = computed(() =>
-	messages.value.filter(
-		(m) =>
-			(m.role === "user" || m.role === "assistant") &&
-			(String(m.content || "").trim() || (m.role === "assistant" && m.error))
-	)
-);
+// { [message_id]: code } from a live run:error event, so this pane names a
+// failure the same way ChatView does for the same event. Not persisted: a
+// reload has only the row's error text and reclassifies from that.
+const errorMeta = ref({});
 function errorNote(m) {
-	return turnErrorInfo(m.error, "", { provider: m.provider });
+	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", { provider: m.provider });
 }
+// `err` is classified once here, not per template read (five reads per bubble).
+const bubbles = computed(() =>
+	messages.value
+		.filter(
+			(m) =>
+				(m.role === "user" || m.role === "assistant") &&
+				(String(m.content || "").trim() || (m.role === "assistant" && m.error))
+		)
+		.map((m) => ({ ...m, err: m.error ? errorNote(m) : null }))
+);
 
 // ChatView's stripBlocks, minimal subset: internal fenced blocks (actions,
 // confirms, cards…) never render as raw fences in the pane. `jarvis-ask` is
@@ -1146,6 +1153,8 @@ function onEvent(p) {
 			activeTools.value = [];
 			waitingFirstTool.value = false;
 			compacting.value = false;
+			if (p.message_id)
+				errorMeta.value = { ...errorMeta.value, [p.message_id]: p.code || "" };
 			loadContext();
 			break;
 		case "context:compacted":
