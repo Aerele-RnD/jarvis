@@ -375,7 +375,15 @@
 						     full chat uses; the raw provider text (an OAuth 401 arrives
 						     as a JSON blob) stays folded away behind "Details" so it
 						     cannot swamp a 400px panel. -->
-						<div v-if="turnError" class="jvp-turn-err" role="alert">
+						<!-- A cancelled / aged-out queued turn: muted note, no retry. -->
+						<div
+							v-if="turnError && turnErrorDetails.code === 'cancelled'"
+							class="jvp-turn-err-muted"
+							role="status"
+						>
+							{{ turnErrorHeadline }}
+						</div>
+						<div v-else-if="turnError" class="jvp-turn-err" role="alert">
 							<div class="jvp-turn-err-h">{{ turnErrorHeadline }}</div>
 							<div
 								v-if="
@@ -392,21 +400,22 @@
 									:href="turnErrorDetails.statusUrl"
 									target="_blank"
 									rel="noopener noreferrer"
-									>{{ turnErrorDetails.statusLabel }} &#8599;</a
+									>{{ turnErrorDetails.statusLabel }} <span aria-hidden="true">&#8599;</span></a
 								>
 								<template v-if="turnErrorHasDetail">
-									<span aria-hidden="true"> &middot; </span>
+									<span v-if="turnErrorHint" aria-hidden="true"> &middot; </span>
 									<button
 										type="button"
 										class="jvp-turn-err-link"
 										:aria-expanded="turnErrorOpen ? 'true' : 'false'"
+										aria-controls="jvp-turn-err-raw"
 										@click="turnErrorOpen = !turnErrorOpen"
 									>
 										{{ turnErrorOpen ? "Hide details" : "Details" }}
 									</button>
 								</template>
 							</div>
-							<pre v-if="turnErrorOpen" class="jvp-turn-err-raw">{{
+							<pre v-if="turnErrorOpen" id="jvp-turn-err-raw" class="jvp-turn-err-raw">{{
 								turnError
 							}}</pre>
 							<div v-if="turnErrorDetails.retryable" class="jvp-turn-err-acts">
@@ -2211,6 +2220,13 @@ defineExpose({ load, startNewChat, convId });
 	line-height: 1.4;
 	color: var(--jv-text-2, inherit);
 	opacity: 0.85;
+}
+.jvp-turn-err-muted {
+	margin: 6px 0;
+	font-size: 11.5px;
+	line-height: 1.4;
+	color: var(--jv-text-3, inherit);
+	opacity: 0.8;
 }
 .jvp-turn-err-link {
 	font: inherit;

@@ -1,4 +1,5 @@
 import { reactive } from "vue";
+import { turnErrorInfo } from "../../../jarvis/public/js/turn_errors.mjs";
 
 import { agentName } from "@/branding";
 import { report as reportError } from "@shared/lib/errorReporter";
@@ -101,11 +102,13 @@ export function recordEvent(e) {
 			conversation: conv,
 			run_id: e.run_id || "",
 		});
+		// Same classified copy the chat shows, never the raw provider text.
+		const info = turnErrorInfo(e.error, e.code);
 		push({
 			id: `err:${e.run_id || e.message_id}`,
 			kind: "task-failed",
 			title: "Task failed",
-			body: e.error || "Something went wrong during the run.",
+			body: `${info.headline}. ${info.hint}`.trim(),
 			conversation: conv,
 			at,
 			read: false,
