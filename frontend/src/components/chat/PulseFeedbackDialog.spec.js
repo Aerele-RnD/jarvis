@@ -103,7 +103,7 @@ describe("PulseFeedbackDialog", () => {
 			["file_box"],
 			["file_box"],
 			"",
-			"",
+			""
 		);
 	});
 

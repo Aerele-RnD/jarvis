@@ -321,6 +321,4 @@ class TestSubmitSessionFeedback(_SessionFeedbackTestCase):
 		to admin, exactly like its pulse siblings (see
 		test_pulse_feedback.py::test_both_endpoints_are_post_only) - reached over
 		GET, Frappe would not enforce CSRF on it."""
-		self.assertEqual(
-			frappe.allowed_http_methods_for_whitelisted_func[submit_session_feedback], ["POST"]
-		)
+		self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[submit_session_feedback], ["POST"])
