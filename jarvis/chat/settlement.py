@@ -160,6 +160,11 @@ def invoke_settlement(
 
 	frappe.db.commit()  # slot released; the NEXT turn can be promoted
 
+	# The maintained per-conversation turn counter that drives the once-per-session
+	# feedback popup. Runs BEFORE the terminal publish so the client's
+	# ``session_feedback_status`` call on ``run:end`` already sees this turn counted.
+	_bump_turn_count(conversation, run_id)
+
 	# S5 — authoritative fenced terminal event, ONLY after the winning commit. CDX-3:
 	# the terminal carries pump_epoch so the client permanently blocks any later
 	# lower-epoch straggler (a stale pump's late delta / run:start) for this turn. CDX-12:
@@ -185,6 +190,101 @@ def invoke_settlement(
 
 	# S6 — enqueue enrichment (idempotent per (turn, effect_name); force-done at 3).
 	deps.enqueue_finalize(run_id, relay_target_id)
+
+
+def _is_hidden_turn(run_id: str) -> bool:
+	"""True when this turn's SEED user message is hidden from the transcript - an
+	internal system prompt rather than something a human typed.
+
+	``chat.api.enqueue_continuation`` is the ONLY producer that passes
+	``hidden=True`` today (checked: macro steps and app-learning prompts call
+	``_enqueue_turn`` WITHOUT it - those conversations are excluded by
+	``agent_initiated`` instead). Every human Apply/Confirm click dispatches such a
+	continuation, and it rides this same pump path, so without this guard ONE user
+	action (send a message that stages a write, then click Apply) counts as TWO
+	turns and the popup fires at roughly half the intended engagement depth.
+
+	``hidden`` lives on the seed Message, not on the Turn row, so this is a
+	two-table read - one statement via ``frappe.qb`` with an explicit join (the
+	multi-table read rule), two primary-key seeks. A turn with no seed message (a
+	recovered / synthesised terminal) yields no row and counts as a normal turn."""
+	t = frappe.qb.DocType(TURN)
+	m = frappe.qb.DocType(MSG)
+	rows = (
+		frappe.qb.from_(t).inner_join(m).on(m.name == t.seed_message).select(m.hidden).where(t.name == run_id)
+	).run()
+	return bool(rows and rows[0][0])
+
+
+def _bump_turn_count(conversation: str, run_id: str) -> None:
+	"""Advance ``Jarvis Conversation.turn_count`` by one for a settled turn.
+
+	O(1) indexed single-row UPDATE, never a ``COUNT(*)`` over ``tabJarvis Chat
+	Message``: this is the highest-frequency path the session-feedback feature
+	touches (every assistant reply, every conversation, fleet-wide), so the
+	popup's trigger check must be a plain integer read, not a scan. Same shape as
+	``greeting.increment_new_chat_count`` - an ATOMIC ``col = col + 1`` rather
+	than a read-modify-write, so two settlements racing on one conversation
+	(reconcile + terminal) can never lose an increment.
+
+	Three exclusions, so the counter measures HUMAN engagement and nothing else
+	(spec: File Box and agent-initiated conversations are excluded from turn
+	counting):
+	  * ``file_box=0`` - an unattended drop, never a chat session;
+	  * ``agent_initiated=0`` - a macro / merge / app-learning / scheduled-audit /
+	    proactive / act-on-a-finding run log the user did not open;
+	  * ``_is_hidden_turn`` - a confirmation continuation, which is part of the
+	    user's PREVIOUS action, not a new turn.
+	The first two ride the same indexed lookup and cost nothing extra; a 0-row
+	update is the intended outcome there, so the rowcount is not consulted. The
+	third is checked FIRST so an excluded turn skips the UPDATE and its commit
+	entirely.
+
+	DELIBERATELY its OWN transaction, AFTER the settlement commit above, NOT
+	inside the fenced settlement txn. ``Jarvis Conversation`` is rank 2 in the
+	canonical lock order (control -> conversation -> turn -> message, OAR-6) and
+	the settlement txn already holds turn (rank 3) and message (rank 4) row locks;
+	taking a conversation lock there would invert against
+	``admission.accept_or_queue`` (shard -> conversation -> turn) and could
+	deadlock a concurrent send. The codebase already draws this line explicitly:
+	``admission._sweep_age_out`` and the user-cancel path both COMMIT their turn
+	CAS before calling ``_write_cancel_marker``, which takes the conversation
+	lock. This txn holds exactly one row lock and never waits while holding
+	another, so it cannot be part of a cycle.
+
+	Cost of the split: a crash between the settlement commit and this bump
+	undercounts one turn (a re-settle returns early on the already-advanced
+	state). Acceptable - the counter is an advisory engagement signal, and the
+	popup simply fires one turn later.
+
+	NEVER raises: a failed bump must not cost the turn its terminal publish or
+	its finalize enqueue, and must not leave an open txn/row lock across the
+	realtime publish that follows."""
+	try:
+		if _is_hidden_turn(run_id):
+			return
+		frappe.db.sql(
+			f"""UPDATE `tab{CONV}` SET turn_count = turn_count + 1
+			WHERE name=%(c)s AND file_box=0 AND agent_initiated=0""",
+			{"c": conversation},
+		)
+		# Own short transaction (see above): commit immediately so the conversation
+		# row lock is released before the publish, and is never held across it.
+		frappe.db.commit()
+	except Exception:
+		# Guarded like turn_state.lease_lost_exit's: on a connection-level fault the
+		# rollback itself can raise, and "never raises" has to hold literally.
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
+		# Same guard on the error log: it INSERTs an Error Log row over the very
+		# connection that just failed, so during a DB outage it raises too, and an
+		# escape here would cost the turn its run:end publish and finalize enqueue.
+		try:
+			frappe.log_error(title="settlement.bump_turn_count", message=frappe.get_traceback())
+		except Exception:
+			pass
 
 
 def _extra_with_pending(extra: dict, owner: str | None, conversation: str) -> dict:

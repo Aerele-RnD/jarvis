@@ -11,6 +11,7 @@
     "seq",
     "role",
     "content",
+    "via_voice",
     "streaming",
     "error",
     "recovering",
@@ -64,6 +65,14 @@
       "fieldname": "content",
       "fieldtype": "Long Text",
       "label": "Content"
+    },
+    {
+      "fieldname": "via_voice",
+      "fieldtype": "Check",
+      "label": "Via Voice",
+      "default": 0,
+      "depends_on": "eval:doc.role=='user'",
+      "description": "Set when this message's text came from mic dictation rather than typing. No audio or transcript-origin metadata beyond this flag."
     },
     {
       "fieldname": "streaming",
