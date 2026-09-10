@@ -101,7 +101,7 @@ export function turnErrorInfo(raw, explicitCode, context = {}) {
       ? {
           "service-unavailable": {
             headline: `${provider[1]} could not complete this request`,
-            hint: "Try again shortly, or choose another available model. Check the status page below for reported incidents.",
+            hint: "Try again shortly, or choose another available model.",
           },
           timeout: {
             headline: `${provider[1]} did not respond in time`,
