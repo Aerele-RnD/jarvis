@@ -458,7 +458,8 @@
 									:href="turnErrorDetails.statusUrl"
 									target="_blank"
 									rel="noopener noreferrer"
-									>{{ turnErrorDetails.statusLabel }} <span aria-hidden="true">&#8599;</span></a
+									>{{ turnErrorDetails.statusLabel }}
+									<span aria-hidden="true">&#8599;</span></a
 								>
 								<template v-if="turnErrorHasDetail">
 									<span v-if="turnErrorHint" aria-hidden="true"> &middot; </span>
@@ -473,9 +474,12 @@
 									</button>
 								</template>
 							</div>
-							<pre v-if="turnErrorOpen" id="jvp-turn-err-raw" class="jvp-turn-err-raw">{{
-								turnError
-							}}</pre>
+							<pre
+								v-if="turnErrorOpen"
+								id="jvp-turn-err-raw"
+								class="jvp-turn-err-raw"
+								>{{ turnError }}</pre
+							>
 							<div v-if="turnErrorDetails.retryable" class="jvp-turn-err-acts">
 								<button class="jvp-btn-subtle" type="button" @click="retryLast">
 									Retry

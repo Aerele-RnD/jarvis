@@ -71,7 +71,9 @@
 					     is what the user needs to read here. -->
 					<!-- a cancelled / aged-out queued turn: muted note, not a failure -->
 					<div v-else-if="m.error && m.err.code === 'cancelled'" class="flex">
-						<div class="text-xs text-ink-gray-5" role="status">{{ m.err.headline }}</div>
+						<div class="text-xs text-ink-gray-5" role="status">
+							{{ m.err.headline }}
+						</div>
 					</div>
 					<div v-else-if="m.error" class="flex">
 						<div class="max-w-[95%] text-sm text-ink-red-4" role="status">
@@ -84,7 +86,8 @@
 									:href="m.err.statusUrl"
 									target="_blank"
 									rel="noopener noreferrer"
-									>{{ m.err.statusLabel }} <span aria-hidden="true">&#8599;</span></a
+									>{{ m.err.statusLabel }}
+									<span aria-hidden="true">&#8599;</span></a
 								>
 								<span v-if="m.err.hint" aria-hidden="true"> &middot; </span>
 								<button

@@ -1093,10 +1093,13 @@
 												target="_blank"
 												rel="noopener noreferrer"
 												class="jv-err-link"
-												>{{ errorInfo(m).statusLabel }} <span aria-hidden="true">&#8599;</span></a
+												>{{ errorInfo(m).statusLabel }}
+												<span aria-hidden="true">&#8599;</span></a
 											>
 											<template v-if="m.error">
-												<span v-if="errorInfo(m).hint" aria-hidden="true"> &middot; </span>
+												<span v-if="errorInfo(m).hint" aria-hidden="true">
+													&middot;
+												</span>
 												<button
 													type="button"
 													class="jv-err-link"
@@ -5921,7 +5924,9 @@ function queuedChipLabel(pos, state) {
 const errorInfoCache = new Map();
 function errorInfo(m) {
 	const meta = errorMeta.value[m.name] || {};
-	const key = `${m.name}\u0000${m.error}\u0000${meta.code || ""}\u0000${meta.changed_data}\u0000${m.provider || ""}`;
+	const key = `${m.name}\u0000${m.error}\u0000${meta.code || ""}\u0000${
+		meta.changed_data
+	}\u0000${m.provider || ""}`;
 	let info = errorInfoCache.get(key);
 	if (!info) {
 		info = {
