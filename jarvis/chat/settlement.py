@@ -110,13 +110,19 @@ def invoke_settlement(
 		pub_kind, pub_extra = "run:error", {"error": err, "code": _classify(err)}
 	else:
 		final_text = _final_text(terminal_payload)
+		# A media/marker-only reply strips to empty text; force the content overwrite
+		# whenever ANY MEDIA: marker was stripped, so the raw streamed batcher tail
+		# (which could carry the marker) can never survive into stored content. Coerce
+		# the payload — this boundary can receive a JSON string on the reconcile path.
+		_tp = _coerce_payload(terminal_payload)
+		marker_stripped = isinstance(_tp, dict) and bool(_tp.get("marker_stripped"))
 		# S1 final projection (final text beats the batcher tail); always clear
 		# streaming even when the terminal carried no text (matches legacy).
 		if am:
-			if final_text:
+			if final_text or marker_stripped:
 				ts._run_cas(
 					f"UPDATE `tab{MSG}` SET content=%(c)s, streaming=0 WHERE name=%(m)s",
-					{"c": final_text, "m": am},
+					{"c": final_text or "", "m": am},
 				)
 			else:
 				ts._run_cas(f"UPDATE `tab{MSG}` SET streaming=0 WHERE name=%(m)s", {"m": am})

@@ -1074,9 +1074,16 @@ class AgentSession:
 							"error": failed_final_error(failure_detail),
 						}
 						return
-					# Not a failed-final -> redact the surfaced reply + fire the
-					# once-per-turn tripwire (classification above ran on raw text).
-					yield {"kind": "relay:final", "text": egress_rules.redact_and_flag(text, run_id=run_id)}
+					# Not a failed-final -> consume the MEDIA marker, redact the surfaced
+					# reply + fire the once-per-turn tripwire (classification ran on raw
+					# text). media_rels rides the terminal so the worker seeds the image.
+					_red, _rels, _marked = egress_rules.redact_final_with_media(text, run_id=run_id)
+					_final = {"kind": "relay:final", "text": _red}
+					if _rels:  # fetchable media -> seed downstream (only set when present)
+						_final["media_rels"] = _rels
+					if _marked:  # any MEDIA: line stripped -> force the content overwrite
+						_final["marker_stripped"] = True
+					yield _final
 					return
 				if state in ("error", "aborted"):
 					yield {
