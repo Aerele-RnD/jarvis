@@ -20,7 +20,9 @@ const providers = [
     "together",
     "Together AI",
     "https://status.together.ai/",
-    /\btogether(?:\.ai| ai)?\b/i,
+    // Suffix is mandatory: bare "together" is ordinary prose ("all retries
+    // failed together"), and this entry outranks model-author matches.
+    /\btogether(?:\.ai|\s?ai|computer)\b/i,
   ],
   [
     "anthropic",
