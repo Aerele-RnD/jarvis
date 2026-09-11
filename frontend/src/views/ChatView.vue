@@ -2626,7 +2626,7 @@
 				<Banner
 					v-else-if="workersWarnNotice"
 					type="warning"
-					title="Replies may be slow right now"
+					title="Replies may be slow"
 					:message="workersWarnNotice"
 					style="margin-bottom: 10px"
 				/>
@@ -4683,7 +4683,7 @@ const suspendedNotice = ref(null);
 // not a stop sign. Self-heals: cleared on the next successful retry/send, never
 // re-derived from a re-poll (checkReady() is memoized). Null while healthy.
 const workersWarnNotice = ref(null);
-const WORKERS_WARN_MSG = `${agentName} is busier than usual, so answers might take a little longer. You can keep chatting.`;
+const WORKERS_WARN_MSG = `${agentName} is low on background workers, so answers may take longer. Add more workers to your bench to speed this up.`;
 // A DIFFERENT not-ready reason (container_provisioning - e.g. the connected LLM
 // account itself ran out of quota, or a container is still coming up) - never a
 // billing lapse, so it gets its own quiet copy instead of suspendedNotice's "Chat is
@@ -9005,12 +9005,6 @@ async function newChat() {
 	// _checkPulseOnce (keyed on this id, not _shownConvId) keeps this from
 	// double-firing when the first reply's loadConversation reload runs next.
 	_checkPulseOnce(currentId.value);
-	// loadConversation does not run on this path (see below), so reload THIS
-	// conversation's own connector-focus pick here instead of leaving the ref
-	// on whatever the PREVIOUS chat had armed - createOrFocusEmpty can return
-	// an already-existing empty conversation, so this is a real reload (its
-	// own stored pick, if any), not just a reset to null.
-	connectorFocus.value = _loadConnectorFocusFor(currentId.value);
 	// This conversation IS the unsaved new-chat composer getting its id. The recovered/typed
 	// new-chat draft (already restored into `input` by swapDraft above) and its still-retained
 	// voice records lived under the _NEW_CHAT_SCOPE sentinel — migrate draft + records + mirror +

@@ -494,6 +494,15 @@ NON_LIST_ENDPOINTS: dict[str, str] = {
 		"Dashboard Builder history menu: a capped, owner-scoped slice of dashboard-origin "
 		"threads for the pane's own dropdown, not a browsable document list"
 	),
+	# jarvis#1062: a type-ahead SOURCE for the admin Access editor's people picker,
+	# not a document list. It returns at most 20 {name, full_name} pairs for a
+	# substring, has no filter/sort/page contract, and is gated require_jarvis_admin
+	# — there is no list VIEW here to register, and giving it one would imply a
+	# browsable directory of the tenant's users that the product deliberately lacks.
+	"jarvis.chat.agents_api.search_users": (
+		"admin Access-editor people picker: a capped type-ahead over enabled users, "
+		"not a browsable document list"
+	),
 	"jarvis.chat.approvals_api.list_approvals": "unpaginated companion of approvals (list_approvals_page)",
 	"jarvis.chat.custom_skills_api.list_custom_skills": (
 		"composer '/' autocomplete feed for skills; unpaginated companion of the skills view"
@@ -539,6 +548,16 @@ NON_LIST_ENDPOINTS: dict[str, str] = {
 	"jarvis.chat.wiki.get_wiki_graph_history": (
 		"the edit-history feed of ONE wiki page — a per-document timeline, not a "
 		"collection (the chat equivalent of a form's version history)"
+	),
+	# jarvis#1062: the live step timeline of ONE agent run, rendered inside that
+	# run's own panel. The same shape as get_wiki_graph_history above — a
+	# per-document timeline read whole (capped at RUN_STEPS_CAP, ordered by the
+	# run's own `seq`), with no filter, sort or page contract to migrate. The
+	# browsable agent surfaces are the registered agent_runs / agent_findings /
+	# agent_activity views.
+	"jarvis.chat.agents_api.list_run_steps": (
+		"the step timeline of ONE agent run — a per-document timeline read whole, "
+		"not a filterable document-list view"
 	),
 	"jarvis.chat.triggers_api.activity_stats": (
 		"aggregate counters over Trigger Activity (a stats rollup), not a row "
