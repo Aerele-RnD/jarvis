@@ -96,6 +96,12 @@ def _resolve(company, fiscal_year, from_date, to_date) -> dict:
 		"to_date": to_date,
 		"prior_fy_start": prior["py_start"] if prior else None,
 		"prior_fy_end": prior["py_end"] if prior else None,
+		# The run's as-of date (site date, never a container clock). to_date bounds
+		# the analysis window and MAY be in the future (a user-set or fiscal-year
+		# end), but a period-end finding must not assess data that has not happened
+		# yet: an evaluator caps its "due" cutoff at report_date so future-dated
+		# schedule rows (e.g. the rest of the year's depreciation) are never flagged.
+		"report_date": frappe.utils.today(),
 	}
 
 

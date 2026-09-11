@@ -1040,11 +1040,12 @@ def _audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str
 		scope_block += f"\n\nAUTHORIZED APPS (the ONLY apps you may read source from or write about): {apps}."
 	if scope and scope.get("company"):
 		scope_block += (
-			"\n\nEXPLICIT SCOPE (use these EXACT values; never infer the period): "
+			"\n\nEXPLICIT SCOPE (use these EXACT values; never infer the period or the current date): "
 			f'company="{scope.get("company")}", '
 			f'fiscal_year="{scope.get("fiscal_year")}", '
 			f'from_date="{scope.get("from_date")}", '
 			f'to_date="{scope.get("to_date")}", '
+			f'report_date="{scope.get("report_date")}", '
 			f'prior_fy_start="{scope.get("prior_fy_start")}", '
 			f'prior_fy_end="{scope.get("prior_fy_end")}".'
 		)
