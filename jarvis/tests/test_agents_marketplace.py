@@ -341,6 +341,7 @@ class TestAgentsMarketplace(unittest.TestCase):
 			"fiscal_year": "2026-2027",
 			"from_date": "2026-04-01",
 			"to_date": "2027-03-31",
+			"report_date": "2026-09-11",
 			"prior_fy_start": "2025-04-01",
 			"prior_fy_end": "2026-03-31",
 		}
@@ -350,7 +351,21 @@ class TestAgentsMarketplace(unittest.TestCase):
 			self.assertNotIn(leak, gen)
 		self.assertIn("EXPLICIT SCOPE", gen)
 		self.assertIn("2026-04-01", gen)  # scope injected verbatim (A6)
+		self.assertIn("2026-09-11", gen)  # as-of report_date conveyed to the delegate
 		self.assertIn(inst_name, gen)  # installation pointer
+
+	def test_resolve_scope_injects_report_date_and_preserves_to_date(self):
+		"""to_date bounds the analysis window (may be a future FY end) and is left
+		as-is; report_date is the site's today, injected so a period-end finding can
+		cap due-ness at the as-of date instead of a future to_date."""
+		from jarvis.chat import agent_scope
+
+		company = frappe.db.get_value("Company", {}, "name")
+		if not company:
+			self.skipTest("no Company on the test site")
+		sc = agent_scope._resolve(company, None, "2026-04-01", "2027-03-31")
+		self.assertEqual(sc["to_date"], "2027-03-31")  # window preserved, never clamped
+		self.assertEqual(sc["report_date"], frappe.utils.today())  # as-of = site today
 
 	# ------------------------------------------------------------------ #
 	# (b) mutation authZ (S3)
