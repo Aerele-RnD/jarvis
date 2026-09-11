@@ -345,7 +345,7 @@ class TestPP2FalseCleanUnreachable(FrappeTestCase):
 			result_state="partial",
 		)
 		# remove the banner substring entirely
-		banner_marker = "Partial run — "
+		banner_marker = "Partial run - "
 		self.assertIn(banner_marker, html)
 		stripped = html.split(banner_marker)[0] + html.split(banner_marker)[1].split("</div>", 1)[1]
 		self.assertIn('data-result-state="partial"', stripped)
@@ -466,6 +466,36 @@ class TestWritebackIntegration(FrappeTestCase):
 			run, self.inst, [], coverage={TOKEN: "evaluated"}, scope={"company": self.company}
 		)
 		self.assertEqual(frappe.db.get_value(RUN, run.name, "result_state"), "evaluated_clean")
+
+	def test_scope_merge_preserves_bench_stamped_report_date(self):
+		# The bench stamps report_date (+ prior-FY) at trigger; the delegate's writeback
+		# scope carries only the core dims. record_delegate_run MERGES onto the existing
+		# stamp rather than overwriting, so the persisted scope keeps report_date -- a run
+		# missing it would replay against to_date and change findings + digest.
+		import json as _j
+
+		run = _mk_run(
+			self.owner,
+			scope_json='{"company": "Stale Co", "to_date": "2027-03-31", '
+			'"report_date": "2026-09-11", "prior_fy_end": "2026-03-31"}',
+		)
+		agent_runs.record_delegate_run(
+			run,
+			self.inst,
+			[],
+			coverage={TOKEN: "evaluated"},
+			scope={
+				"company": self.company,
+				"fiscal_year": "2026-2027",
+				"from_date": "2026-04-01",
+				"to_date": "2027-03-31",
+			},
+		)
+		sj = _j.loads(frappe.db.get_value(RUN, run.name, "scope_json"))
+		self.assertEqual(sj["report_date"], "2026-09-11")  # bench-only key survives
+		self.assertEqual(sj["prior_fy_end"], "2026-03-31")
+		self.assertEqual(sj["company"], self.company)  # delegate value wins
+		self.assertEqual(sj["from_date"], "2026-04-01")  # delegate-added key present
 
 	def test_not_evaluable_persisted_when_all_required_unevaluated(self):
 		run = _mk_run(self.owner)
