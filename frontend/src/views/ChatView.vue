@@ -9005,12 +9005,6 @@ async function newChat() {
 	// _checkPulseOnce (keyed on this id, not _shownConvId) keeps this from
 	// double-firing when the first reply's loadConversation reload runs next.
 	_checkPulseOnce(currentId.value);
-	// loadConversation does not run on this path (see below), so reload THIS
-	// conversation's own connector-focus pick here instead of leaving the ref
-	// on whatever the PREVIOUS chat had armed - createOrFocusEmpty can return
-	// an already-existing empty conversation, so this is a real reload (its
-	// own stored pick, if any), not just a reset to null.
-	connectorFocus.value = _loadConnectorFocusFor(currentId.value);
 	// This conversation IS the unsaved new-chat composer getting its id. The recovered/typed
 	// new-chat draft (already restored into `input` by swapDraft above) and its still-retained
 	// voice records lived under the _NEW_CHAT_SCOPE sentinel — migrate draft + records + mirror +
