@@ -156,7 +156,7 @@ frappe.ui.form.on("Jarvis Settings", {
 		// Developer mode only (owner directive 2026-09-11): this is an operator
 		// recovery tool for staging/local benches, not a customer-facing control.
 		// The endpoint itself stays System Manager only regardless of this gate.
-		if (frappe.boot.developer_mode) {
+		if (frappe.boot.developer_mode && frappe.user.has_role("System Manager")) {
 			// Reset onboarding: the bench-side half of a fresh start. Clears this
 			// bench's admin connection + LLM credentials (and, by default, all
 			// workspace content) so the setup wizard runs from step 1 again. Needed
@@ -182,9 +182,9 @@ frappe.ui.form.on("Jarvis Settings", {
 								fieldname: "wipe_data",
 								fieldtype: "Check",
 								label: __("Also delete all workspace content"),
-								default: 1,
+								default: 0,
 								description: __(
-									"Chats, skills, macros, triggers, learning data, wiki and dashboards. Leave unchecked to keep them."
+									"Chats, skills, macros, triggers, learning data, wiki and dashboards. Off by default: only the connection and AI credentials are cleared."
 								),
 							},
 							{
@@ -213,18 +213,9 @@ frappe.ui.form.on("Jarvis Settings", {
 									freeze_message: __("Resetting the workspace…"),
 								})
 								.then((r) => {
-									const m = r.message || {};
-									if (!m.ok) {
-										frappe.msgprint({
-											title: __("Reset Failed"),
-											message:
-												(m.error && m.error.message) ||
-												__("Unknown error"),
-											indicator: "red",
-										});
-										return;
-									}
-									const data = m.data || {};
+									// The endpoint raises on failure (frappe.call shows the server
+									// message); a resolved call is always {ok: true}.
+									const data = (r.message && r.message.data) || {};
 									const wiped = (data.wiped_doctypes || []).length;
 									frappe.msgprint({
 										title: __("Onboarding Reset"),
@@ -243,6 +234,19 @@ frappe.ui.form.on("Jarvis Settings", {
 												window.location.href = "/jarvis";
 											},
 										},
+									});
+									frm.reload_doc();
+								})
+								.catch(() => {
+									// Request-level failure (network, timeout, or a server
+									// exception mid-teardown): say so, and reload so the form
+									// shows whatever state the reset reached.
+									frappe.msgprint({
+										title: __("Reset Failed"),
+										message: __(
+											"The reset did not complete. Reload the page and check the connection fields before trying again."
+										),
+										indicator: "red",
 									});
 									frm.reload_doc();
 								});
