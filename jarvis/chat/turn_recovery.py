@@ -74,14 +74,11 @@ def _age_minutes(dt) -> float:
 	return delta.total_seconds() / 60.0
 
 
-def _latest_assistant_text(messages: list, *, min_seq: int = 0, max_seq: int | None = None) -> str:
-	"""Newest assistant message text from a raw transcript. Handles a
-	plain-string content and the {type:"text", text} block list. Sorted by the
-	transcript seq so the latest turn wins. Every text source is type-guarded.
-
-	SIDE EFFECT: the returned text is run through the white-label egress redactor
-	and, on a redaction hit, fires the once-per-turn tripwire (egress_rules). Call
-	it once per recovered turn — a second call would re-flag (harmlessly folded).
+def _latest_assistant_raw(messages: list, *, min_seq: int = 0, max_seq: int | None = None) -> str:
+	"""Newest assistant message's RAW text from a raw transcript (no redaction, no
+	MEDIA-marker strip). Handles a plain-string content and the {type:"text", text}
+	block list. Sorted by the transcript seq so the latest turn wins. Every text
+	source is type-guarded.
 
 	``min_seq`` is the transcript-seq watermark captured before this turn's
 	chat.send: a message whose seq is <= min_seq predates this turn (or is a
@@ -107,12 +104,9 @@ def _latest_assistant_text(messages: list, *, min_seq: int = 0, max_seq: int | N
 			continue
 		if (m.get("role") or "").lower() != "assistant":
 			continue
-		# The refetched transcript bypasses the live stream, so redact + fire the
-		# once-per-turn tripwire here too (covers both the cron recovery and the
-		# pump recovery tail, which both call this).
 		c = m.get("content")
 		if isinstance(c, str) and c.strip():
-			return egress_rules.redact_and_flag(c)
+			return c
 		if isinstance(c, list):
 			parts = [
 				b.get("text", "")
@@ -124,11 +118,23 @@ def _latest_assistant_text(messages: list, *, min_seq: int = 0, max_seq: int | N
 			]
 			joined = "\n".join(p for p in parts if p.strip())
 			if joined.strip():
-				return egress_rules.redact_and_flag(joined)
+				return joined
 		t = m.get("text")
 		if isinstance(t, str) and t.strip():
-			return egress_rules.redact_and_flag(t)
+			return t
 	return ""
+
+
+def _latest_assistant_text(messages: list, *, min_seq: int = 0, max_seq: int | None = None) -> str:
+	"""Delivered form of :func:`_latest_assistant_raw`: the MEDIA: marker consumed
+	(stripped) and the text run through the white-label egress redactor.
+
+	SIDE EFFECT: on a redaction hit fires the once-per-turn tripwire (egress_rules).
+	Call once per recovered turn — a second call would re-flag (harmlessly folded).
+	The recovery path strips but does NOT re-deliver the image (D1)."""
+	return egress_rules.redact_final_with_media(
+		_latest_assistant_raw(messages, min_seq=min_seq, max_seq=max_seq)
+	)[0]
 
 
 def _conditional_clear(name: str, fields: dict) -> bool:
@@ -397,15 +403,20 @@ def _recover_one(sess: AgentSession, row: dict, active: dict) -> str:
 		return "active"
 	# Raw transcript (sessions.get), NOT chat.history -> no max_chars truncation (#1).
 	messages = sess.get_session_messages(session_key, limit=50)
-	text = _latest_assistant_text(
+	raw = _latest_assistant_raw(
 		messages,
 		min_seq=row.get("agent_seq_watermark") or 0,
 		max_seq=_next_turn_watermark(row["conversation"], row["seq"]),
 	)
-	if text:
+	text, _rels, marker_stripped = egress_rules.redact_final_with_media(raw)
+	# Finalize on real text OR when a MEDIA: marker was stripped to empty — a
+	# media-only reply IS real output (not "no output yet"), so finalize with the
+	# stripped text ("" when marker-only) to ensure the raw marker never lingers in
+	# stored content. D1: recovery strips but does not re-deliver the image.
+	if text or marker_stripped:
 		_finalize(row, text)
 		return "finalized"
-	return "waiting"  # no output yet; the ceiling backstop bounds the wait
+	return "waiting"  # genuinely no output yet; the ceiling backstop bounds the wait
 
 
 def _next_turn_watermark(conversation: str, seq: int) -> int | None:
