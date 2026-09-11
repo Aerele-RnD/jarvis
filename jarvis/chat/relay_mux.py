@@ -229,6 +229,9 @@ class LaneHandler:
 	    fault, precious overflow). The pump parks the turn toward ``recovering``.
 	  * ``on_closing(sentinel: str)`` — the socket died: this lane lost its
 	    transport. The pump re-attaches from durable state on the next hop.
+	  * ``on_status(event_seq: int, status: str)`` — a transient run-status
+	    marker (e.g. an in-flight compaction) (LOSSY, like a delta): a raise
+	    drops the frame, counts it, and continues the same lane.
 	"""
 
 	on_delta: Callable[[int, str, str], None] | None = None
@@ -236,6 +239,7 @@ class LaneHandler:
 	on_terminal: Callable[[str, dict], None] | None = None
 	on_quarantine: Callable[[str], None] | None = None
 	on_closing: Callable[[str], None] | None = None
+	on_status: Callable[[int, str], None] | None = None
 
 
 class _Lane:
@@ -536,7 +540,15 @@ class RelayMux:
 					"title": parsed.get("tool_title"),
 				},
 			)
-		else:  # pragma: no cover - parse_event only yields the three kinds
+		elif kind == "compaction":
+			seq = lane.next_seq()
+			ev = _LaneEvent(
+				cls=LOSSY,
+				kind="status",
+				event_seq=seq,
+				data={"status": "compacting" if parsed.get("phase") == "start" else "compacted"},
+			)
+		else:  # pragma: no cover - parse_event only yields the four kinds above
 			return
 		self._offer(lane, ev)
 
@@ -550,10 +562,18 @@ class RelayMux:
 					{"state": "failed_final", "error": failed_final_error(lane.failure_detail)},
 				)
 			else:
-				# Not a failed-final -> redact the surfaced reply + fire the once-
-				# per-turn tripwire (classification above ran on raw text).
+				# Not a failed-final -> consume the MEDIA marker, redact the surfaced
+				# reply + fire the once-per-turn tripwire (classification ran on raw
+				# text). media_rels rides term_payload -> the Turn row, where
+				# finalize._effect_rich_outputs re-reads it to seed the image (the
+				# pump is the default transport, so this is the primary delivery path).
 				term_kind = "relay:final"
-				term_payload = {"text": egress_rules.redact_and_flag(text, run_id=lane.run_id)}
+				_red, _rels, _marked = egress_rules.redact_final_with_media(text, run_id=lane.run_id)
+				term_payload = {"text": _red}
+				if _rels:  # fetchable media -> seed downstream (only set when present)
+					term_payload["media_rels"] = _rels
+				if _marked:  # any MEDIA: line stripped -> force the content overwrite
+					term_payload["marker_stripped"] = True
 		elif state in ("error", "aborted"):
 			term_kind = "relay:error"
 			term_payload = {
@@ -775,6 +795,9 @@ class RelayMux:
 			elif ev.kind == "tool":
 				if h.on_tool is not None:
 					h.on_tool({"event_seq": ev.event_seq, **ev.data})
+			elif ev.kind == "status":
+				if h.on_status is not None:
+					h.on_status(ev.event_seq, ev.data["status"])
 			elif ev.kind == "terminal":
 				if h.on_terminal is not None:
 					h.on_terminal(ev.data["terminal_kind"], ev.data["payload"])
@@ -789,7 +812,8 @@ class RelayMux:
 				# fault NEVER parks the turn.
 				self._bump("deltas_dropped")
 				_logger.debug(
-					"relay_mux: poison delta on run=%s seq=%s dropped+continued",
+					"relay_mux: poison %s on run=%s seq=%s dropped+continued",
+					ev.kind,
 					lane.run_id,
 					ev.event_seq,
 					exc_info=True,

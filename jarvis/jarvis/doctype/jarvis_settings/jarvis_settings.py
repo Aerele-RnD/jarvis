@@ -2626,6 +2626,14 @@ def request_resync(settings) -> str:
 
 	if compute_pool_mode(settings):
 		settings._enqueue_pool_sync()
+		# Skills are orthogonal to LLM routing: the direct leg fires these via
+		# ``action="restart"`` (``_sync_via_admin``), but the pool leg returns here
+		# WITHOUT them, so a pool/subscription tenant's Resync (and any rebuild that
+		# routes through this leg) re-pushed the LLM but left ``custom_skills/`` +
+		# ``learned_skills/`` EMPTY. Fire them on the pool leg too so skills restore for
+		# every cohort. Both are no-op on zero rows, deduped, and never raise.
+		settings._resync_custom_skills_after_restart()
+		settings._resync_learned_skills_after_restart()
 		return "pool"
 	# Stamp the request time too (jarvis C2 time-box): a direct-leg Resync is a
 	# fresh apply request, so it must restart the llm_applying soft window the

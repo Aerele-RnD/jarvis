@@ -650,6 +650,35 @@ class TestSnapshotRecoveryWindow(_PipelineCase):
 		end = next(p for p in self._pubs if p.get("kind") == "run:end")
 		self.assertTrue(end.get("was_recovered"), "run:end carries was_recovered for a real recovery")
 
+	def test_in_window_media_marker_only_recovers_final_with_clean_content(self):
+		"""Q3 leak-safety: a marker-ONLY in-window reply (seq 7 > watermark 5) must
+		settle FINAL with clean (empty) content — NOT errored, and NEVER leaving the
+		raw MEDIA:/home/node/... path in stored content (served raw on reload)."""
+		conv = self._mk_conv()
+		rid = "pmp_rec_media"
+		amsg, epoch = self._seed_streaming_gone(conv, rid, watermark=5)
+		double = self._double()
+		marker = "MEDIA:/home/node/.openclaw/media/tool-image-generation/black-hole---abcd1234.png"
+		double.arm_sessions_get(
+			"sess-rec",
+			[
+				{"role": "user", "content": "second question", "__openclaw": {"seq": 6}},
+				{"role": "assistant", "content": marker, "__openclaw": {"seq": 7}},
+			],
+		)
+		ctx = self._ctx_for(double, epoch)
+		self._pubs.clear()
+
+		pump._reconcile_on_start(ctx)
+		self._pump_until(ctx, lambda: self._state(rid) in ("errored", "finalizing", "done"))
+
+		self.assertEqual(self._state(rid), "finalizing", "marker-only IS real output -> final, not errored")
+		content = frappe.db.get_value(MSG, amsg, "content")
+		self.assertEqual(content, "", "marker stripped to empty clean content")
+		self.assertNotIn("/home/node", content or "")
+		self.assertNotIn("MEDIA:", content or "")
+		self.assertEqual(int(self._val(rid, "was_recovered")), 1)
+
 
 # --------------------------------------------------------------------------- #
 # 6. Two-writer settlement — exactly-once under a racing recovery (both orders)
@@ -866,7 +895,7 @@ class TestSux11ErrorContract(_PipelineCase):
 		# The run:error event carries today's classification code (SUX-11).
 		err_pub = next(p for p in self._pubs if p.get("kind") == "run:error")
 		self.assertEqual(err_pub["error"], "provider quota exceeded")
-		self.assertEqual(err_pub["code"], "provider", "quota -> 'provider' headline (ERROR_HEADLINES)")
+		self.assertEqual(err_pub["code"], "quota", "quota receives its own usage-limit category")
 		# Turn.error mirrors it too.
 		self.assertEqual(self._val(rid, "error"), "provider quota exceeded")
 
@@ -925,7 +954,10 @@ class TestFailedFinalSettlesAsError(_PipelineCase):
 		self.assertIn("429", err)
 		self.assertIn("quota", err)
 		err_pub = next(p for p in self._pubs if p.get("kind") == "run:error")
-		self.assertEqual(err_pub["code"], "provider", "quota -> 'provider' headline (ERROR_HEADLINES)")
+		# Gemini's text says "check your plan and billing details": the billing
+		# rule precedes the bare-quota rule on purpose, so the customer is sent
+		# to the account owner, not told to wait for a reset.
+		self.assertEqual(err_pub["code"], "billing", "a 429 that names billing is a billing check")
 
 	def test_empty_final_after_tools_settles_errored(self):
 		# Second reproduction: same terminal reached with tools already run and a

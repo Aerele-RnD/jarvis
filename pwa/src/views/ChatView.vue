@@ -10,6 +10,12 @@ import {
 	watch,
 } from "vue";
 import BrandMark from "../components/BrandMark.vue";
+import {
+	holdActive,
+	raiseHold,
+	clearHold,
+	recheck as recheckMaintenance,
+} from "../maintenanceGate";
 import { agentName } from "@/branding";
 import { useRouter } from "vue-router";
 // The desktop SPA's renderer — dependency-free, and sharing it means an agent
@@ -36,11 +42,13 @@ import Composer from "../components/Composer.vue";
 import DecisionCard from "../components/DecisionCard.vue";
 import DecisionSheet from "../components/DecisionSheet.vue";
 import FilePreviewSheet from "../components/FilePreviewSheet.vue";
+import { turnErrorInfo } from "../../../jarvis/public/js/turn_errors.mjs";
 import MessageMedia from "../components/MessageMedia.vue";
 import RecordCards from "../components/RecordCards.vue";
 import Sheet from "../components/Sheet.vue";
 import SkillChips from "../components/SkillChips.vue";
 import ThinkingIndicator from "../components/ThinkingIndicator.vue";
+import VersionPill from "../components/VersionPill.vue";
 // Lazy: the voice sheet pulls in the shared audio recorder, and a user who never
 // taps the mic should never pay for it.
 const VoiceSheet = defineAsyncComponent(() => import("../components/VoiceSheet.vue"));
@@ -64,6 +72,20 @@ const input = ref("");
 const loading = ref(false);
 const sendBusy = ref(false);
 const errorBanner = ref("");
+// { [message_id]: code } from a live run:error event; not persisted, so a
+// reload (messages re-fetched via load()) falls back to classifying the
+// persisted error string alone. Without this, the banner above (which does
+// get the live code) and this same message's inline error card would name
+// the failure differently for the SAME event - the exact #702 defect this
+// feature exists to fix, reproduced across two elements on one screen.
+const errorMeta = ref({});
+// Failed messages whose raw error text is expanded ("Details" in the card).
+const rawOpen = ref(new Set());
+function toggleRaw(key) {
+	const next = new Set(rawOpen.value);
+	next.has(key) ? next.delete(key) : next.add(key);
+	rawOpen.value = next;
+}
 const attachments = ref([]);
 const pending = ref([]); // parked writes awaiting approval
 // Ordered the SAME way the server orders the parked list, because a typed
@@ -161,6 +183,14 @@ const view = (m) => {
 	};
 };
 
+// Mirrors ChatView.vue's (desktop) errorInfo(): a live run:error's code, when
+// this session saw it, always wins over reclassifying the persisted string
+// (errorMeta above). Called once per assistant item from `items` below (as
+// `err`), never from the template, for the same reason view() is precomputed.
+function errorNote(m) {
+	return turnErrorInfo(m.error, errorMeta.value[m.name] || "", { provider: m.provider });
+}
+
 // ── thread assembly ─────────────────────────────────────────────────────────
 // Tool rows BELONG to the assistant turn that ran them. The worker creates the
 // assistant placeholder first and appends each tool row after it, so in `seq`
@@ -194,7 +224,14 @@ const items = computed(() => {
 			}
 			current.tools.push(m);
 		} else {
-			current = { type: "assistant", key: m.name, msg: m, view: view(m), tools: [] };
+			current = {
+				type: "assistant",
+				key: m.name,
+				msg: m,
+				view: view(m),
+				err: m.error ? errorNote(m) : null,
+				tools: [],
+			};
 			out.push(current);
 		}
 	}
@@ -284,7 +321,9 @@ async function loadPending() {
 async function send() {
 	const text = input.value.trim();
 	const ready = attachments.value.filter((a) => a.file_url);
-	if ((!text && !ready.length) || sending.value) return;
+	// Hard block (Stream E maintenance hold): the server refuses every send during a hold and the
+	// composer is disabled; guard here too so a queued/programmatic send can't slip through.
+	if ((!text && !ready.length) || sending.value || holdActive.value) return;
 
 	errorBanner.value = "";
 	input.value = "";
@@ -325,6 +364,9 @@ async function send() {
 		// exist. The receipt chip in the reloaded thread is what the user sees.
 		if (res?.confirmed) {
 			sendBusy.value = false;
+			// A parked-card confirmation also got past the send gate, so any maintenance
+			// hold has lifted - clear the strip now instead of waiting for the poll.
+			clearHold();
 			messages.value = messages.value.filter((m) => !m.optimistic);
 			if (res.ok === false)
 				errorBanner.value =
@@ -344,9 +386,22 @@ async function send() {
 				setTimeout(() => window.location.reload(), 1500);
 				return;
 			}
+			// Maintenance hold (Stream E): the operator/roll raised an upgrade hold
+			// while this tab was open. Raise the persistent top-of-app strip + self-
+			// heal by re-checking the CP; no reload (a hold is transient). This HARD-
+			// blocks the composer (disabled until the hold lifts, then re-enabled).
+			if (res.reason === "maintenance") {
+				raiseHold(res.message);
+				recheckMaintenance();
+				input.value = text; // keep their draft so it's ready when the hold lifts
+				return;
+			}
 			errorBanner.value = res.reason || "Couldn't send that message.";
 			return;
 		}
+		// An accepted send proves the maintenance hold lifted - clear the strip + wake
+		// the avatar now instead of stranding them until a reload (self-heal).
+		clearHold();
 		// First send of a brand-new chat: adopt the id the backend just created,
 		// and put the row in the list without a refetch.
 		const id = res?.conversation_id;
@@ -558,7 +613,12 @@ function onEvent(p) {
 		case "run:error":
 			sendBusy.value = false;
 			live.value = null;
-			if (!ignored) errorBanner.value = p.error || "That turn failed.";
+			if (!ignored) {
+				const info = turnErrorInfo(p.error, p.code);
+				errorBanner.value = `${info.headline}. ${info.hint}`;
+			}
+			if (p.message_id)
+				errorMeta.value = { ...errorMeta.value, [p.message_id]: p.code || "" };
 			// C2 self-heal (mirror run:end): a card parked in a turn that then errors
 			// must still auto-recover — drain p.pending here too, not only on run:end.
 			// Deduped by token; a conv-less token ("") binds to this conversation; a
@@ -678,6 +738,10 @@ onUnmounted(() => {
 			<div class="jv-head-title">{{ title }}</div>
 			<div class="jv-head-sub">{{ model ? `${agentName} · ${model}` : agentName }}</div>
 		</div>
+		<!-- Release-nudge version pill (Slice 3b): always-on "how current is my
+		     Jarvis" status; click opens What's-new. Hidden when the target
+		     version is unknown (VersionPill's own v-if). -->
+		<VersionPill />
 		<button
 			v-if="convId"
 			class="jv-icon-btn"
@@ -694,7 +758,7 @@ onUnmounted(() => {
 
 	<div ref="scroller" class="jv-scroll jv-thread" @scroll.passive="onScroll">
 		<div v-if="!items.length && !live && !loading" class="jv-empty">
-			<BrandMark :size="52" />
+			<BrandMark :size="52" :mood="holdActive ? 'upgrading' : 'star'" />
 			<div style="font-size: 16px; font-weight: 600; color: var(--ink9)">
 				What can I do for you?
 			</div>
@@ -782,7 +846,46 @@ onUnmounted(() => {
 						</svg>
 					</a>
 					<SkillChips :names="it.view.skills" />
-					<div v-if="it.msg.error" class="jv-msg-error">{{ it.msg.error }}</div>
+					<!-- A cancelled / aged-out queued turn is a muted note, not a
+					     failure card (same as the desktop chat). -->
+					<div
+						v-if="it.err && it.err.code === 'cancelled'"
+						class="jv-stopped"
+						role="status"
+					>
+						{{ it.err.headline }}
+					</div>
+					<div v-else-if="it.err" class="jv-msg-error">
+						<strong>{{ it.err.headline }}</strong>
+						<p>
+							{{ it.err.hint }}
+							<a
+								v-if="it.err.statusUrl"
+								class="jv-err-link"
+								:href="it.err.statusUrl"
+								target="_blank"
+								rel="noopener noreferrer"
+								>{{ it.err.statusLabel }}
+								<span aria-hidden="true">&#8599;</span></a
+							>
+							<span v-if="it.err.hint" aria-hidden="true"> &middot; </span>
+							<button
+								type="button"
+								class="jv-err-link"
+								:aria-expanded="rawOpen.has(it.key) ? 'true' : 'false'"
+								:aria-controls="`jv-err-raw-${it.key}`"
+								@click="toggleRaw(it.key)"
+							>
+								{{ rawOpen.has(it.key) ? "Hide details" : "Details" }}
+							</button>
+						</p>
+						<pre
+							v-if="rawOpen.has(it.key)"
+							:id="`jv-err-raw-${it.key}`"
+							class="jv-msg-error-raw"
+							>{{ it.msg.error }}</pre
+						>
+					</div>
 					<MessageMedia
 						:items="it.msg.canvas"
 						:message-name="it.msg.name"
@@ -865,6 +968,7 @@ onUnmounted(() => {
 		:sending="sending"
 		:attachments="attachments"
 		:mic-enabled="micEnabled"
+		:disabled="holdActive"
 		@send="send"
 		@stop="stop"
 		@attach="attach"
@@ -1041,6 +1145,25 @@ onUnmounted(() => {
 	font-size: 12px;
 	line-height: 1.4;
 	color: var(--red);
+}
+.jv-msg-error p {
+	margin: 2px 0 0;
+}
+.jv-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.jv-msg-error-raw {
+	margin: 4px 0 0;
+	font: inherit;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 /* The stop marker is muted (--ink5), never the error tone above it: the user
    pressed Stop on purpose, so this states what happened, it doesn't warn. */

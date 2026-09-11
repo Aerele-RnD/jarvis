@@ -182,8 +182,8 @@
 								:key="'up-' + p.name"
 								:plan="p"
 								action-label="Upgrade"
-								note="You pay only the prorated difference for the days left in this period."
-								:disabled="changesBlocked"
+								:note="upgradeNote(p)"
+								:disabled="changesBlocked || upgradeDisabled(p)"
 								:loading="busy === 'up:' + p.name"
 								@action="doUpgrade"
 							/>
@@ -206,6 +206,175 @@
 					<p v-if="noOtherPlans" class="mt-4 text-p-sm text-ink-gray-6">
 						There are no other plans available on your account right now.
 					</p>
+
+					<!-- Billing details (Phase 3b): the customer's own editable GST party. -->
+					<section
+						v-if="profile || profileErr"
+						class="mt-8 rounded-lg border border-outline-gray-1 p-5"
+					>
+						<h2 class="text-lg font-semibold text-ink-gray-9">Invoicing details</h2>
+						<div v-if="profileErr">
+							<ErrorMessage :message="profileErr" />
+							<Button
+								class="mt-3"
+								variant="subtle"
+								label="Try again"
+								@click="loadBillingProfile"
+							/>
+						</div>
+						<template v-else>
+							<p class="mt-1 text-p-sm text-ink-gray-6">
+								The company your GST invoice is raised to. Leave the name/email
+								blank to use your own company and account email. Changes apply to
+								future invoices.
+							</p>
+							<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+								<FormControl
+									class="sm:col-span-2"
+									label="Invoicing company name"
+									placeholder="Defaults to your company name"
+									:model-value="billingForm.company_name"
+									@update:model-value="(v) => (billingForm.company_name = v)"
+								/>
+								<FormControl
+									class="sm:col-span-2"
+									type="email"
+									label="Invoicing email"
+									:placeholder="profile.account_email || 'billing@company.com'"
+									:model-value="billingForm.email"
+									@update:model-value="(v) => (billingForm.email = v)"
+								/>
+								<FormControl
+									label="Contact person"
+									:model-value="billingForm.contact_person"
+									@update:model-value="(v) => (billingForm.contact_person = v)"
+								/>
+								<FormControl
+									label="Contact number"
+									:model-value="billingForm.contact_number"
+									@update:model-value="(v) => (billingForm.contact_number = v)"
+								/>
+								<FormControl
+									class="sm:col-span-2"
+									label="Billing address"
+									placeholder="Street, area"
+									:model-value="billingForm.address_line1"
+									@update:model-value="(v) => (billingForm.address_line1 = v)"
+								/>
+								<FormControl
+									class="sm:col-span-2"
+									label="Address line 2"
+									placeholder="Landmark, area (optional)"
+									:model-value="billingForm.address_line2"
+									@update:model-value="(v) => (billingForm.address_line2 = v)"
+								/>
+								<FormControl
+									label="City"
+									placeholder="Chennai"
+									:model-value="billingForm.city"
+									@update:model-value="(v) => (billingForm.city = v)"
+								/>
+								<FormControl
+									label="Pincode"
+									placeholder="600001"
+									:model-value="billingForm.pincode"
+									@update:model-value="(v) => (billingForm.pincode = v)"
+								/>
+								<FormControl
+									v-if="billingIsIndia"
+									type="select"
+									label="State"
+									:options="billingStateOptions"
+									:model-value="billingForm.state"
+									@update:model-value="(v) => (billingForm.state = v)"
+								/>
+								<FormControl
+									v-else
+									type="text"
+									label="State / Region"
+									:model-value="billingForm.state"
+									@update:model-value="(v) => (billingForm.state = v)"
+								/>
+								<FormControl
+									type="select"
+									label="Country"
+									:options="billingCountryOptions"
+									:model-value="billingForm.country || 'India'"
+									@update:model-value="(v) => (billingForm.country = v)"
+								/>
+								<FormControl
+									label="GSTIN"
+									placeholder="33ABCDE1234F1Z7"
+									:model-value="billingForm.gstin"
+									@update:model-value="
+										(v) => (billingForm.gstin = (v || '').toUpperCase())
+									"
+								/>
+							</div>
+							<div class="mt-4 flex items-center gap-3">
+								<Button
+									variant="solid"
+									label="Save billing details"
+									:loading="billingSaving"
+									@click="saveBillingDetails"
+								/>
+								<span v-if="billingSaved" class="text-p-sm text-ink-green-3"
+									>Saved.</span
+								>
+							</div>
+							<ErrorMessage class="mt-2" :message="billingErr" />
+						</template>
+					</section>
+
+					<!-- Invoices (Phase 3b) -->
+					<section class="mt-6 rounded-lg border border-outline-gray-1 p-5">
+						<h2 class="text-lg font-semibold text-ink-gray-9">Invoices</h2>
+						<div v-if="invoicesLoading" class="flex justify-center py-6">
+							<JvSpinner :size="24" label="Loading invoices…" />
+						</div>
+						<template v-else>
+							<ErrorMessage v-if="invoicesErr" :message="invoicesErr" />
+							<p
+								v-else-if="!invoices.length"
+								class="mt-2 text-p-base text-ink-gray-6"
+							>
+								No invoices yet. Your GST invoice will appear here after your next
+								payment.
+							</p>
+							<div v-else class="mt-3 divide-y divide-outline-gray-1">
+								<div
+									v-for="inv in invoices"
+									:key="inv.erp_name"
+									class="flex items-center justify-between py-3"
+								>
+									<div>
+										<div class="text-base font-medium text-ink-gray-8">
+											{{ inv.invoice_no }}
+										</div>
+										<div class="text-p-sm text-ink-gray-6">
+											<span v-if="inv.date">{{ inv.date }}</span
+											><span v-if="inv.date && inv.total_inr != null">
+												&middot; </span
+											><span v-if="inv.total_inr != null">{{
+												inrExact(inv.total_inr)
+											}}</span>
+										</div>
+									</div>
+									<Button
+										variant="subtle"
+										iconLeft="download"
+										:label="
+											downloadingErp === inv.erp_name
+												? 'Preparing…'
+												: 'Download'
+										"
+										:loading="downloadingErp === inv.erp_name"
+										@click="onDownloadInvoice(inv.erp_name)"
+									/>
+								</div>
+							</div>
+						</template>
+					</section>
 				</template>
 			</div>
 		</div>
@@ -278,8 +447,8 @@
  * The admin-hosted page + the gateway webhook are authoritative; on return this
  * page just re-reads the account.
  */
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
-import { Badge, Breadcrumbs, Button, Dialog, ErrorMessage } from "frappe-ui";
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { Badge, Breadcrumbs, Button, Dialog, ErrorMessage, FormControl } from "frappe-ui";
 import * as api from "@/api";
 import LayoutHeader from "@/components/LayoutHeader.vue";
 import JvSpinner from "@/components/JvSpinner.vue";
@@ -359,6 +528,37 @@ const currentPlan = computed(() => {
 });
 const upgradePlans = computed(() => account.value.upgrade_plans || []);
 const downgradePlans = computed(() => account.value.downgrade_plans || []);
+const isTrial = computed(() => !!account.value.is_trial);
+// The server refuses an upgrade within 24h of renewal (UpgradeTooCloseToRenewal), so mirror
+// that here: disable the upgrade cards with a reason instead of offering a button that errors.
+const upgradeNearRenewal = computed(() => !!account.value.upgrade_locked_near_renewal);
+// Upgrade copy differs on a TRIAL: nothing is charged now (the trial just moves to
+// the new plan, first charge at trial-end), vs a paid customer who pays the prorated
+// difference for the days left. A trial can only switch SAME-cycle (the server refuses
+// a cross-cycle/Annual target with TrialCrossCycleUnsupported), so those cards are
+// disabled during a trial with a note that says why, rather than erroring on click.
+function upgradeCrossCycle(p) {
+	return !!(
+		currentPlan.value &&
+		p.billing_cycle &&
+		p.billing_cycle !== currentPlan.value.billing_cycle
+	);
+}
+function upgradeDisabled(p) {
+	return upgradeNearRenewal.value || (isTrial.value && upgradeCrossCycle(p));
+}
+function upgradeNote(p) {
+	if (upgradeNearRenewal.value) {
+		return "Your plan renews within a day - you can upgrade right after it renews.";
+	}
+	if (isTrial.value) {
+		if (upgradeCrossCycle(p)) {
+			return "Available once your free trial converts to a paid plan.";
+		}
+		return "Your free trial moves to this plan. Nothing is charged now; you're billed at the new price when your trial ends.";
+	}
+	return "You pay only the prorated difference for the days left in this period.";
+}
 const cancelling = computed(() => !!account.value.cancel_at_period_end);
 const scheduledDowngrade = computed(() => !!account.value.scheduled_plan);
 // The lapsed cohort (Expired/Cancelled/Past-Due-with-no-days-left): a plan
@@ -454,6 +654,173 @@ async function loadAccount() {
 		loading.value = false;
 	}
 }
+
+// ---- Invoices + billing details (Phase 3b) --------------------------------
+const invoices = ref([]);
+const invoicesLoading = ref(true);
+const invoicesErr = ref("");
+const downloadingErp = ref("");
+const profile = ref(null);
+const profileErr = ref("");
+const billingForm = reactive({
+	company_name: "",
+	email: "",
+	contact_person: "",
+	contact_number: "",
+	address_line1: "",
+	address_line2: "",
+	city: "",
+	state: "",
+	pincode: "",
+	country: "India",
+	gstin: "",
+});
+const billingSaving = ref(false);
+const billingSaved = ref(false);
+const billingErr = ref("");
+
+// Inlined (not @/onboarding/indianStates, which arrives with the onboarding
+// State/Country PR): the GST states for the billing-details Select. Dedupe once
+// that file reaches develop.
+const BILLING_STATES = [
+	"Jammu and Kashmir",
+	"Himachal Pradesh",
+	"Punjab",
+	"Chandigarh",
+	"Uttarakhand",
+	"Haryana",
+	"Delhi",
+	"Rajasthan",
+	"Uttar Pradesh",
+	"Bihar",
+	"Sikkim",
+	"Arunachal Pradesh",
+	"Nagaland",
+	"Manipur",
+	"Mizoram",
+	"Tripura",
+	"Meghalaya",
+	"Assam",
+	"West Bengal",
+	"Jharkhand",
+	"Odisha",
+	"Chhattisgarh",
+	"Madhya Pradesh",
+	"Gujarat",
+	"Dadra and Nagar Haveli and Daman and Diu",
+	"Maharashtra",
+	"Karnataka",
+	"Goa",
+	"Lakshadweep",
+	"Kerala",
+	"Tamil Nadu",
+	"Puducherry",
+	"Andaman and Nicobar Islands",
+	"Telangana",
+	"Andhra Pradesh",
+	"Ladakh",
+	"Other Territory",
+];
+const BILLING_COUNTRIES = [
+	"India",
+	"United States",
+	"United Kingdom",
+	"United Arab Emirates",
+	"Singapore",
+	"Australia",
+	"Canada",
+	"Germany",
+	"Other",
+];
+const billingStateOptions = [
+	{ label: "Select state…", value: "" },
+	...BILLING_STATES.map((s) => ({ label: s, value: s })),
+];
+const billingCountryOptions = BILLING_COUNTRIES.map((c) => ({ label: c, value: c }));
+const billingIsIndia = computed(
+	() => (billingForm.country || "India").trim().toLowerCase() === "india"
+);
+
+async function loadInvoices() {
+	invoicesLoading.value = true;
+	invoicesErr.value = "";
+	try {
+		invoices.value = (await api.getInvoices()) || [];
+	} catch (e) {
+		invoicesErr.value = errMsg(e);
+	} finally {
+		invoicesLoading.value = false;
+	}
+}
+
+async function loadBillingProfile() {
+	profileErr.value = "";
+	try {
+		const p = (await api.getBillingProfile()) || {};
+		profile.value = p;
+		if (p.bill_to === "customer" && p.billing) {
+			for (const k of Object.keys(billingForm)) {
+				if (p.billing[k] != null && p.billing[k] !== "") billingForm[k] = p.billing[k];
+			}
+			if (!billingForm.country) billingForm.country = "India";
+		}
+	} catch (e) {
+		// Surface it (this is the customer's tax-invoice party): the card shows the
+		// error + a retry rather than silently vanishing on a transient failure.
+		profileErr.value = errMsg(e);
+	}
+}
+
+// "Saved." (or a prior error) must not linger next to freshly-edited, unsaved fields.
+watch(billingForm, () => {
+	billingSaved.value = false;
+	if (billingErr.value) billingErr.value = "";
+});
+
+async function saveBillingDetails() {
+	billingSaving.value = true;
+	billingErr.value = "";
+	billingSaved.value = false;
+	try {
+		const payload = {};
+		for (const [k, v] of Object.entries(billingForm)) {
+			payload[k] = (v || "").trim(); // present-but-empty clears; the server normalizer validates
+		}
+		const out = await api.updateBillingDetails(payload);
+		billingSaved.value = true;
+		if (out && out.billing) {
+			for (const k of Object.keys(billingForm)) {
+				billingForm[k] = out.billing[k] || (k === "country" ? "India" : "");
+			}
+		}
+	} catch (e) {
+		billingErr.value = errMsg(e);
+	} finally {
+		billingSaving.value = false;
+	}
+}
+
+async function onDownloadInvoice(erpName) {
+	downloadingErp.value = erpName;
+	try {
+		const res = await api.downloadInvoice(erpName);
+		if (res && res.content_b64) {
+			const bytes = Uint8Array.from(atob(res.content_b64), (c) => c.charCodeAt(0));
+			const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = res.filename || "invoice.pdf";
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			setTimeout(() => URL.revokeObjectURL(url), 5000);
+		}
+	} catch (e) {
+		invoicesErr.value = errMsg(e);
+	} finally {
+		downloadingErp.value = "";
+	}
+}
 // Returning from the admin-hosted pay page (WS8). A fresh navigation re-runs
 // onMounted and re-reads below; a bfcache back-button restores the DOM WITHOUT
 // re-mounting, which would strand the frozen "Taking you to the secure payment
@@ -498,6 +865,40 @@ onMounted(() => {
 	window.addEventListener("pageshow", onPageShow);
 });
 onBeforeUnmount(() => window.removeEventListener("pageshow", onPageShow));
+// R2 upgrade-lock freshness (review): upgrade_locked_near_renewal is a server-computed, TIME-BASED
+// flag baked into the account snapshot. current_period_end is not re-read as it passes, so a tab left
+// open across renewal would keep every upgrade card disabled even after the server lock expired -
+// "upgrade right after it renews" would need a manual reload. Re-read server truth when the tab becomes
+// visible again (the user returning), and while the lock is active poll for it to expire so a
+// continuously-open tab also clears on its own. Both stop once the lock is gone.
+let nearRenewalPoll = null;
+function stopNearRenewalPoll() {
+	if (nearRenewalPoll) {
+		clearInterval(nearRenewalPoll);
+		nearRenewalPoll = null;
+	}
+}
+function onVisible() {
+	if (document.visibilityState === "visible") loadAccount();
+}
+watch(
+	upgradeNearRenewal,
+	(locked) => {
+		stopNearRenewalPoll();
+		if (locked) nearRenewalPoll = setInterval(loadAccount, 5 * 60 * 1000);
+	},
+	{ immediate: true }
+);
+onMounted(() => document.addEventListener("visibilitychange", onVisible));
+onBeforeUnmount(() => {
+	document.removeEventListener("visibilitychange", onVisible);
+	stopNearRenewalPoll();
+});
+// Invoices + billing details load on mount, independent of the plan read above.
+onMounted(() => {
+	loadInvoices();
+	loadBillingProfile();
+});
 
 // ---- the confirm step -------------------------------------------------------
 // One dialog serves every flow. `run` is the function to call on confirm, so
@@ -542,12 +943,24 @@ async function doUpgrade(plan) {
 		// (days-left * GST-inclusive daily rate) and can land on paise, same as
 		// total_inr below - inr()'s bare toLocaleString would show a stray
 		// one-decimal amount instead of the exact figure charged.
-		describe: (d) => ({
-			amount: inrExact(d.prorated_inr),
-			message:
-				"Charged now for the days left in your current billing period. Your new plan starts immediately.",
-			confirmLabel: `Pay ${inrExact(d.prorated_inr)}`,
-		}),
+		// A TRIAL switch takes no money today (the trial just moves to the new plan, first
+		// charge at trial-end), so the confirm must match the card's "nothing charged now"
+		// promise - no "Pay ₹0". A paid upgrade leads with the prorated charge as before.
+		describe: (d) =>
+			d.mode === "trial_switch"
+				? {
+						amount: "",
+						message: `No charge now - your free trial moves to this plan. You'll be billed ${inrExact(
+							d.target_total_inr
+						)} when your trial ends.`,
+						confirmLabel: "Switch plan",
+				  }
+				: {
+						amount: inrExact(d.prorated_inr),
+						message:
+							"Charged now for the days left in your current billing period. Your new plan starts immediately.",
+						confirmLabel: `Pay ${inrExact(d.prorated_inr)}`,
+				  },
 		start: () => api.startUpgrade(plan.name),
 		retry: () => doUpgrade(plan),
 	});

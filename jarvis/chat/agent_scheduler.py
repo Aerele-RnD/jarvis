@@ -95,6 +95,8 @@ def run_due_agent_audits() -> None:
 			"agent",
 			"schedule_frequency",
 			"schedule_time",
+			"schedule_weekday",
+			"schedule_day_of_month",
 			"installable",
 			"source_apps_json",
 			"activation_state",
@@ -741,8 +743,16 @@ def _launch_audit(
 	try:
 		# Fresh conversation. ROW ownership is the human owner (reassigned below) so
 		# if_owner visibility works; the ERP-read identity is the run-as user.
-		# ignore_permissions matches the macro engine.
-		conv = frappe.get_doc({"doctype": CONV, "title": f"{listing.title} audit"[:140], "status": "Active"})
+		# ignore_permissions matches the macro engine. agent_initiated: a scheduled
+		# audit run log, not a chat session the user chose to start.
+		conv = frappe.get_doc(
+			{
+				"doctype": CONV,
+				"title": f"{listing.title} audit"[:140],
+				"status": "Active",
+				"agent_initiated": 1,
+			}
+		)
 		conv.flags.ignore_permissions = True
 		conv.insert()
 
@@ -1217,7 +1227,13 @@ def _advance(row, now) -> None:
 		row.name,
 		{
 			"last_run_at": now,
-			"next_run_at": compute_next_run(row.schedule_frequency, row.schedule_time, from_dt=now),
+			"next_run_at": compute_next_run(
+				row.schedule_frequency,
+				row.schedule_time,
+				from_dt=now,
+				weekday=row.schedule_weekday,
+				day_of_month=row.schedule_day_of_month,
+			),
 		},
 		update_modified=False,
 	)

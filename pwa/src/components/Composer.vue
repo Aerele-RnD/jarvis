@@ -9,6 +9,8 @@ const props = defineProps({
 	sending: { type: Boolean, default: false },
 	attachments: { type: Array, default: () => [] },
 	micEnabled: { type: Boolean, default: false },
+	// Hard block (Stream E maintenance hold): greys the box + kills typing/Send during a hold.
+	disabled: { type: Boolean, default: false },
 	placeholder: { type: String, default: () => `Message ${agentName}…` },
 });
 const emit = defineEmits([
@@ -133,7 +135,7 @@ defineExpose({ reset });
 			<button
 				class="jv-icon-btn"
 				aria-label="Attach a file"
-				:disabled="props.sending"
+				:disabled="props.sending || props.disabled"
 				@click="fileEl.click()"
 			>
 				<svg
@@ -158,6 +160,8 @@ defineExpose({ reset });
 					rows="1"
 					:value="props.modelValue"
 					:placeholder="props.placeholder"
+					:disabled="props.disabled"
+					:style="props.disabled ? 'opacity:0.55;cursor:not-allowed' : null"
 					@input="onInput"
 					@keydown="onKeydown"
 				/>
@@ -165,6 +169,7 @@ defineExpose({ reset });
 					v-if="props.micEnabled"
 					class="jv-mic"
 					aria-label="Dictate"
+					:disabled="props.disabled"
 					@click="emit('mic')"
 				>
 					<svg
@@ -197,7 +202,7 @@ defineExpose({ reset });
 				v-else
 				class="jv-send"
 				aria-label="Send"
-				:disabled="!canSend"
+				:disabled="!canSend || props.disabled"
 				@click="emit('send')"
 			>
 				<svg

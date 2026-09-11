@@ -137,7 +137,7 @@ def _insert(doctype, name, fields, docstatus=1, creation=None, children=None):
 	doc.docstatus = docstatus
 	doc.db_insert()
 	ts = creation or (
-		str(fields.get("posting_date") or fields.get("transaction_date") or "2025-09-01") + " 10:00:00"
+		str(fields.get("posting_date") or fields.get("transaction_date") or _day(0)) + " 10:00:00"
 	)
 	frappe.db.set_value(doctype, name, {"creation": ts, "modified": ts}, update_modified=False)
 	for childfield, (child_dt, rows) in (children or {}).items():
@@ -157,11 +157,26 @@ def _insert(doctype, name, fields, docstatus=1, creation=None, children=None):
 	return name
 
 
+# Fixture calendar anchor, fixed once per build() so a midnight crossing mid-build
+# cannot split one dataset across two anchors. Every fixture date is
+# _day(ordinal) = anchor + ordinal days, with ordinals below ~110, so the whole
+# dataset always sits 230..335 days back: inside the tightest detector window
+# (12 months, with a month of headroom), never in the future, and older than the
+# engine's 180-day dormant-company cutoff exactly as the original literal dates
+# were. A literal anchor ("2025-09-01") aged out of the 12-month windows on
+# 2026-09-06 and mfg-default-bom-usage dropped below n_min.
+_ANCHOR_MONTHS_BACK = 11
+_anchor: str | None = None
+
+
 def _day(base_ordinal: int) -> str:
-	"""A distinct calendar day per index, inside the 18-month window (today is
-	well after 2025-09). Distinct days => spread gate passes and consecutive
-	rows never collapse as a creation burst."""
-	return frappe.utils.add_days("2025-09-01", base_ordinal)
+	"""A distinct calendar day per index, relative to the build anchor. Distinct
+	days => spread gate passes and consecutive rows never collapse as a creation
+	burst."""
+	global _anchor
+	if _anchor is None:
+		_anchor = frappe.utils.add_months(frappe.utils.today(), -_ANCHOR_MONTHS_BACK)
+	return frappe.utils.add_days(_anchor, base_ordinal)
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +186,8 @@ def build(commit: bool = False) -> None:
 	"""Idempotent: wipe any prior fixtures, then seed the mini-org. Detectors
 	can then run in the same transaction (tests, no commit) or the caller can
 	commit for the E2E harness."""
+	global _anchor
+	_anchor = None  # re-anchor to today for this build
 	wipe(commit=False)
 	_masters()
 	_selling_alpha()
@@ -638,7 +655,8 @@ def _beta_traps() -> None:
 			},
 		)
 	# go-live burst: 35 PIs, all one day and one creation second -> spread gate.
-	burst_ts = "2025-10-01 03:00:00"
+	burst_day = _day(30)
+	burst_ts = f"{burst_day} 03:00:00"
 	for i in range(35):
 		name = f"{PREFIX}PI-B-{i:04d}"
 		_insert(
@@ -647,7 +665,7 @@ def _beta_traps() -> None:
 			{
 				"supplier": f"{PREFIX}BetaSup",
 				"company": BETA,
-				"posting_date": "2025-10-01",
+				"posting_date": burst_day,
 				"update_stock": 1,
 			},
 			creation=burst_ts,

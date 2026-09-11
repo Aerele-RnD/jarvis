@@ -147,6 +147,30 @@ def redact_and_flag(text, *, conversation=None, run_id=None):
 		return text
 
 
+def redact_final_with_media(text, *, conversation=None, run_id=None):
+	"""Final-boundary redaction that FIRST consumes the native-media (``MEDIA:``)
+	marker, then redacts. Returns ``(redacted_text, media_rels, marker_stripped)``:
+
+	- ``media_rels`` — local media paths (detected on the RAW text) to fetch + seed
+	  downstream as inline images (the fetchable-image subset).
+	- ``marker_stripped`` — True if ANY ``MEDIA:`` line was removed (a superset of
+	  ``media_rels``: also the non-fetchable ``.pdf`` / external / traversal markers).
+	  The content-write gate uses it to force the stored-content overwrite even when
+	  the stripped text is empty, so NO recognized marker survives in stored content.
+	- the marker line(s) are STRIPPED before :func:`redact_and_flag` runs, so the
+	  egress ``/home/node`` backstop can't eat the path first (which would both lose
+	  the image and fire a false tripwire) and no raw container path survives.
+
+	Use at every terminal-text producer (direct relay, pump, recovery). Never raises
+	— detect/strip/has_media_marker are total and ``redact_and_flag`` fail-opens."""
+	from jarvis.chat import generated_media
+
+	rels = generated_media.detect_media_paths(text)
+	marker_stripped = generated_media.has_media_marker(text)
+	stripped = generated_media.strip_media_lines(text)
+	return redact_and_flag(stripped, conversation=conversation, run_id=run_id), rels, marker_stripped
+
+
 def _fire_tripwire(*, conversation=None, run_id=None) -> None:
 	"""Record ONE brand-free tripwire row via the existing client-error pipeline
 	(Jarvis Client Error -> the */5 error_push rollup -> the admin tenant error

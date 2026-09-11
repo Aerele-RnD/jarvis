@@ -129,6 +129,19 @@
   "release_notice_active",
   "latest_jarvis_version",
   "release_notice_message",
+  "release_notice_tier",
+  "release_notice_behind",
+  "release_banner_interval_days",
+  "announcement_section",
+  "announcement_active",
+  "announcement_id",
+  "announcement_title",
+  "announcement_message",
+  "announcement_severity",
+  "announcement_link_url",
+  "announcement_link_label",
+  "announcement_interval_days",
+  "announcement_expires_on",
   "system_tab",
   "deployment_section",
   "deployment_mode",
@@ -139,7 +152,10 @@
   "admin_connection_col",
   "jarvis_admin_customer_email",
   "jarvis_admin_customer_password",
-  "signup_context"
+  "signup_context",
+  "maintenance_notice_section",
+  "maintenance_active",
+  "maintenance_message"
  ],
  "fields": [
   {
@@ -940,6 +956,84 @@
    "read_only": 1
   },
   {
+   "fieldname": "release_notice_tier",
+   "fieldtype": "Data",
+   "label": "Release Notice Tier",
+   "read_only": 1
+  },
+  {
+   "fieldname": "release_notice_behind",
+   "fieldtype": "Int",
+   "label": "Release Notice Behind",
+   "read_only": 1
+  },
+  {
+   "fieldname": "release_banner_interval_days",
+   "fieldtype": "Int",
+   "label": "Release Banner Interval Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_section",
+   "fieldtype": "Section Break",
+   "label": "Announcement",
+   "description": "Mirror of the operator's fleet-wide announcement, pulled from the control plane. Read-only here."
+  },
+  {
+   "fieldname": "announcement_active",
+   "fieldtype": "Check",
+   "label": "Announcement Active",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_id",
+   "fieldtype": "Data",
+   "label": "Announcement ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_title",
+   "fieldtype": "Data",
+   "label": "Announcement Title",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_message",
+   "fieldtype": "Small Text",
+   "label": "Announcement Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_severity",
+   "fieldtype": "Data",
+   "label": "Announcement Severity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_link_url",
+   "fieldtype": "Data",
+   "label": "Announcement Link URL",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_link_label",
+   "fieldtype": "Data",
+   "label": "Announcement Link Label",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_interval_days",
+   "fieldtype": "Int",
+   "label": "Announcement Interval Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "announcement_expires_on",
+   "fieldtype": "Datetime",
+   "label": "Announcement Expires On",
+   "read_only": 1
+  },
+  {
    "fieldname": "system_tab",
    "fieldtype": "Tab Break",
    "label": "System"
@@ -1016,6 +1110,26 @@
    "label": "Signup Context",
    "read_only": 1,
    "description": "Non-secret JSON snapshot of the in-flight signup: attempt id, the customer's real email + company as admin holds them, plan/provider, the amount and what is due today, the last contract code, and the contract version. Written by jarvis.onboarding_contract so a reloaded payment page renders whose signup it is showing instead of the site admin's prefill. NO SECRETS EVER GO IN THIS FIELD - permlevel is not a container for one: a Single's value is reachable through frappe.client.get_value / get_single_value by anyone who can read the doctype, and the permlevel only governs the form. Secrets belong in the Password fields above, which encrypt into __Auth. jarvis_admin_customer_email above holds admin's SYNTHETIC login (cust-<hash>@jarvis.invalid), which is not an address and must never be shown to anyone."
+  },
+  {
+   "fieldname": "maintenance_notice_section",
+   "fieldtype": "Section Break",
+   "label": "Maintenance Hold",
+   "collapsible": 1,
+   "description": "Mirror of the operator's upgrade maintenance hold, pulled from the control plane. Read-only here."
+  },
+  {
+   "fieldname": "maintenance_active",
+   "fieldtype": "Check",
+   "label": "In Maintenance",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "maintenance_message",
+   "fieldtype": "Small Text",
+   "label": "Maintenance Message",
+   "read_only": 1
   }
  ],
  "permissions": [

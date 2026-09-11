@@ -92,7 +92,7 @@ export function reorder(list, from, to) {
 // floor used before the first response lands and when admin is unreachable.
 // Do NOT add models here to make them selectable: add them in the admin desk.
 const FALLBACK_SUB_MODELS = {
-	openai: ["gpt-5.5", "gpt-5.4"],
+	openai: ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.5"],
 	xai: ["grok-4.3", "grok-build-0.1"],
 	kimi: ["kimi-k2.7-code", "kimi-k2.6"],
 };

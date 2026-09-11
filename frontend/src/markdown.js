@@ -1,7 +1,7 @@
 // Compact GFM renderer - enough for agent replies: paragraphs, bold/italic,
 // strikethrough, inline code, links, nested bullet/number lists, blockquotes,
-// and pipe tables (rendered into the imported design's table look via the
-// .jv-md classes in ChatView's styles).
+// thematic breaks (---/***/___), and pipe tables (rendered into the imported
+// design's table look via the .jv-md classes in ChatView's styles).
 function esc(s) {
 	return String(s).replace(
 		/[&<>"]/g,
@@ -242,6 +242,17 @@ export function renderMarkdown(src) {
 				i++;
 			}
 			out.push(`<blockquote class="jv-md-quote">${inline(q.join(" "))}</blockquote>`);
+			continue;
+		}
+		// thematic break: a line of 3+ of the same -, * or _ (spaces allowed
+		// between). The standard Markdown section divider - release notes and
+		// agent replies use it, and without this branch it fell through to a
+		// paragraph and rendered as literal "---". Checked BEFORE the list branch
+		// so a spaced "- - -" reads as a rule, not a "- " item whose text is "- -".
+		if (/^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/.test(line)) {
+			flushPara();
+			out.push('<hr class="jv-md-hr">');
+			i++;
 			continue;
 		}
 		// bullet / numbered lists, indent-nested.

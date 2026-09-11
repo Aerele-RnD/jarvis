@@ -160,6 +160,17 @@ class TestListConversations(_ChatTestCase):
 		self.assertEqual(result[a]["message_count"], 1)
 		self.assertNotIn(b, result)
 
+	def test_excludes_dashboard_namespace_from_general_chat(self):
+		ordinary = create_conversation()
+		dashboard = create_conversation(origin_page="dashboards")
+		trigger = create_conversation(origin_page="triggers")
+		for name in (ordinary, dashboard, trigger):
+			self._add_message(name)
+		names = {c["name"] for c in list_conversations()}
+		self.assertIn(ordinary, names)
+		self.assertNotIn(dashboard, names)
+		self.assertIn(trigger, names)
+
 
 class TestCreateOrFocusEmpty(_ChatTestCase):
 	def test_creates_when_no_conversations_exist(self):
@@ -205,6 +216,21 @@ class TestCreateOrFocusEmpty(_ChatTestCase):
 		newer = create_conversation()
 		returned = create_or_focus_empty()
 		self.assertEqual(returned, newer)
+
+	def test_empty_reuse_is_isolated_by_builder_namespace(self):
+		ordinary = create_conversation()
+		dashboard = create_conversation(origin_page="dashboards")
+		self.assertEqual(create_or_focus_empty(), ordinary)
+		self.assertEqual(create_or_focus_empty(origin_page="dashboards"), dashboard)
+		trigger = create_or_focus_empty(origin_page="triggers")
+		self.assertNotIn(trigger, (ordinary, dashboard))
+		self.assertEqual(frappe.db.get_value(CONV, trigger, "origin_page"), "triggers")
+
+	def test_new_dashboard_chat_does_not_advance_main_chat_greeting(self):
+		with patch("jarvis.chat.greeting.increment_new_chat_count") as increment:
+			name = create_or_focus_empty(origin_page="dashboards")
+		self.assertEqual(frappe.db.get_value(CONV, name, "origin_page"), "dashboards")
+		increment.assert_not_called()
 
 	def test_reuse_bumps_last_active_at(self):
 		# Focusing an old empty resets its idle clock so the empty-reaper
@@ -594,17 +620,17 @@ class TestSetConversationModel(_ChatTestCase):
 
 	def test_set_known_model_succeeds(self):
 		conv = create_conversation()
-		out = set_conversation_model(conv, "gpt-5.4-mini")
+		out = set_conversation_model(conv, "gpt-5.6-terra")
 		self.assertTrue(out["ok"])
-		self.assertEqual(out["data"]["effective_model"], "gpt-5.4-mini")
+		self.assertEqual(out["data"]["effective_model"], "gpt-5.6-terra")
 		self.assertEqual(
 			frappe.db.get_value(CONV, conv, "model_override"),
-			"gpt-5.4-mini",
+			"gpt-5.6-terra",
 		)
 
 	def test_clear_override_reverts_to_settings(self):
 		conv = create_conversation()
-		set_conversation_model(conv, "gpt-5.4-mini")
+		set_conversation_model(conv, "gpt-5.6-terra")
 		out = set_conversation_model(conv, None)
 		self.assertTrue(out["ok"])
 		# Settings model is gpt-5.5 in this test class's setup
@@ -613,7 +639,7 @@ class TestSetConversationModel(_ChatTestCase):
 
 	def test_empty_string_clears_override(self):
 		conv = create_conversation()
-		set_conversation_model(conv, "gpt-5.4-mini")
+		set_conversation_model(conv, "gpt-5.6-terra")
 		out = set_conversation_model(conv, "")
 		self.assertTrue(out["ok"])
 		self.assertFalse(frappe.db.get_value(CONV, conv, "model_override"))
@@ -684,9 +710,9 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 			patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"),
 			patch("frappe.enqueue", side_effect=capture),
 		):
-			result = send_message(self.conv, "hi", model_override="gpt-5.4-mini")
+			result = send_message(self.conv, "hi", model_override="gpt-5.6-terra")
 		self.assertTrue(result["ok"])
-		self.assertEqual(written["override"], "gpt-5.4-mini")
+		self.assertEqual(written["override"], "gpt-5.6-terra")
 
 	def test_unknown_override_rejected(self):
 		"""Invalid model name yields ok:false with no DB write or enqueue."""
@@ -706,12 +732,12 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 		from jarvis.chat.api import send_message
 
 		# Pre-set an override
-		frappe.db.set_value(CONV, self.conv, "model_override", "gpt-5.4")
+		frappe.db.set_value(CONV, self.conv, "model_override", "gpt-5.6-luna")
 		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), patch("frappe.enqueue"):
 			send_message(self.conv, "hi")
 		self.assertEqual(
 			frappe.db.get_value(CONV, self.conv, "model_override"),
-			"gpt-5.4",
+			"gpt-5.6-luna",
 		)
 
 
@@ -767,11 +793,11 @@ class TestSendModelOverridePumpTwin(_ChatTestCase):
 			patch.object(pump, "ensure_pump", lambda *a, **k: None),
 			patch.object(pump, "lpush_wake", lambda *a, **k: None),
 		):
-			result = send_message(self.conv, "hi", model_override="gpt-5.4-mini")
+			result = send_message(self.conv, "hi", model_override="gpt-5.6-terra")
 		self.assertTrue(result["ok"])
 		# Pump path: the override was persisted to the conversation BEFORE dispatch — the same
 		# invariant the legacy test asserts, holding cross-transport.
-		self.assertEqual(frappe.db.get_value(CONV, self.conv, "model_override"), "gpt-5.4-mini")
+		self.assertEqual(frappe.db.get_value(CONV, self.conv, "model_override"), "gpt-5.6-terra")
 
 
 class TestSendMessageThinkingOverride(_ChatTestCase):

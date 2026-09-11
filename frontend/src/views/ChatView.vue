@@ -91,6 +91,10 @@
 					<span style="font-size: 11.5px; color: var(--text-3)">{{ headerSub }}</span>
 				</div>
 				<div style="margin-left: auto; display: flex; align-items: center; gap: 8px">
+					<!-- Release-nudge version pill (Slice 3b): always-on "how current is
+					     my Jarvis" status; click opens What's-new. Hidden when the target
+					     version is unknown (VersionPill's own v-if). -->
+					<VersionPill ref="versionPillRef" />
 					<!-- "Go to Desk" — at the rightmost end of the cluster (chat only, via CSS order)
 					     (uniform with LayoutHeader across every page) -->
 					<button
@@ -248,6 +252,37 @@
 										>
 									</span>
 								</button>
+								<button
+									v-if="currentId"
+									role="menuitem"
+									class="jv-create-item"
+									@click="
+										createMenuOpen = false;
+										openCompactDialog('');
+									"
+								>
+									<svg
+										width="17"
+										height="17"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="var(--text-2)"
+										stroke-width="1.7"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									>
+										<path d="M8 3v4a1 1 0 0 1-1 1H3" />
+										<path d="M21 8h-4a1 1 0 0 1-1-1V3" />
+										<path d="M3 16h4a1 1 0 0 1 1 1v4" />
+										<path d="M16 21v-4a1 1 0 0 1 1-1h4" />
+									</svg>
+									<span class="jv-create-item-txt">
+										<span class="jv-create-item-t">Compact chat</span>
+										<span class="jv-create-item-s"
+											>Summarise older turns to free up space</span
+										>
+									</span>
+								</button>
 							</div>
 						</template>
 					</div>
@@ -289,9 +324,78 @@
 					     button replaces that entry rather than duplicating it. Unconfigured
 					     gets the same jv-unavailable + aria-disabled treatment the STT/wiki
 					     buttons use for their own "visible but not usable yet" state, so a
-					     screen-reader user hears it's inert before clicking, not after. -->
+					     screen-reader user hears it's inert before clicking, not after.
+
+					     A waiting reply now surfaces HERE too (a red count pill, see
+					     jv-support-pill below) rather than only on the sidebar avatar dot -
+					     that dot is gone (UserMenu.vue). Two branches render the SAME
+					     button markup: with a waiting reply the button becomes a
+					     frappe-ui Dropdown trigger (two rows: go to the awaiting list, or
+					     start a new ticket); with nothing waiting it stays the plain
+					     new-ticket button it always was, so a zero-count click is byte-for-
+					     byte the old behaviour. No jv- palette rebind needed on the portal:
+					     the menu is pure frappe-ui (label/icon/text-ink-red-4 suffix), and
+					     frappe-ui's own theming already flips off the `data-theme` attribute
+					     theme.js sets on <html> - jv-* vars are only for THIS view's own
+					     hand-styled surface, which the portal content never touches. -->
+					<Dropdown
+						v-if="supportEntryVisible && supportHasAwaiting"
+						:options="supportMenuOptions"
+						placement="right"
+					>
+						<template #trigger>
+							<button
+								class="jv-iconbtn jv-support-btn"
+								:title="supportAwaitingPhraseText"
+								:aria-label="`Support, ${supportAwaitingPhraseText}`"
+								style="
+									position: relative;
+									width: 32px;
+									height: 32px;
+									display: flex;
+									align-items: center;
+									justify-content: center;
+									background: transparent;
+									border: 1px solid var(--border);
+									border-radius: 7px;
+									cursor: pointer;
+								"
+							>
+								<svg
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="var(--text-2)"
+									stroke-width="1.7"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+									<path
+										d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"
+									/>
+								</svg>
+								<span
+									class="jv-support-pill bg-surface-red-5"
+									role="status"
+									aria-live="polite"
+								>
+									<span aria-hidden="true">{{ supportPillLabel }}</span>
+									<!-- sr-only: the button's own aria-label already carries this
+									     phrase for a focused/click read, but role="status" here is
+									     what makes it ANNOUNCE on its own while the user is heads-
+									     down typing elsewhere in chat - the same job the removed
+									     avatar dot's role="status" did. jv-sr is the same visually-
+									     hidden utility the turn-completion live region (srMessage,
+									     below in this template) uses. -->
+									<span class="jv-sr">{{ supportAwaitingPhraseText }}</span>
+								</span>
+							</button>
+						</template>
+					</Dropdown>
 					<button
-						v-if="supportEntryVisible"
+						v-else-if="supportEntryVisible"
 						class="jv-iconbtn jv-support-btn"
 						:class="{ 'jv-unavailable': supportUnconfigured }"
 						:aria-disabled="supportUnconfigured ? 'true' : undefined"
@@ -445,6 +549,31 @@
 				</div>
 			</div>
 
+			<!-- Customer announcement banner (Slice B): the fleet-wide operator
+			     notice, coloured by severity (Info/Warning). Same top-of-chat slot
+			     and suppressors as the update banner, but wins the slot when both
+			     want it (the update banner yields via !announcementVisible). Never
+			     stacks, never hides chat. -->
+			<AnnouncementBanner v-if="announcementVisible" />
+
+			<!-- Upgrade maintenance hold (Stream E): a friendly "back shortly" while
+			     this tenant's agent is being upgraded (an image roll / reprovision).
+			     Same top-of-chat slot and warning register as the update banner, but
+			     the composer STAYS enabled - the send-gate gives a soft refusal and
+			     self-heals when the roll clears (see send()'s "maintenance" branch).
+			     Takes precedence over the release-nudge soft banner (holdActive is in
+			     hasUrgentAlert), so the two never stack. role/aria-live announce it. -->
+			<div v-if="holdActive" role="status" aria-live="polite" style="margin: 12px 18px 0">
+				<Banner type="warning" :message="holdText" align="center" />
+			</div>
+
+			<!-- Release-nudge banner (Slice 3b): severity-coloured (amber for soft,
+			     red for severe), top-of-chat. Shows over the welcome screen; yields
+			     to the greeting/booting states and to any urgent billing/readiness
+			     alert, including a stuck apply (updateBannerVisible). Dismiss
+			     minimises it into the version pill. Never stacks, never hides chat. -->
+			<UpdateBanner v-if="updateBannerVisible" :pill="versionPillRef" />
+
 			<!-- initial load: a quiet spinner so the welcome screen doesn't flash
 			     before the open conversation finishes loading on refresh -->
 			<div
@@ -489,7 +618,12 @@
 							overflow-wrap: anywhere;
 						"
 					>
-						<JarvisMark :size="38" :radius="11" style="flex: none" />
+						<JarvisMark
+							:size="38"
+							:radius="11"
+							:mood="holdActive ? 'upgrading' : 'star'"
+							style="flex: none"
+						/>
 						<span>{{ greeting }}, {{ firstName }}</span>
 					</h1>
 					<p class="jv-welcome-sub">
@@ -929,10 +1063,17 @@
 										     `.jv-ae-hint`, so a turn failure gets the same headline + hint +
 										     expandable-raw-detail treatment an ACTION-card failure already
 										     does (headline/hint from errorInfo(m); the raw detail is m.error,
-										     shown in the "Show details" block below), instead of a bare
+										     shown behind the inline "Details" toggle), instead of a bare
 										     message with no next step. -->
+										<!-- One guidance line: the hint, then the status link and the
+										     raw-detail toggle inline at its end, the way production chat
+										     UIs keep a failed turn to a title + one action line. -->
 										<div
-											v-if="errorInfo(m).hint"
+											v-if="
+												errorInfo(m).hint ||
+												errorInfo(m).statusUrl ||
+												m.error
+											"
 											style="
 												font-size: 12.5px;
 												color: var(--text-2);
@@ -941,31 +1082,52 @@
 											"
 										>
 											{{ errorInfo(m).hint }}
+											<a
+												v-if="errorInfo(m).statusUrl"
+												:href="errorInfo(m).statusUrl"
+												target="_blank"
+												rel="noopener noreferrer"
+												class="jv-err-link"
+												>{{ errorInfo(m).statusLabel }}
+												<span aria-hidden="true">&#8599;</span></a
+											>
+											<template v-if="m.error">
+												<span v-if="errorInfo(m).hint" aria-hidden="true">
+													&middot;
+												</span>
+												<button
+													type="button"
+													class="jv-err-link"
+													:aria-expanded="
+														rawOpen[m.name] ? 'true' : 'false'
+													"
+													:aria-controls="`jv-err-raw-${m.name}`"
+													@click="toggleRaw(m.name)"
+												>
+													{{
+														rawOpen[m.name]
+															? "Hide details"
+															: "Details"
+													}}
+												</button>
+											</template>
 										</div>
-										<details style="margin-top: 4px">
-											<summary
-												style="
-													font-size: 11.5px;
-													color: var(--text-3);
-													cursor: pointer;
-												"
-											>
-												Show details
-											</summary>
-											<div
-												style="
-													font-size: 12px;
-													color: var(--text-2);
-													margin-top: 4px;
-													line-height: 1.5;
-													white-space: pre-wrap;
-													overflow-wrap: anywhere;
-												"
-											>
-												{{ m.error }}
-											</div>
-										</details>
+										<div
+											v-if="rawOpen[m.name]"
+											:id="`jv-err-raw-${m.name}`"
+											style="
+												font-size: 12px;
+												color: var(--text-2);
+												margin-top: 4px;
+												line-height: 1.5;
+												white-space: pre-wrap;
+												overflow-wrap: anywhere;
+											"
+										>
+											{{ m.error }}
+										</div>
 										<button
+											v-if="errorInfo(m).retryable"
 											class="jv-retry"
 											@click="retry(m.name)"
 											:disabled="retrying"
@@ -1796,6 +1958,11 @@
 										</button>
 									</div>
 								</div>
+								<FeedbackBar
+									v-if="feedbackFor === m.name"
+									@rate="onFeedbackRate"
+									@close="onFeedbackClose"
+								/>
 							</template>
 						</Message>
 					</template>
@@ -1966,7 +2133,8 @@
 							(activeTools.length || waiting) &&
 							!queuedTurn &&
 							!artifactKind &&
-							!gotoMorph
+							!gotoMorph &&
+							!compacting
 						"
 						style="display: flex; gap: 12px"
 					>
@@ -2035,9 +2203,11 @@
 							</div>
 							<div
 								v-if="
-									!showActivityDetail ||
-									(waiting && !currentTool) ||
-									(!currentTool && statusPhase)
+									(!showActivityDetail ||
+										(waiting && !currentTool) ||
+										(!currentTool && statusPhase) ||
+										(!currentTool && !doneCount)) &&
+									!compacting
 								"
 								role="status"
 								aria-live="polite"
@@ -2101,6 +2271,59 @@
 								<span>{{ recoveringLabel }}</span>
 							</div>
 						</div>
+					</div>
+
+					<!-- Compacting: older turns are being summarised (auto mid-turn, or a
+					     manual Compact chat / /compact). The composer stays LOCKED (a
+					     compact and a turn must never race the same context write). -->
+					<div
+						v-if="compacting"
+						style="display: flex; gap: 12px"
+						data-testid="compacting-banner"
+					>
+						<JarvisMark
+							:size="28"
+							:radius="7"
+							mood="thinking"
+							style="margin-top: 2px"
+						/>
+						<div style="flex: 1; min-width: 0; padding-top: 3px">
+							<div
+								role="status"
+								aria-live="polite"
+								style="
+									display: flex;
+									align-items: center;
+									gap: 7px;
+									font-size: 12px;
+									color: var(--text-3);
+								"
+							>
+								<svg
+									class="jv-spin"
+									width="13"
+									height="13"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="var(--text-3)"
+									stroke-width="2"
+									stroke-linecap="round"
+								>
+									<path d="M12 3a9 9 0 1 0 9 9" />
+								</svg>
+								Compacting this chat{{
+									compactHintSeed ? " · “" + compactHintSeed + "”" : ""
+								}}
+							</div>
+							<div class="jv-fold" aria-hidden="true">
+								<i></i><i></i><i></i><i></i><i></i><i></i>
+							</div>
+						</div>
+					</div>
+					<div v-else-if="compactedChip" style="display: flex; justify-content: center">
+						<span class="jv-ctx-chip" role="status"
+							>Context compacted. The meter updates after your next message.</span
+						>
 					</div>
 
 					<!-- SUX-3: immediate "change saved" acknowledgment after a confirm
@@ -2396,23 +2619,10 @@
 						<button class="jv-btn jv-btn--sm" @click="goRenew">Renew</button>
 					</template>
 				</Banner>
-				<!-- No live background worker to run a turn. AFTER suspendedNotice (billing
-					 takes precedence) - ORDER MATTERS, pinned by readiness.spec.js. The
-					 composer stays enabled (see canSend): a send re-raises this if the lane
-					 is still dead, or clears it if the worker came back (self-heal). -->
-				<Banner
-					v-else-if="workersNotice"
-					type="warning"
-					title="Chat is paused"
-					:message="workersNotice"
-					style="margin-bottom: 10px"
-				/>
-				<!-- Soft counterpart to workersNotice above: worker_warning (degraded /
-					 under-provisioned workers) rather than the hard zero-workers block.
-					 AFTER workersNotice - ORDER MATTERS, pinned by readiness.spec.js: the
-					 block wins the v-else-if race whenever both are true (worker_blocked
-					 implies degraded), so this only ever shows on its own. Non-blocking -
-					 the composer stays enabled (see canSend), this is a heads-up only. -->
+				<!-- Soft worker warning: worker_warning (degraded / under-provisioned
+					 workers). AFTER suspendedNotice (billing takes precedence) - ORDER
+					 MATTERS, pinned by readiness.spec.js. Non-blocking - the composer stays
+					 enabled (see canSend), this is a heads-up only. -->
 				<Banner
 					v-else-if="workersWarnNotice"
 					type="warning"
@@ -2555,6 +2765,7 @@
 						v-model="input"
 						:attachments="composerAttachments"
 						:busy="busy"
+						:disabled="holdActive"
 						:canSend="canSend"
 						:sendTitle="voiceSendBlockReason"
 						:placeholder="composerPlaceholder"
@@ -3143,6 +3354,7 @@
 							<button
 								class="jv-iconbtn"
 								title="Attach file"
+								:disabled="holdActive"
 								@click="pickFiles"
 								style="
 									width: 30px;
@@ -3225,6 +3437,7 @@
 										? 'Wiki grounding armed. Your next message will be answered from the wiki (click to turn off)'
 										: 'Ground your next message on the org wiki'
 								"
+								:disabled="holdActive"
 								@click="groundNextTurn = !groundNextTurn"
 								:aria-pressed="String(groundNextTurn)"
 								:style="{
@@ -3320,6 +3533,7 @@
 											? 'Stop dictation'
 											: 'Dictate (voice to text)'
 									"
+									:disabled="holdActive && micState !== 'recording'"
 									@click="micState === 'recording' ? stopMic() : startMic()"
 									style="
 										width: 30px;
@@ -3383,6 +3597,13 @@
 							     linger a session if an admin flips it, but the server clause
 							     (_persona_clause) re-reads it every turn, so behaviour is always
 							     correct - voice-only cosmetic lag that self-heals on next boot. -->
+							<ContextRing
+								:context="contextInfo"
+								:compacting="compacting"
+								:compacted="compactedChip"
+								@compact="openCompactDialog('')"
+							/>
+							<UsagePill :usage="myUsage" />
 							<ModelEffortPicker
 								:model-override="modelOverride"
 								:default-model="ui.llm_model || ''"
@@ -4116,6 +4337,26 @@
 
 		<ConnectPhoneDialog v-model="showConnect" />
 
+		<CompactDialog
+			v-model="compactDialogOpen"
+			:busy-reason="compactBusyReason"
+			:submitting="compactSubmitting"
+			:initial-hint="compactHintSeed"
+			@confirm="runCompact"
+		/>
+
+		<!-- What's-new panel (Slice 3b): opened by the version pill and the soft
+		     banner via the shared whatsNewOpen ref in noticeGate. -->
+		<WhatsNewDialog />
+
+		<!-- Once-per-session "how did this session go?" popup: opened by
+		     maybeCheckSessionFeedback below, following the same shared-ref
+		     pattern as WhatsNewDialog/noticeGate. -->
+		<SessionFeedbackDialog />
+		<!-- Periodic business-pulse survey: opened by maybeOpenPulseFeedback,
+		     checked once per genuine chat-open event. -->
+		<PulseFeedbackDialog />
+
 		<!-- Preview a file the user attached in the composer (before send). Images
 		     enlarge, PDFs/others render in-app; loads over the session cookie so a
 		     private File just works. Sent-message attachments use the artifact
@@ -4138,6 +4379,7 @@
 import {
 	ref,
 	computed,
+	h,
 	inject,
 	onMounted,
 	onBeforeUnmount,
@@ -4147,7 +4389,15 @@ import {
 	watchEffect,
 } from "vue";
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
+import { Dropdown } from "frappe-ui";
+import ContextRing from "@/components/chat/ContextRing.vue";
+import UsagePill from "@/components/chat/UsagePill.vue";
+import { myUsage, loadMyUsage, takeUsage } from "@/stores/usage";
+import CompactDialog from "@/components/chat/CompactDialog.vue";
+import { parseCompactCommand, compactFailureCopy } from "@/lib/compact";
 import * as api from "@/api";
+import FeedbackBar from "@/components/chat/FeedbackBar.vue";
+import { shouldOfferFeedback, markRated, markIgnored } from "@/lib/feedbackGate";
 import * as voice from "@/api/voice";
 import { agentName, isWhitelabeled } from "@/branding";
 import { useAudioRecorder } from "@/composables/useAudioRecorder";
@@ -4173,6 +4423,11 @@ import { useConfirm } from "@/composables/useConfirm";
 import { promptSupportCopy } from "@/composables/useSupportCopyPrompt";
 import { useSupportStore } from "@/stores/support";
 import { formatRecentMessagesForSupport } from "@/lib/supportCopyFormat";
+import {
+	supportPillLabel as supportPillLabelFor,
+	supportAwaitingPhrase,
+	supportAwaitingRoute,
+} from "@/lib/supportHeaderPill";
 // timezone-safe: naive server datetimes must go through dayjsLocal (site tz)
 import { formatDate, exactDate, dayLabel } from "@/utils/datetime";
 import { fenceReject, fenceAccept } from "@/utils/eventFence";
@@ -4192,7 +4447,27 @@ import Composer from "@/components/chat/Composer.vue";
 import FilePreview from "@/components/FilePreview.vue";
 import ModelEffortPicker from "@/components/chat/ModelEffortPicker.vue";
 import AskCard from "@/components/chat/AskCard.vue";
+import VersionPill from "@/components/chat/VersionPill.vue";
+import UpdateBanner from "@/components/chat/UpdateBanner.vue";
+import AnnouncementBanner from "@/components/chat/AnnouncementBanner.vue";
+import WhatsNewDialog from "@/components/chat/WhatsNewDialog.vue";
+import SessionFeedbackDialog from "@/components/chat/SessionFeedbackDialog.vue";
+import PulseFeedbackDialog from "@/components/chat/PulseFeedbackDialog.vue";
+import { openSessionFeedback } from "@/lib/sessionFeedbackGate";
+import { maybeOpenPulseFeedback } from "@/lib/pulseFeedbackGate";
+import { showBanner } from "@/noticeGate";
+import { showAnnouncement } from "@/announcementGate";
+
+import {
+	holdActive,
+	holdText,
+	raiseHold,
+	clearHold,
+	recheck as recheckMaintenance,
+} from "@/maintenanceGate";
 import { parseAsk } from "@/lib/chatAsk";
+import { sendRejectionCopy } from "@/lib/sendRejectionCopy";
+import { shouldHideActivityTool, isCustomerFacingTool } from "@/lib/activityTools";
 import { parseGoto, gotoFiredKey, parseFiredStamp, claimGotoFire } from "@/lib/chatGoto";
 import { normaliseAction } from "@/lib/chatAction";
 import {
@@ -4205,6 +4480,7 @@ import {
 } from "@/lib/draftApply";
 import { stripBlocks } from "@/lib/chatBlocks";
 import { shouldFollowBottom } from "@/lib/chatScroll";
+import { preConnectStatusLabel } from "@/lib/statusPhrase";
 import { createRevealer } from "@/lib/streamReveal";
 import { sortPendingCards } from "@/lib/sortPendingCards";
 import { errMessage, turnErrorInfo } from "@/lib/errors";
@@ -4275,6 +4551,16 @@ watch(currentId, (id) => {
 	// from; never carry it into a different chat.
 	queuedTurn.value = null;
 	confirmedAck.value = false;
+	// The context meter's transient state is per-conversation too: a chip, a
+	// compacting lock, or a stale token count from the chat we left must never
+	// bleed into the one we just opened. Not every currentId change routes
+	// through loadConversation() (newChat() does not), so null contextInfo
+	// here rather than relying on that reload to do it; whichever load path
+	// does run (loadConversation, or loadContext directly) repopulates it off
+	// server truth.
+	contextInfo.value = null;
+	compactedChip.value = false;
+	compacting.value = false;
 	try {
 		id
 			? localStorage.setItem("jarvis-last-conv", id)
@@ -4293,6 +4579,73 @@ const promptHistory = ref([]);
 const histIdx = ref(null);
 const histDraft = ref("");
 const sending = ref(false);
+
+// ---- post-reply feedback line (lib/feedbackGate decides IF/when it appears) ----
+const feedbackFor = ref(null); // message name currently showing the feedback bar
+const feedbackRated = ref(false); // did the user rate the current bar?
+const feedbackEvaluated = new Set(); // message names already run through the gate
+function maybeOfferFeedback(m) {
+	if (!m || m.role !== "assistant" || m.error || m.stopped) return;
+	if (feedbackEvaluated.has(m.name)) return;
+	feedbackEvaluated.add(m.name); // gate each reply exactly once
+	const secs = parseFloat(elapsedOf(m)) || 0;
+	if (shouldOfferFeedback(secs * 1000)) {
+		feedbackFor.value = m.name;
+		feedbackRated.value = false;
+	}
+}
+// Session popup takes priority over the per-message thumbs bar on the SAME
+// reply: if it fires, FeedbackBar is suppressed for this reply (maybeOfferFeedback,
+// the only writer of feedbackFor, is simply never called for this m) and the
+// popup counts against feedbackGate's own per-day cap (markIgnored keeps the
+// bar's cooldown/cap bookkeeping consistent either way).
+async function maybeCheckSessionFeedback(m) {
+	if (!m || m.role !== "assistant" || m.error || m.stopped) return;
+	// Same one-shot guard maybeOfferFeedback uses, checked up front so a reply
+	// already evaluated (belt-and-braces alongside the CDX-3 run:end fence
+	// upstream, which already blocks a repeat equal-epoch terminal) never
+	// re-polls the server or double-counts.
+	if (feedbackEvaluated.has(m.name)) return;
+	const conv = currentId.value;
+	if (!conv) {
+		maybeOfferFeedback(m);
+		return;
+	}
+	let due = false;
+	try {
+		const status = await api.sessionFeedbackStatus(conv);
+		due = !!(status && status.due);
+	} catch (e) {
+		due = false; // offline / error: fall back to the thumbs bar behavior
+	}
+	// The user may have switched conversations while this read was in flight.
+	// Never surface a popup for a chat no longer on screen (matches "never on
+	// history load" — the reply just gets no prompt), and re-check the guard
+	// in case a second run:end for this same reply raced in during the await.
+	if (currentId.value !== conv || feedbackEvaluated.has(m.name)) return;
+	if (due) {
+		feedbackEvaluated.add(m.name); // gate this reply exactly once, like maybeOfferFeedback
+		markIgnored();
+		openSessionFeedback(conv);
+	} else {
+		maybeOfferFeedback(m);
+	}
+}
+function onFeedbackRate({ rating, note }) {
+	feedbackRated.value = true;
+	markRated(); // any rating stops further asks this session
+	const target = feedbackFor.value;
+	if (target) api.submitFeedback(target, rating, note || "").catch(() => {}); // best-effort
+}
+function onFeedbackClose() {
+	feedbackFor.value = null;
+}
+function dismissFeedback() {
+	// Starting the next query clears a still-unanswered bar (counts as an ignore).
+	if (!feedbackFor.value) return;
+	if (!feedbackRated.value) markIgnored();
+	feedbackFor.value = null;
+}
 const waiting = ref(false);
 // Phase-0 admission (chat concurrency): when a send is accepted but QUEUED
 // (all in-flight slots taken), the reply hasn't started - we show a "~N ahead"
@@ -4324,22 +4677,11 @@ watch(
 // Renew-banner copy when the subscription has lapsed; null while entitled.
 // The composer is disabled alongside it (no send can succeed while stopped).
 const suspendedNotice = ref(null);
-// Chat is blocked because the site has no live background worker to run a turn.
-// Persistent (not a toast), but UNLIKE suspendedNotice the composer stays enabled:
-// checkReady() is memoized and never re-polls, so a disabled composer could never
-// recover without a full reload. Instead this self-heals - a still-dead lane
-// re-raises it on the next rejected send, a recovered lane clears it on the next
-// successful one (see send()). Null while healthy.
-const workersNotice = ref(null);
-const WORKERS_BLOCKED_MSG =
-	"Chat is paused: no background workers are running to handle messages. Please try again shortly.";
-// Soft, non-blocking counterpart to workersNotice above: worker_warning fires
-// when workers are merely under-provisioned/degraded, distinct from the hard
-// worker_blocked zero-workers state. The composer stays enabled - canSend
-// must never gate on this (see the "never gates canSend" test) - this is a
-// heads-up only, not a stop sign. Self-heals the same way workersNotice does:
-// cleared on the next successful retry/send, never re-derived from a re-poll
-// (checkReady() is memoized).
+// Soft, non-blocking worker warning: worker_warning fires when workers are
+// under-provisioned/degraded. The composer stays enabled - canSend must never
+// gate on this (see the "never gates canSend" test) - this is a heads-up only,
+// not a stop sign. Self-heals: cleared on the next successful retry/send, never
+// re-derived from a re-poll (checkReady() is memoized). Null while healthy.
 const workersWarnNotice = ref(null);
 const WORKERS_WARN_MSG = `${agentName} is busier than usual, so answers might take a little longer. You can keep chatting.`;
 // A DIFFERENT not-ready reason (container_provisioning - e.g. the connected LLM
@@ -4460,6 +4802,62 @@ const billingAlert = computed(() => {
 function dismissBillingAlert() {
 	billingDismissedPhase.value = (billingAlert.value && billingAlert.value.phase) || "";
 }
+
+// ---- Release-nudge soft banner (Slice 3b) ----------------------------------
+// The version pill (header) exposes { getEl, pulse }; the soft banner reaches
+// for it to minimise-into-pill on dismiss.
+const versionPillRef = ref(null);
+// Composer-region alerts that make the chat genuinely UNUSABLE or paused - a
+// "please update" nudge on top of one of these is noise, so the soft banner
+// yields to them. llmApplyStuck is one of these: its own ref comment says chat
+// "genuinely cannot answer" (an aged-out apply, not a still-converging one), so
+// the update banner yields to it too. It does NOT yield to the soft,
+// chat-still-works heads-ups - workersWarnNotice (a bench low on workers, which
+// would otherwise NEVER show the update banner) and llmApplying (a quiet "still
+// converging" heads-up): those render above the composer, don't visually
+// conflict with the top-of-chat banner, and chat still works under them.
+const hasUrgentAlert = computed(
+	() =>
+		!!(
+			// An active upgrade maintenance hold pauses chat too (Stream E), so the
+			// release-nudge soft banner yields to the "back shortly" banner.
+			(
+				holdActive.value ||
+				replacedAlert.value ||
+				billingAlert.value ||
+				suspendedNotice.value ||
+				noAiConnected.value ||
+				containerUnavailable.value ||
+				llmApplyStuck.value ||
+				notReadyNotice.value
+			)
+		)
+);
+// The operator announcement banner shares the top-of-chat slot and the same
+// suppressors as the update banner (yield to greeting/booting/urgent alerts),
+// but WINS the slot when both want it (the update banner yields below via
+// `!announcementVisible`) - an operator's fleet-wide notice outranks a version
+// nudge. Shows over the welcome screen too.
+const announcementVisible = computed(
+	() =>
+		showAnnouncement.value &&
+		!booting.value &&
+		!bizGreeting.value.show &&
+		!hasUrgentAlert.value
+);
+// The soft banner shows whenever it's a not-snoozed soft/severe notice AND the
+// top-of-chat region is otherwise clear (no greeting/booting) AND no urgent
+// alert is competing for attention AND the announcement banner isn't taking the
+// slot - it also shows over the welcome screen (the highest-traffic surface),
+// which no longer suppresses it. The pill stays regardless.
+const updateBannerVisible = computed(
+	() =>
+		showBanner.value &&
+		!bizGreeting.value.show &&
+		!booting.value &&
+		!hasUrgentAlert.value &&
+		!announcementVisible.value
+);
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
 // THIS chat. autoApplyNote surfaces the admin-only-enable message.
@@ -4563,9 +4961,11 @@ async function openSupport() {
 		explainUnavailable("Support");
 		return;
 	}
-	// This header control is the NEW-TICKET entry point only. The "you have a
-	// waiting reply" signal + its route to the inbox now live solely on the
-	// avatar's resting badge (UserMenu), so the two concerns don't share a button.
+	// This function is the NEW-TICKET action specifically: with a waiting reply
+	// the header button opens a menu instead of calling this directly (see
+	// supportMenuOptions below), and its "New ticket from this chat" row calls
+	// straight into this same function - so openSupport() itself never needs to
+	// know which of the two paths got it here.
 	if (openSupportInFlight) return;
 	openSupportInFlight = true;
 	try {
@@ -4598,6 +4998,70 @@ async function openSupport() {
 		openSupportInFlight = false;
 	}
 }
+// Waiting-reply count pill (header headphones button). awaiting_count is a
+// cheap poll-driven number (stores/support.js's refreshAwaiting, already run
+// by UserMenu's 60s poll timer - no second poller started here); reading
+// zero for a not-yet-primed store is the correct "nothing waiting" default.
+// The label/phrase/routing math itself lives in lib/supportHeaderPill.js,
+// pure and unit-tested there (the same split lib/supportCopyFormat.js already
+// uses for this button's copy-to-ticket formatting) - this view just wires
+// the store's numbers through it.
+const supportAwaitingCount = computed(() => (supportStore ? supportStore.awaitingCount : 0));
+const supportHasAwaiting = computed(() => supportAwaitingCount.value > 0);
+const supportPillLabel = computed(() => supportPillLabelFor(supportAwaitingCount.value));
+const supportAwaitingPhraseText = computed(() =>
+	supportAwaitingPhrase(supportAwaitingCount.value)
+);
+function goToAwaitingTickets() {
+	router.push(supportAwaitingRoute());
+}
+const supportMenuOptions = computed(() => [
+	{
+		group: "Support",
+		hideLabel: true,
+		items: [
+			{
+				label: "Tickets awaiting reply",
+				icon: "life-buoy",
+				onClick: goToAwaitingTickets,
+				slots: {
+					// The raw count, not the "9+"-capped supportPillLabel: this row has
+					// room for it, and UserMenu's sibling "Support tickets · N" row
+					// already shows the uncapped number, so the two should never disagree.
+					suffix: () =>
+						h(
+							"span",
+							{ class: "text-ink-red-4 font-medium tabular-nums" },
+							String(supportAwaitingCount.value)
+						),
+				},
+			},
+			{
+				label: "New ticket from this chat",
+				icon: "plus",
+				onClick: openSupport,
+			},
+		],
+	},
+]);
+// This view only READS supportStore.awaitingCount - the 60s poll that keeps
+// it fresh belongs to UserMenu.vue (always mounted alongside chat), so no
+// second poller starts here. But that poller is on a timer, not a mount
+// hook, so the pill's FIRST paint here could be showing a stale/empty count
+// for up to 60s. It could also simply be wrong on any load where UserMenu
+// isn't mounted at all (collapsed/off-canvas sidebar on phone), not only
+// that one case. One extra one-shot refresh on this view's own mount closes
+// that gap without adding a second timer. It DOES fire on every normal load
+// alongside UserMenu's own immediate call - refreshAwaiting() in
+// stores/support.js de-dupes concurrent callers into one request, so this
+// never becomes two round trips for the same number. .catch() for the same
+// reason as SupportThreadPage's calls: an un-awaited rejection here would
+// otherwise be unhandled (the real store already catches its own errors, so
+// this is belt-and-braces).
+onMounted(() => {
+	loadMyUsage();
+	if (supportOn) supportStore.refreshAwaiting().catch(() => {});
+});
 // One-shot "ground on wiki": when armed, the NEXT message carries a
 // context.ground_wiki flag so the backend injects relevant wiki page bodies
 // into that turn. Cleared after each send (see send()).
@@ -4915,6 +5379,84 @@ watch(
 	}
 );
 const usage = ref(null); // { estimated, chat_tokens, month_tokens, total_tokens, budget_monthly, month_label }
+
+// ---- chat context meter + Compact (sub-project B) ----
+const contextInfo = ref(null); // get_conversation_context payload for the open chat
+const compacting = ref(false); // a compaction we started (or one the runtime is doing mid-turn)
+const compactedChip = ref(false); // after-chip + pill "Compacted" until the next run:end
+const compactDialogOpen = ref(false);
+const compactSubmitting = ref(false);
+const compactHintSeed = ref("");
+const compactBusyReason = computed(() => {
+	if (compacting.value) return "Already compacting this chat";
+	if (sending.value || waiting.value || currentRunId.value)
+		return "A reply is in progress, try again in a moment";
+	return "";
+});
+
+// Best-effort context refresh for the open chat. The ring stays mounted through
+// a compacting/compacted transition (ContextRing only hides on !context.fresh):
+// a payload that hasn't been measured yet (fresh:false, e.g. right after
+// context:compacted, before the runtime re-measures) must NOT overwrite the
+// last fresh snapshot, or the pill would vanish mid-transition instead of
+// showing the compacted state.
+// `applyCompacting` is true only from the conversation-open path
+// (loadConversation): there, a fetch may CLEAR the optimistic lock, since it
+// is the authoritative read for a chat that just came on screen. Anywhere
+// else a stale, slow GET racing a fresh compact click must not flip a live
+// lock back off - such a fetch may only turn compacting ON, never off; the
+// run:end / run:error / run:recovering / context:compacted /
+// context:compact_failed events (plus the dropped-frame progress guards in
+// assistant:delta / tool:start) are the only other clearers.
+async function loadContext({ applyCompacting = false } = {}) {
+	const id = currentId.value;
+	if (!id) {
+		contextInfo.value = null;
+		return;
+	}
+	try {
+		const c = await api.getConversationContext(id);
+		takeUsage(c);
+		// Stale-response guard (mirrors loadConversation): a slow response for a
+		// chat the user has since left must not stamp ITS compacting/context state
+		// onto whichever chat is on screen now.
+		if (currentId.value !== id) return;
+		if (c && c.fresh) contextInfo.value = c;
+		if (applyCompacting) {
+			compacting.value = !!(c && c.compacting);
+		} else if (c && c.compacting) {
+			compacting.value = true;
+		}
+	} catch {
+		/* meter is best-effort */
+	}
+}
+
+function openCompactDialog(seed = "") {
+	compactHintSeed.value = seed;
+	compactDialogOpen.value = true;
+}
+
+async function runCompact(hint) {
+	if (!currentId.value) return;
+	compactSubmitting.value = true;
+	try {
+		const res = await api.compactConversation(currentId.value, hint);
+		if (!res || !res.ok) {
+			notify(compactFailureCopy(res && res.reason), { type: "error" });
+			return;
+		}
+		compacting.value = true;
+		compactedChip.value = false;
+		compactHintSeed.value = hint || "";
+		compactDialogOpen.value = false;
+	} catch (e) {
+		notify(errMessage(e) || compactFailureCopy(), { type: "error" });
+	} finally {
+		compactSubmitting.value = false;
+	}
+}
+
 // Compact token count: 1234 → "1.2k", 2_500_000 → "2.5M".
 function fmtTokens(n) {
 	n = Number(n || 0);
@@ -4959,6 +5501,11 @@ const currentRunId = ref(null);
 const stoppedRunId = ref(null);
 const stoppedMsgIds = ref(new Set()); // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null); // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
+// Raw error text disclosure per failed message ("Details" in the guidance line).
+const rawOpen = ref({});
+function toggleRaw(id) {
+	rawOpen.value = { ...rawOpen.value, [id]: !rawOpen.value[id] };
+}
 const errorMeta = ref({}); // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
 // Pump streaming (Relay Pump) end-to-end epoch/seq fence (CDX-3 + CDX-12). The pure fence
 // logic lives in @/utils/eventFence.js (extracted so it is unit-tested by a real node test
@@ -5132,13 +5679,22 @@ function onVisibilityChange() {
 	if (document.hidden) flushReveal();
 }
 const activeTools = ref([]); // [{ id, name, status }] for the in-flight run
+// Live COUNT + current-tool name exclude the agent's built-ins so the tally matches the
+// settled accordion (no 3→2 jump); raw activeTools still drives the "is working" gating.
+const visibleActiveTools = computed(() =>
+	activeTools.value.filter((t) => isCustomerFacingTool(t.name))
+);
 // Live activity shows ONE tool at a time: the most-recently-started tool that's
 // still running, plus a compact count of the ones already finished this turn.
 const currentTool = computed(
-	() => [...activeTools.value].reverse().find((t) => t.status === "running") || null
+	() => [...visibleActiveTools.value].reverse().find((t) => t.status === "running") || null
 );
-const doneCount = computed(() => activeTools.value.filter((t) => t.status !== "running").length);
-const failedCount = computed(() => activeTools.value.filter((t) => t.status === "error").length);
+const doneCount = computed(
+	() => visibleActiveTools.value.filter((t) => t.status !== "running").length
+);
+const failedCount = computed(
+	() => visibleActiveTools.value.filter((t) => t.status === "error").length
+);
 // ── Live status line ────────────────────────────────────────────────────────
 // Real progress instead of a blanket "Thinking…": phase transitions come from
 // the run's realtime events (run:start → tool:start/end → assistant:delta).
@@ -5213,7 +5769,10 @@ function toolPhrase(tool) {
 	return tpl + "…";
 }
 const liveStatus = computed(() => {
-	if (statusPhase.value === "waking") return "Waking up your assistant…";
+	// Pre-connect phases ("waking" / "pairing") win over tool/thinking phrases:
+	// the turn is still blocked on the WS connect, no tool is running yet.
+	const preConnect = preConnectStatusLabel(statusPhase.value);
+	if (preConnect) return preConnect;
 	if (currentTool.value) return toolPhrase(currentTool.value);
 	if (statusPhase.value === "analyzing") return "Analyzing the results…";
 	if (waiting.value || sending.value || statusPhase.value === "model") return "Working on it…";
@@ -5270,9 +5829,25 @@ function queuedChipLabel(pos, state) {
 // #702: {code, headline, hint} for one message's turn error - `turnErrorInfo`
 // (lib/errors.js) is the single, tested classifier; this only adds the
 // `noChange` flag, which is per-event metadata, not part of the taxonomy.
+// Memoised on the inputs that can change the answer: the template reads this
+// several times per failed message per render, and classification is a regex
+// walk over the (capped) error text.
+const errorInfoCache = new Map();
 function errorInfo(m) {
 	const meta = errorMeta.value[m.name] || {};
-	return { ...turnErrorInfo(m.error, meta.code), noChange: meta.changed_data === false };
+	const key = `${m.name}\u0000${m.error}\u0000${meta.code || ""}\u0000${
+		meta.changed_data
+	}\u0000${m.provider || ""}`;
+	let info = errorInfoCache.get(key);
+	if (!info) {
+		info = {
+			...turnErrorInfo(m.error, meta.code, { provider: m.provider }),
+			noChange: meta.changed_data === false,
+		};
+		if (errorInfoCache.size > 500) errorInfoCache.clear();
+		errorInfoCache.set(key, info);
+	}
+	return info;
 }
 // Live elapsed timer shown next to the status line so a long turn reads as
 // "still working" (time ticking) rather than a frozen spinner. Hidden for the
@@ -5606,8 +6181,8 @@ const activityByAssistant = computed(() => {
 			cur = m.name;
 			if (!map[cur]) map[cur] = [];
 		}
-		// action_outcome rows are receipt chips shown inline, not accordion tool calls.
-		else if (m.role === "tool" && cur && !m.action_outcome)
+		// action_outcome rows show inline as chips; no-I/O agent built-ins expand to nothing — skip both.
+		else if (m.role === "tool" && cur && !m.action_outcome && !shouldHideActivityTool(m))
 			(map[cur] || (map[cur] = [])).push(m);
 	}
 	return map;
@@ -5788,8 +6363,17 @@ const canSend = computed(
 	() =>
 		(input.value.trim().length > 0 || pendingFiles.value.length > 0) &&
 		!sending.value &&
+		// A compaction (auto mid-turn, or one we started) must never race a turn
+		// writing the same context — Composer has no bare `disabled` prop, so this
+		// is the equivalent binding: fold `compacting` into the same gate `sending`
+		// already uses.
+		!compacting.value &&
 		// Suspended: the server rejects every send, so keep the button dead.
 		!suspendedNotice.value &&
+		// Maintenance hold (Stream E HARD block): the server refuses every send during an
+		// upgrade, so disable Send too (the composer is also greyed via :disabled below). This
+		// reverses the earlier soft-block (composer-stays-enabled); see readiness.spec.js.
+		!holdActive.value &&
 		// No model configured: nothing on the other end can answer, so prevent the
 		// send rather than reporting the failure after the fact.
 		!noAiConnected.value &&
@@ -6013,7 +6597,9 @@ const triggerMode = ref(false);
 // "Ask Jarvis" style) instead of a chip list, and a small marker sits above it.
 const TRIGGER_PLACEHOLDER = "e.g. Warn me when a Sales Invoice over 1 lakh is submitted";
 const composerPlaceholder = computed(() =>
-	triggerMode.value
+	compacting.value
+		? "Compacting this chat, try again in a moment"
+		: triggerMode.value
 		? TRIGGER_PLACEHOLDER
 		: `Ask ${agentName}…   @ to mention a user, / for a doctype or tool`
 );
@@ -7961,6 +8547,20 @@ let _shownConvId = null;
 // ResizeObserver, cancelled by any deliberate scroll.
 let _restoreTop = null;
 let _restoreUntil = 0;
+// One-shot guard for the business-pulse check, separate from _shownConvId
+// (which loadConversation alone owns, for scroll-restore). THREE places can
+// make a conversation id newly "current": loadConversation's genuine-switch
+// branch, newChat(), and the send-from-home id-adoption in send() — a fresh
+// chat's first reply reloads via loadConversation on the SAME id newChat()
+// already checked, which _sameConv alone doesn't catch (loadConversation
+// never ran for that id before, so _sameConv reads false again). Keying on
+// the id itself instead makes the check idempotent across all three sites.
+let _pulseCheckedConvId = null;
+function _checkPulseOnce(id) {
+	if (!id || _pulseCheckedConvId === id) return;
+	_pulseCheckedConvId = id;
+	maybeOpenPulseFeedback();
+}
 
 async function loadConversation(id) {
 	// Preserve the reader's position across an in-place resync. Captured BEFORE
@@ -7984,6 +8584,7 @@ async function loadConversation(id) {
 		histIdx.value = null;
 		histDraft.value = "";
 		loadedConvTitle.value = "";
+		contextInfo.value = null;
 		return;
 	}
 	const d = await api.getConversation(id);
@@ -7994,6 +8595,11 @@ async function loadConversation(id) {
 	// does a single clean load, would put it right. (Root cause of "open a
 	// chat, switch away and back, it shows empty until I refresh".)
 	if (currentId.value !== id) return;
+	// Context meter: best-effort, off the critical path (never awaited) — a slow
+	// or failed get_conversation_context must not delay messages rendering.
+	// This is the conversation-open path, so this fetch is authoritative for
+	// the lock too (applyCompacting) - unlike the mid-turn refreshes elsewhere.
+	loadContext({ applyCompacting: true });
 	// Flush any in-flight reveal BEFORE swapping in the freshly-loaded rows. On a
 	// reconnect resync the socket may have missed a run's terminal (fire-and-forget
 	// pub/sub, no replay), so flushReveal(message_id) never ran for it; a leftover
@@ -8104,6 +8710,14 @@ async function loadConversation(id) {
 	// after a turn settles (or after a card is applied/discarded) used to fling a
 	// reader who had scrolled up back to the bottom, which is exactly what makes a
 	// long reply unreadable. Restore where they were and let the arrow stand.
+	// Business-pulse survey check: fire once per GENUINE chat open, not on an
+	// in-place resync of the conversation already on screen (tab-focus onResync,
+	// a turn settling, a card apply/discard — all re-run loadConversation on the
+	// SAME id). `_sameConv` above already draws exactly this distinction for the
+	// scroll-position logic; `_checkPulseOnce` additionally guards against a
+	// fresh chat's first reload here re-firing what newChat()/send() already
+	// checked for this same id. Cheap and self-gating server-side (pulse_context).
+	if (!_sameConv) _checkPulseOnce(id);
 	_shownConvId = id;
 	await nextTick();
 	if (_keepScrollTop !== null && threadEl.value) {
@@ -8384,6 +8998,19 @@ async function newChat() {
 	swapDraft(null);
 	resetRunState();
 	currentId.value = conv?.name || conv;
+	// loadConversation does not run on this path, so the `!_sameConv` pulse
+	// check there never fires for a new chat — this is a genuine chat-open
+	// event too (pulse is gated per-user-period, not per-conversation, so an
+	// empty fresh chat is a valid open). Cheap and self-gating; no await needed.
+	// _checkPulseOnce (keyed on this id, not _shownConvId) keeps this from
+	// double-firing when the first reply's loadConversation reload runs next.
+	_checkPulseOnce(currentId.value);
+	// loadConversation does not run on this path (see below), so reload THIS
+	// conversation's own connector-focus pick here instead of leaving the ref
+	// on whatever the PREVIOUS chat had armed - createOrFocusEmpty can return
+	// an already-existing empty conversation, so this is a real reload (its
+	// own stored pick, if any), not just a reset to null.
+	connectorFocus.value = _loadConnectorFocusFor(currentId.value);
 	// This conversation IS the unsaved new-chat composer getting its id. The recovered/typed
 	// new-chat draft (already restored into `input` by swapDraft above) and its still-retained
 	// voice records lived under the _NEW_CHAT_SCOPE sentinel — migrate draft + records + mirror +
@@ -8479,18 +9106,19 @@ async function retry(messageId) {
 			// not a toast that vanishes before they can renew.
 			if (r.reason === "subscription_suspended") {
 				if (!suspendedNotice.value) suspendedNotice.value = SUSPENDED_FALLBACK;
-			} else if (r.reason === "insufficient_workers") {
-				// No live worker to run the retried turn - same persistent, self-healing
-				// banner a blocked send raises (see send()).
-				if (!workersNotice.value) workersNotice.value = WORKERS_BLOCKED_MSG;
+			} else if (r.reason === "maintenance") {
+				// Same as send(): raise the hold banner + self-heal, no toast.
+				raiseHold(r.message);
+				recheckMaintenance();
 			} else {
 				// e.g. the single-flight guard ("a reply is already in progress").
 				notify(r.reason || "Couldn't retry that.", { type: "error" });
 			}
 		}
 		if (r && r.ok !== false) {
-			workersNotice.value = null; // a retry got through: workers are back
-			workersWarnNotice.value = null; // same self-heal for the soft warning
+			workersWarnNotice.value = null; // a retry got through: workers are back
+			// A retry that got through also proves any maintenance hold lifted.
+			clearHold();
 		}
 	} catch (e) {
 		sending.value = false;
@@ -8526,6 +9154,11 @@ function resendFailed(m) {
 // optional `context`, e.g. a dashboard): consumed by the first send below.
 let _prefillSendContext = null;
 async function send(textArg, resendAck) {
+	// Maintenance HARD block: once a hold is known, no send runs — this guards the paths that call
+	// send() directly (AskCard/answer/resend/prefill), not just the disabled composer. On the FIRST
+	// mid-session send holdActive is still false, so the detection branch below is preserved.
+	if (holdActive.value) return;
+	dismissFeedback(); // sending the next turn clears any pending feedback line
 	// Don't race a dictation that hasn't landed: sending now would drop the spoken words (the
 	// transcript would arrive AFTER the message left the composer). Block on the real busy
 	// signal — recording, or a recording still being transcribed — NOT hasUnfinished(), which
@@ -8540,6 +9173,25 @@ async function send(textArg, resendAck) {
 	const _sentScope = _currentScope();
 	const fromMain = typeof textArg !== "string";
 	const text = (fromMain ? input.value : textArg).trim();
+	const compactCmd = parseCompactCommand(text);
+	if (compactCmd) {
+		if (fromMain) input.value = "";
+		if (compacting.value) {
+			notify("Already compacting this chat", { type: "info" });
+			return;
+		}
+		if (compactCmd.hint) await runCompact(compactCmd.hint);
+		else openCompactDialog("");
+		return;
+	}
+	// A compaction in flight must never race a turn writing the same context.
+	// canSend already darkens Send while compacting, but Enter routes here
+	// directly (same gap noAiConnected below closes for that reason) and a
+	// programmatic send never sees the button at all.
+	if (compacting.value) {
+		notify("Compacting this chat, try again in a moment", { type: "info" });
+		return;
+	}
 	// PAYLOAD-bound voice release: bind the release to the transcribed recordings whose text is
 	// ACTUALLY PRESENT in THIS outgoing payload — captured NOW, before the POST. A recording the
 	// user EDITED or DELETED out of the composer is absent from `text`, so captureSentInPayload
@@ -8672,7 +9324,12 @@ async function send(textArg, resendAck) {
 			undefined,
 			attachments,
 			sendCtx,
-			approvalTokens
+			approvalTokens,
+			// Same voice-ack token voiceDictationStore.captureSentInPayload already
+			// computed above (for releasing local audio blobs) — non-empty iff this
+			// payload's text came from a dictation, so reuse it verbatim rather than
+			// adding new detection logic.
+			!!(_voiceAck && _voiceAck.length)
 		);
 		// A typed go-ahead was consumed as an approval, not rejected as a send, so it
 		// must not fall into the rejection branch below even when the confirmation
@@ -8729,6 +9386,16 @@ async function send(textArg, resendAck) {
 				setTimeout(() => window.location.reload(), 1500);
 				return;
 			}
+			// Maintenance hold (Stream E): the operator/roll raised an upgrade hold
+			// while this tab was open, so boot never carried it. Show the friendly
+			// "back shortly" banner + self-heal by re-checking the CP; this HARD-blocks
+			// the composer (disabled until the hold lifts, then re-enabled reactively).
+			// No reload (unlike release_update_required) - an upgrade hold is transient.
+			if (r.reason === "maintenance") {
+				raiseHold(r.message);
+				recheckMaintenance();
+				return;
+			}
 			if (r.reason === "workspace_resetting") {
 				notify(`${agentName} is being reset. Chat will be back in a few minutes.`, {
 					type: "warning",
@@ -8741,28 +9408,23 @@ async function send(textArg, resendAck) {
 				});
 				return;
 			}
-			// No live worker to run this turn: raise the persistent, self-healing
-			// banner (composer stays enabled - see canSend/workersNotice) rather than
-			// a toast that vanishes before the lane recovers.
-			if (r.reason === "insufficient_workers") {
-				if (!workersNotice.value) workersNotice.value = WORKERS_BLOCKED_MSG;
-				return;
-			}
 			notify(
-				// Period-neutral copy: "usage_limit" fires from BOTH the all-time
-				// aggregate cap (jarvis.chat.policy._over_total_limit) and the
-				// still-monthly per-model cap (_over_model_limit) - the toast can't
-				// say "monthly" or "all-time" without being wrong for one of them.
+				// "usage_limit" fires from BOTH the aggregate cap and the still-monthly
+				// per-model cap; the envelope names the window (limit_period) only for
+				// the former, so the copy stays period-neutral for the latter.
 				r.reason === "usage_limit"
-					? `You've reached your usage limit. Ask your ${agentName} admin to raise it.`
+					? sendRejectionCopy(r.reason, agentName, r).message
 					: r.reason || "Couldn't send your message.",
 				{ type: "error" }
 			);
 			return;
 		}
 		if (r && r.ok !== false) {
-			workersNotice.value = null; // a send got through: workers are back
-			workersWarnNotice.value = null; // same self-heal for the soft warning
+			workersWarnNotice.value = null; // a send got through: workers are back
+			// An accepted send proves the CP-side gate passed, i.e. any upgrade
+			// maintenance hold has lifted - clear the banner + wake the avatar now
+			// rather than stranding them until a reload (self-heal).
+			clearHold();
 		}
 		// Send accepted — the one-shot grounding/prefill context is now consumed.
 		// Cleared HERE, not before the await: a rejected send (r.ok === false, above)
@@ -8838,6 +9500,12 @@ async function send(textArg, resendAck) {
 					originOf.value = "";
 					if (route.params.id !== r.conversation_id)
 						router.replace("/c/" + r.conversation_id);
+					// A brand-new/fallback conversation becoming current is a genuine
+					// chat-open too (e.g. the very first message sent from the home/
+					// welcome screen, never touching newChat() or loadConversation).
+					// _checkPulseOnce keys on the id itself, so this can't double-fire
+					// with the loadConversation/newChat sites either.
+					_checkPulseOnce(r.conversation_id);
 				}
 				// Empties are hidden from the sidebar; surface the row now it has a message.
 				if (!store.conversations.some((c) => c.name === currentId.value))
@@ -8976,6 +9644,11 @@ function onEvent(p) {
 			waiting.value = false;
 			sending.value = false;
 			statusPhase.value = null;
+			// run:status "compacting" is lossy on the transport and its "compacted"
+			// counterpart can be dropped — never leave the composer locked waiting
+			// for an event that may never arrive. A parked/recovering turn is, by
+			// definition, no longer mid-compaction from this tab's point of view.
+			compacting.value = false;
 			activeTools.value = [];
 			currentRunId.value = null;
 			store.streamingConvId = null;
@@ -8984,6 +9657,29 @@ function onEvent(p) {
 			// Lightweight progress signal (e.g. waking a cold container) between
 			// run:start and the first token — keeps the connect window honest.
 			if (p.status === "waking") statusPhase.value = "waking";
+			// One-time device (re)pair (agent 9.3 connect-first): shown as
+			// "Setting up your assistant…" while the bench pairs with the gateway.
+			if (p.status === "pairing") statusPhase.value = "pairing";
+			if (p.status === "compacting") {
+				statusPhase.value = "compacting";
+				compacting.value = true;
+			}
+			if (p.status === "compacted") {
+				statusPhase.value = null;
+				compacting.value = false;
+				compactedChip.value = true;
+			}
+			break;
+		case "context:compacted":
+			compacting.value = false;
+			compactedChip.value = true;
+			compactHintSeed.value = "";
+			loadContext();
+			break;
+		case "context:compact_failed":
+			compacting.value = false;
+			compactHintSeed.value = "";
+			notify(compactFailureCopy(p.reason), { type: "error" });
 			break;
 		case "run:start":
 			// CDX-3: a stale-epoch run:start (a pump that lost the lease, or one that
@@ -9046,6 +9742,15 @@ function onEvent(p) {
 			// bypass and are always applied, unchanged.
 			if (pumpFenceReject(p)) break;
 			pumpFenceAccept(p, false);
+			// The "compacted" run:status frame is lossy (see the run:status case
+			// below); if it never arrived, real progress after a "compacting"
+			// marker means the compaction already ended, so clear the stuck lock
+			// here rather than leave the activity row hidden for the rest of the
+			// turn.
+			if (compacting.value && statusPhase.value === "compacting") {
+				compacting.value = false;
+				statusPhase.value = null;
+			}
 			waiting.value = false;
 			statusPhase.value = null;
 			recovering.value = null;
@@ -9069,6 +9774,13 @@ function onEvent(p) {
 			if (pumpFenceReject(p)) break; // CDX-3 (epoch-less legacy tool events bypass)
 			if (toolEventIsStale(p)) break;
 			pumpFenceAccept(p, false);
+			// See the matching guard in assistant:delta: a dropped "compacted"
+			// run:status frame must not leave compacting stuck true once the turn
+			// has visibly moved on.
+			if (compacting.value && statusPhase.value === "compacting") {
+				compacting.value = false;
+				statusPhase.value = null;
+			}
 			const id = p.tool_call_id || `${p.tool_name}-${activeTools.value.length}`;
 			activeTools.value = [
 				...activeTools.value,
@@ -9180,6 +9892,17 @@ function onEvent(p) {
 					},
 				};
 			}
+			// Post-reply feedback line: offer it (throttled) now the reply is
+			// finalized and its duration is stamped. Only here - never on history load.
+			// The once-per-session popup takes priority on this same reply (see
+			// maybeCheckSessionFeedback) - never both prompts on one reply.
+			if (m) maybeCheckSessionFeedback(m);
+			// The compacted after-chip and the compacting lock are both scoped to a
+			// single turn: the NEXT run:end always clears them and refetches the
+			// meter, whether or not this particular turn itself compacted.
+			compactedChip.value = false;
+			compacting.value = false;
+			loadContext();
 			waiting.value = false;
 			sending.value = false;
 			statusPhase.value = null;
@@ -9348,6 +10071,10 @@ function onEvent(p) {
 			waiting.value = false;
 			sending.value = false;
 			statusPhase.value = null;
+			// run:status "compacting" is lossy on the transport and its "compacted"
+			// counterpart can be dropped — an errored turn must not leave the
+			// composer locked waiting for an event that may never arrive.
+			compacting.value = false;
 			activeTools.value = [];
 			currentRunId.value = null;
 			store.streamingConvId = null;
@@ -10400,6 +11127,7 @@ function openUserFile(a) {
 // ---- mentions (@ user, / doctype·tool) ----
 let _mentionSeq = 0;
 function onInput() {
+	dismissFeedback(); // starting the next query clears any pending feedback line
 	histIdx.value = null; // typing exits prompt-history navigation
 	const el = composerRef.value?.el;
 	if (!el) return;
@@ -10579,14 +11307,9 @@ onMounted(async () => {
 			// reason gets its own honest, CTA-less banner below.
 			suspendedNotice.value =
 				r && r.reason === "subscription_suspended" ? suspensionNotice(r) : null;
-			// Seed the workers banner from the same boot verdict. checkReady() is
-			// memoized and never re-polls, so this is a ONE-TIME seed only - the
-			// banner then self-heals through send()'s rejection/success branches,
-			// never through a re-check here.
-			workersNotice.value = r && r.worker_blocked ? WORKERS_BLOCKED_MSG : null;
-			// Same one-time seed for the soft counterpart: worker_warning is a
-			// distinct, non-blocking degraded-workers signal (see workersWarnNotice
-			// above). It also self-heals through send()/retry() only, never here.
+			// Seed the soft workers banner from the same boot verdict. checkReady() is
+			// memoized and never re-polls, so this is a ONE-TIME seed only - the banner
+			// then self-heals through send()/retry() success, never through a re-check.
 			workersWarnNotice.value = r && r.worker_warning ? WORKERS_WARN_MSG : null;
 		})
 		.catch(() => {});
@@ -11400,6 +12123,36 @@ onUnmounted(() => {
 	color: var(--text-3) !important;
 	stroke: currentColor !important;
 }
+/* Waiting-reply count pill on the header's support button (jv-support-btn).
+   The bg-surface-red-5 Tailwind class (not var(--red), THIS view's own
+   red for inline error states - a different, unrelated token) is the same
+   class Sidebar.vue's approvals badge/dot paint with, kept as a literal
+   utility class rather than a hand-copied hex so it keeps tracking that
+   token if it's ever retuned. It already flips with data-theme (theme.js's
+   applyTheme sets that on <html> for every frappe-ui consumer), independent
+   of this view's own jv-dark/paletteVars system. The 2px ring is
+   var(--surface): this header paints no background of its own, so
+   var(--surface) IS what actually shows behind the button, and using it
+   (rather than a literal white) keeps the ring correct if the header ever
+   grows a background. */
+.jv-support-pill {
+	position: absolute;
+	top: -5px;
+	right: -5px;
+	min-width: 17px;
+	height: 17px;
+	padding: 0 4px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 999px;
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	box-shadow: 0 0 0 2px var(--surface);
+	pointer-events: none;
+}
 .jv-nudge-actions {
 	display: flex;
 	align-items: center;
@@ -11547,6 +12300,90 @@ onUnmounted(() => {
 @keyframes jv-spin {
 	to {
 		transform: rotate(360deg);
+	}
+}
+/* Compacting banner: folding lines settle into one summary line, on loop. */
+.jv-fold {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	width: 150px;
+	margin-top: 8px;
+}
+.jv-fold i {
+	display: block;
+	height: 6px;
+	border-radius: 99px;
+	background: var(--surface-3);
+	transform-origin: top;
+	animation: jv-foldline 3.2s ease-in-out infinite;
+}
+.jv-fold i:nth-child(2) {
+	width: 88%;
+	animation-delay: 0.12s;
+}
+.jv-fold i:nth-child(3) {
+	width: 70%;
+	animation-delay: 0.24s;
+}
+.jv-fold i:nth-child(4) {
+	width: 92%;
+	animation-delay: 0.36s;
+}
+.jv-fold i:nth-child(5) {
+	width: 60%;
+	animation-delay: 0.48s;
+}
+.jv-fold i:last-child {
+	width: 44%;
+	background: var(--brand-grad, linear-gradient(135deg, #6e8bff, #8b5cf6));
+	animation: jv-summary 3.2s ease-in-out infinite;
+}
+@keyframes jv-foldline {
+	0%,
+	25% {
+		opacity: 1;
+		transform: scaleY(1) translateY(0);
+	}
+	55%,
+	100% {
+		opacity: 0;
+		transform: scaleY(0.1) translateY(-26px);
+	}
+}
+@keyframes jv-summary {
+	0%,
+	50% {
+		opacity: 0;
+		transform: translateY(-14px);
+	}
+	70%,
+	100% {
+		opacity: 1;
+		transform: translateY(-32px);
+	}
+}
+.jv-ctx-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 12px;
+	color: var(--text-2);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 99px;
+	padding: 4px 11px;
+}
+.jv-ctx-chip::before {
+	content: "";
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: #16a34a;
+}
+@media (prefers-reduced-motion: reduce) {
+	.jv-fold i {
+		animation: none;
 	}
 }
 /* Phase-0 admission: Cancel affordance on the queued chip. Text-button idiom
@@ -14830,5 +15667,15 @@ onUnmounted(() => {
 .jv-slide-enter-from .jv-artifact-panel,
 .jv-slide-leave-to .jv-artifact-panel {
 	transform: translateX(100%);
+}
+.jv-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 </style>

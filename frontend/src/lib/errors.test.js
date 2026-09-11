@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { errMessage, turnErrorInfo, GENERIC_ERROR_MESSAGE } from "./errors.js";
+import rules from "../../../jarvis/public/js/turn_error_rules.mjs";
 
 test("extracts the first server message when present", () => {
 	assert.equal(errMessage({ messages: ["Settings -> Developer"] }), "Settings -> Developer");
@@ -146,18 +147,18 @@ test("a genuine transport failure stays unreachable", () => {
 	assert.equal(turnErrorInfo("agent unreachable after 3 attempts").code, "unreachable");
 });
 
-test("a provider rejection (quota/billing) stays provider", () => {
+test("HTTP 429 with generic quota wording receives the rate-limit remedy", () => {
 	const info = turnErrorInfo(
 		"Google Generative AI API error (429): You exceeded your current quota."
 	);
-	assert.equal(info.code, "provider");
+	assert.equal(info.code, "rate-limit");
 });
 
 // The Python mirror (turn_handler._classify_error) matches on both "rate
 // limit" and the hyphenated "rate-limit". Must agree here too, or the same
 // text classifies as provider live and gateway on a reload.
-test("a hyphenated rate-limit reads as provider, matching the Python mirror", () => {
-	assert.equal(turnErrorInfo("upstream rate-limit exceeded").code, "provider");
+test("a hyphenated rate-limit matches the Python classification", () => {
+	assert.equal(turnErrorInfo("upstream rate-limit exceeded").code, "rate-limit");
 });
 
 // classifyTurnErrorCode's "connection timed out" belongs to the unreachable
@@ -223,11 +224,214 @@ test("turnErrorInfo is total: null, undefined, a number and an object never thro
 });
 
 // An unrecognized wire code (e.g. a future server-side taxonomy value this
-// build doesn't know about yet) must degrade to the generic headline with no
-// hint, never crash and never render a blank headline.
+// build does not know yet) must degrade to an actionable generic message.
 test("an unrecognized explicit code falls back to the generic headline", () => {
 	const info = turnErrorInfo("does not matter", "some-future-code-v2");
 	assert.equal(info.code, "some-future-code-v2");
-	assert.equal(info.headline, "Something went wrong");
-	assert.equal(info.hint, "");
+	assert.equal(info.headline, "Jarvis hit an unexpected error");
+	assert.match(info.hint, /support/);
+});
+
+// The backend runs these same fixtures to catch Python/JavaScript regex drift.
+import { readFileSync } from "node:fs";
+const cases = JSON.parse(
+	readFileSync(
+		new URL("../../../jarvis/tests/fixtures/turn_errors.json", import.meta.url),
+		"utf8"
+	)
+);
+for (const { error, code } of cases) {
+	test(`classifies ${error || "(empty error)"} as ${code}`, () => {
+		assert.equal(turnErrorInfo(error).code, code);
+		assert.equal(turnErrorInfo(error, "gateway").code, code);
+	});
+}
+
+test("permission failure has an actionable remedy, no immediate retry or provider link", () => {
+	const info = turnErrorInfo(cases[0].error, "gateway", { provider: "openai" });
+	assert.match(info.hint, /administrator/);
+	assert.equal(info.retryable, false);
+	assert.equal(info.statusUrl, "");
+});
+
+test("availability links use the actual provider, including routed models", () => {
+	assert.equal(
+		turnErrorInfo("Anthropic 529 overloaded_error").statusUrl,
+		"https://status.claude.com/"
+	);
+	assert.equal(turnErrorInfo("OpenAI 503").statusUrl, "https://status.openai.com/");
+	assert.equal(
+		turnErrorInfo("Claude overloaded", "", { provider: "openrouter" }).statusUrl,
+		"https://status.openrouter.ai/"
+	);
+	assert.equal(
+		turnErrorInfo("OpenRouter anthropic/claude 503").statusUrl,
+		"https://status.openrouter.ai/"
+	);
+	assert.equal(
+		turnErrorInfo("503", "", { provider: "gemini" }).statusUrl,
+		"https://aistudio.google.com/status"
+	);
+});
+
+test("unknown or custom hosts never inherit the model vendor status URL", () => {
+	for (const provider of ["openai_compat", "ollama", "vllm", "custom-proxy"]) {
+		assert.equal(turnErrorInfo("OpenAI 503", "", { provider }).statusUrl, "");
+	}
+	for (const raw of [
+		"503",
+		"Azure OpenAI 503",
+		"openai_compat 503",
+		"Claude and Gemini failed 503",
+	]) {
+		assert.equal(turnErrorInfo(raw).statusUrl, "");
+	}
+	assert.equal(turnErrorInfo("503", "", { model: "gpt-5" }).statusUrl, "");
+});
+
+test("billing, authentication, and local failures do not imply provider outages", () => {
+	for (const raw of [
+		"OpenAI 429 insufficient_quota",
+		"Claude 401 Unauthorized",
+		"Gemini EPERM",
+	]) {
+		assert.equal(turnErrorInfo(raw).statusUrl, "");
+		assert.equal(turnErrorInfo(raw).retryable, false);
+	}
+});
+
+test("unknown errors do not invent a transient cause or trust an external URL", () => {
+	const info = turnErrorInfo("unknown problem https://attacker.example/status");
+	assert.doesNotMatch(info.hint, /hiccup|our side|temporary/i);
+	assert.equal(info.statusUrl, "");
+});
+
+test("prototype property names are not valid error codes", () => {
+	for (const code of ["__proto__", "constructor", "toString"]) {
+		assert.equal(turnErrorInfo("failure", code).headline, "Jarvis hit an unexpected error");
+	}
+});
+
+test("every catalog provider has an explicit status-link expectation", () => {
+	const expected = {
+		openai: "https://status.openai.com/",
+		anthropic: "https://status.claude.com/",
+		google: "https://aistudio.google.com/status",
+		mistral: "https://status.mistral.ai/",
+		groq: "https://groqstatus.com/",
+		together: "https://status.together.ai/",
+		deepseek: "https://status.deepseek.com/",
+		moonshot: "https://status.moonshot.cn/",
+		openrouter: "https://status.openrouter.ai/",
+		xai: "https://status.x.ai/",
+		ollama: "", // Local server: no company status page describes this instance.
+		vllm: "",
+		openai_compat: "", // Host unknown.
+		zai: "", // No verified official public status page.
+		zai_coding: "",
+	};
+	const catalog = readFileSync(
+		new URL("../../../jarvis/_model_catalog.py", import.meta.url),
+		"utf8"
+	);
+	const ids = [...catalog.matchAll(/"provider_id": "([^"]+)"/g)].map((match) => match[1]);
+	assert.deepEqual(ids.sort(), Object.keys(expected).sort());
+	for (const [provider, url] of Object.entries(expected)) {
+		assert.equal(
+			turnErrorInfo("503 Service Unavailable", "", { provider }).statusUrl,
+			url,
+			provider
+		);
+	}
+	assert.equal(turnErrorInfo("Kimi service unavailable").statusUrl, expected.moonshot);
+	assert.equal(
+		turnErrorInfo("OpenRouter moonshot/kimi service unavailable").statusUrl,
+		expected.openrouter
+	);
+	assert.equal(
+		turnErrorInfo("Kimi service unavailable", "", { provider: "openai_compat" }).statusUrl,
+		""
+	);
+});
+
+test("provider status links preserve timeout and connection guidance", () => {
+	const timeout = turnErrorInfo("deadline exceeded", "", { provider: "anthropic" });
+	assert.equal(timeout.headline, "Claude did not respond in time");
+	assert.match(timeout.hint, /smaller parts/);
+	assert.equal(timeout.statusUrl, "https://status.claude.com/");
+	const connection = turnErrorInfo("ECONNRESET", "", { provider: "openai" });
+	assert.equal(connection.headline, "Jarvis could not connect to OpenAI / ChatGPT");
+	assert.match(connection.hint, /administrator/);
+	assert.doesNotMatch(`${timeout.hint} ${connection.hint}`, /is down|outage|our side|hiccup/i);
+});
+
+// "together" is ordinary prose; only the vendor's own name links to Together AI.
+// The routing-service shortlist outranks model authors, so a false match here
+// would also override an explicitly named Anthropic in the same text.
+test("the plain word together never attributes a failure to Together AI", () => {
+	assert.equal(turnErrorInfo("all retries failed together, 503").statusUrl, "");
+	assert.equal(
+		turnErrorInfo("Anthropic overloaded, all retries failed together").statusUrl,
+		"https://status.claude.com/"
+	);
+	assert.equal(
+		turnErrorInfo("Together AI: 503 Service Unavailable").statusUrl,
+		"https://status.together.ai/"
+	);
+	assert.equal(turnErrorInfo("together.ai timeout").statusUrl, "https://status.together.ai/");
+});
+
+// Retry is the headline UX change: pin which codes offer it, in one place.
+test("retryable is pinned per code", () => {
+	const retryable = new Set([
+		"internal",
+		"models-exhausted",
+		"unreachable",
+		"recovery-expired",
+		"rate-limit",
+		"service-unavailable",
+		"timeout",
+		"connection",
+		"gateway",
+	]);
+	for (const { code } of rules) {
+		assert.equal(turnErrorInfo("x", code).retryable, retryable.has(code), code);
+	}
+	assert.equal(turnErrorInfo("No endpoints found").retryable, true);
+	assert.equal(turnErrorInfo("429 model_not_found").retryable, false);
+	assert.equal(turnErrorInfo("503 Service Unavailable: upstream not found").retryable, true);
+});
+
+test("a known provider rewrites the availability copy but keeps the rule's retry", () => {
+	const info = turnErrorInfo("OpenAI 503 Service Unavailable");
+	assert.equal(info.headline, "OpenAI / ChatGPT could not complete this request");
+	assert.doesNotMatch(info.hint, /below/);
+	assert.equal(info.retryable, true);
+	assert.equal(
+		turnErrorInfo("503 Service Unavailable").headline,
+		"The service could not complete this request"
+	);
+});
+
+test("a legacy explicit provider code is refined from the text, or kept", () => {
+	assert.equal(turnErrorInfo("insufficient credit", "provider").code, "billing");
+	assert.equal(turnErrorInfo("something odd", "provider").code, "provider");
+	assert.equal(turnErrorInfo("something odd", "gateway").code, "gateway");
+});
+
+test("two named hosts are ambiguous; one host outranks the model brand", () => {
+	assert.equal(turnErrorInfo("openrouter and groq both timed out").statusUrl, "");
+	assert.equal(
+		turnErrorInfo("mistral and groq both timed out").statusUrl,
+		"https://groqstatus.com/"
+	);
+	assert.equal(turnErrorInfo("mistral and claude both timed out").statusUrl, "");
+});
+
+test("classification reads at most the first 8 KB", () => {
+	const long = "x".repeat(9000) + " 401 Unauthorized";
+	assert.equal(turnErrorInfo(long).code, "gateway");
+	const started = Date.now();
+	turnErrorInfo("device " + "pairing ".repeat(40000));
+	assert.ok(Date.now() - started < 500, "pathological input must stay fast");
 });

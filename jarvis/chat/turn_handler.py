@@ -39,6 +39,7 @@ import frappe
 
 from jarvis import compat
 from jarvis.chat import agent_session_pool, seq_watermark, vision
+from jarvis.chat.error_taxonomy import classify_error_text
 from jarvis.exceptions import AgentUnreachableError
 from jarvis.jarvis.pool_serialize import compute_pool_mode
 
@@ -92,11 +93,16 @@ def persist_rich_outputs(
 	user: str,
 	run_id: str,
 	turn_start_ms: int,
+	media_rels: list[str] | None = None,
 ) -> None:
 	"""Best-effort canvas + generated-image persistence and publish for one
 	finished turn. Shared by the worker's clean exit and snapshot recovery
 	(a recovered long turn is exactly the kind that produced charts).
-	Never raises."""
+
+	``media_rels`` (native ``MEDIA:`` marker paths, detected + stripped upstream
+	before egress) is passed on the delivering transports (direct relay inline;
+	pump via the Turn row in ``finalize``) and omitted on recovery (strip-but-
+	don't-deliver). Never raises."""
 	settings = frappe.get_single("Jarvis Settings")
 
 	# Rich outputs: detect any canvas/chart artifact the agent produced this
@@ -160,6 +166,49 @@ def persist_rich_outputs(
 	except Exception:
 		frappe.log_error(
 			title="chat worker: generated-image persist failed",
+			message=frappe.get_traceback(),
+		)
+
+	# Native media (MEDIA: marker): the agent's native image tool writes to the
+	# agent media store and emits a MEDIA:<path> marker; it's detected + the
+	# line stripped upstream (before egress), with the path(s) threaded here as
+	# media_rels. Fetch each directly from the container gateway + seed as a File
+	# + canvas item. MUST run AFTER the canvas block above — persist_canvases
+	# OVERWRITES the `canvas` field wholesale, whereas this appends; reordering
+	# would clobber these items. Failure never fails a turn.
+	try:
+		if media_rels:
+			from jarvis.chat import generated_media as gen_media
+
+			media_items = gen_media.seed_media(
+				assistant_msg_name,
+				settings.agent_url or "",
+				settings.get_password("agent_token", raise_exception=False) or "",
+				media_rels,
+			)
+			if media_items:
+				# The client 'canvas' event REPLACES the list (not merge), and this is
+				# the last of the three publishers (canvas/imagegen/media), so publish
+				# the CUMULATIVE canvas read back from the field — otherwise a same-turn
+				# chart/imagegen item would be transiently wiped from the live bubble
+				# until reload.
+				all_items = (
+					frappe.parse_json(frappe.db.get_value(MSG, assistant_msg_name, "canvas") or "[]")
+					or media_items
+				)
+				_publish_to_user(
+					user,
+					{
+						"kind": "canvas",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg_name,
+						"run_id": run_id,
+						"items": all_items,
+					},
+				)
+	except Exception:
+		frappe.log_error(
+			title="chat worker: native media persist failed",
 			message=frappe.get_traceback(),
 		)
 
@@ -1130,6 +1179,30 @@ def handle_chat_send(payload: dict) -> None:
 					"status": "waking",
 				},
 			)
+		# Connect-first device pairing (Mechanism A): a bench that has not yet
+		# obtained its device token must (re)pair before it can reach the gateway.
+		# The connect below drives that one-time pairing (NOT_PAIRED -> approved ->
+		# token) and can take tens of seconds, so tell the user we're setting the
+		# assistant up rather than leaving a dead spinner. On the fail-closed cap
+		# the connect raises an honest "still getting ready" error handled below.
+		# Cheap + best-effort: only fires when no device token is persisted yet
+		# (steady-state turns skip it); a UX hint must never break the turn.
+		try:
+			from jarvis.chat.device import has_paired_token
+
+			if not has_paired_token(settings):
+				_publish_to_user(
+					user,
+					{
+						"kind": "run:status",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+						"status": "pairing",
+					},
+				)
+		except Exception:
+			pass
 		try:
 			t_checkout = time.monotonic()
 			with agent_session_pool.checkout(gateway_url) as sess:
@@ -1371,9 +1444,11 @@ def handle_chat_send(payload: dict) -> None:
 			)
 			_try_recover_now(conversation_id)
 			return
-		# relay:final - authoritative text beats the batcher tail.
-		if terminal.get("text"):
-			frappe.db.set_value(MSG, assistant_msg.name, "content", terminal["text"])
+		# relay:final - authoritative text beats the batcher tail. A media/marker-only
+		# reply strips to empty text but sets marker_stripped; overwrite (to "") anyway
+		# so the raw batcher tail can never survive the marker into stored content.
+		if terminal.get("text") or terminal.get("marker_stripped"):
+			frappe.db.set_value(MSG, assistant_msg.name, "content", terminal.get("text") or "")
 
 		# Streaming exited cleanly via lifecycle.end
 		frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
@@ -1382,7 +1457,14 @@ def handle_chat_send(payload: dict) -> None:
 		# Canvas + generated-image persistence and publish (extracted so
 		# snapshot recovery can deliver the same rich outputs for a turn
 		# that finished via _finalize instead of this clean exit).
-		persist_rich_outputs(assistant_msg.name, conversation_id, user, run_id, turn_start_ms)
+		persist_rich_outputs(
+			assistant_msg.name,
+			conversation_id,
+			user,
+			run_id,
+			turn_start_ms,
+			media_rels=terminal.get("media_rels"),
+		)
 
 		# Chat-ask materialization (notify-approvals design Part 2): a final
 		# reply carrying a ```jarvis-ask fence surfaces on the Approval Board
@@ -2114,64 +2196,17 @@ def _create_assistant_placeholder(conv) -> "frappe.model.document.Document":
 
 
 def _classify_error(err_text: str, exc=None) -> str:
-	"""Map a raw error into a small operator-facing taxonomy code the SPA turns
-	into a plain-language headline + hint. The raw text still travels as
-	``error`` and shows behind a "Show details" disclosure - this only picks
-	the headline/hint. Mirrored in frontend/src/lib/errors.js
-	(classifyTurnErrorCode) for the no-``code`` refresh path - errorMeta in
-	ChatView.vue is not persisted, so a reload reclassifies from the stored
-	error string alone. Keep both in sync when either changes (#702)."""
-	code = getattr(exc, "code", None)
-	if code == "turn-timeout":
+	"""Classify text consistently with the UI, preserving transport evidence.
+
+	The rules module is imported at module load on purpose: a broken rules
+	file then fails at deploy time, not inside the error-reporting path."""
+	if getattr(exc, "code", None) == "turn-timeout":
 		return "timeout"
-	low = (err_text or "").lower()
-	# The worker's own last-resort backstop (this module's outer
-	# ``except Exception`` around handle_chat_send) stamps code="internal"
-	# explicitly and never calls this function, but a page refresh only has
-	# the persisted string - match its wording here so the two agree.
-	if low.startswith("unexpected worker error"):
-		return "internal"
-	# "connection timed out" is a transport failure (we could not reach the
-	# gateway), not a generic timeout (the model took too long to answer) -
-	# keep it in this branch, matching classifyTurnErrorCode in
-	# frontend/src/lib/errors.js, so the same text does not classify as
-	# "unreachable" live and "timeout" on a reload.
-	if (
-		isinstance(exc, AgentUnreachableError)
-		or "ws open failed" in low
-		or "unreachable" in low
-		or "connection timed out" in low
-	):
+	code = classify_error_text(err_text)
+	# A transport wrapper can carry a specific upstream rejection (401, quota, etc.).
+	if isinstance(exc, AgentUnreachableError) and code in ("gateway", "timeout"):
 		return "unreachable"
-	if "recovery window" in low:
-		return "recovery-expired"
-	if "timed out" in low or "timeout" in low or "deadline" in low:
-		return "timeout"
-	if any(
-		k in low
-		for k in (
-			"quota",
-			"rate limit",
-			"rate-limit",
-			"cooldown",
-			"overloaded",
-			"insufficient",
-			"credit",
-			"billing",
-		)
-	):
-		return "provider"
-	# #702: a run that reached this branch already got an ack and started -
-	# it is a mid-run failure the agent reported for itself (relay:error), not
-	# a case where WE failed to reach the gateway (that is "unreachable",
-	# above) or a specific provider rejection (that is "provider", above).
-	# The agent's own wording here is not reliable: "LLM request failed:
-	# network connection error." was the verbatim text for a turn that
-	# actually failed because the agent's paired-device file was mid-rewrite,
-	# nothing to do with the network. Defaulting to "gateway" instead of the
-	# old "internal" tells the customer this is likely transient and worth a
-	# retry, rather than the unhelpful "something went wrong".
-	return "gateway"
+	return code
 
 
 def _mark_errored(assistant_msg_name: str, error: str) -> None:
@@ -2320,6 +2355,20 @@ def _handle_event_inner(
 				},
 			)
 		# lifecycle start is a no-op (we already published run:start)
+		return
+
+	if kind == "compaction":
+		batcher.flush()
+		_publish_to_user(
+			user,
+			{
+				"kind": "run:status",
+				"conversation_id": conversation_id,
+				"message_id": assistant_msg_name,
+				"run_id": run_id,
+				"status": "compacting" if event.get("phase") == "start" else "compacted",
+			},
+		)
 		return
 
 	if kind == "assistant":
