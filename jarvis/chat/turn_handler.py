@@ -93,11 +93,16 @@ def persist_rich_outputs(
 	user: str,
 	run_id: str,
 	turn_start_ms: int,
+	media_rels: list[str] | None = None,
 ) -> None:
 	"""Best-effort canvas + generated-image persistence and publish for one
 	finished turn. Shared by the worker's clean exit and snapshot recovery
 	(a recovered long turn is exactly the kind that produced charts).
-	Never raises."""
+
+	``media_rels`` (native ``MEDIA:`` marker paths, detected + stripped upstream
+	before egress) is passed on the delivering transports (direct relay inline;
+	pump via the Turn row in ``finalize``) and omitted on recovery (strip-but-
+	don't-deliver). Never raises."""
 	settings = frappe.get_single("Jarvis Settings")
 
 	# Rich outputs: detect any canvas/chart artifact the agent produced this
@@ -161,6 +166,49 @@ def persist_rich_outputs(
 	except Exception:
 		frappe.log_error(
 			title="chat worker: generated-image persist failed",
+			message=frappe.get_traceback(),
+		)
+
+	# Native media (MEDIA: marker): the agent's native image tool writes to the
+	# agent media store and emits a MEDIA:<path> marker; it's detected + the
+	# line stripped upstream (before egress), with the path(s) threaded here as
+	# media_rels. Fetch each directly from the container gateway + seed as a File
+	# + canvas item. MUST run AFTER the canvas block above — persist_canvases
+	# OVERWRITES the `canvas` field wholesale, whereas this appends; reordering
+	# would clobber these items. Failure never fails a turn.
+	try:
+		if media_rels:
+			from jarvis.chat import generated_media as gen_media
+
+			media_items = gen_media.seed_media(
+				assistant_msg_name,
+				settings.agent_url or "",
+				settings.get_password("agent_token", raise_exception=False) or "",
+				media_rels,
+			)
+			if media_items:
+				# The client 'canvas' event REPLACES the list (not merge), and this is
+				# the last of the three publishers (canvas/imagegen/media), so publish
+				# the CUMULATIVE canvas read back from the field — otherwise a same-turn
+				# chart/imagegen item would be transiently wiped from the live bubble
+				# until reload.
+				all_items = (
+					frappe.parse_json(frappe.db.get_value(MSG, assistant_msg_name, "canvas") or "[]")
+					or media_items
+				)
+				_publish_to_user(
+					user,
+					{
+						"kind": "canvas",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg_name,
+						"run_id": run_id,
+						"items": all_items,
+					},
+				)
+	except Exception:
+		frappe.log_error(
+			title="chat worker: native media persist failed",
 			message=frappe.get_traceback(),
 		)
 
@@ -1446,9 +1494,11 @@ def handle_chat_send(payload: dict) -> None:
 			)
 			_try_recover_now(conversation_id)
 			return
-		# relay:final - authoritative text beats the batcher tail.
-		if terminal.get("text"):
-			frappe.db.set_value(MSG, assistant_msg.name, "content", terminal["text"])
+		# relay:final - authoritative text beats the batcher tail. A media/marker-only
+		# reply strips to empty text but sets marker_stripped; overwrite (to "") anyway
+		# so the raw batcher tail can never survive the marker into stored content.
+		if terminal.get("text") or terminal.get("marker_stripped"):
+			frappe.db.set_value(MSG, assistant_msg.name, "content", terminal.get("text") or "")
 
 		# Streaming exited cleanly via lifecycle.end
 		frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
@@ -1457,7 +1507,14 @@ def handle_chat_send(payload: dict) -> None:
 		# Canvas + generated-image persistence and publish (extracted so
 		# snapshot recovery can deliver the same rich outputs for a turn
 		# that finished via _finalize instead of this clean exit).
-		persist_rich_outputs(assistant_msg.name, conversation_id, user, run_id, turn_start_ms)
+		persist_rich_outputs(
+			assistant_msg.name,
+			conversation_id,
+			user,
+			run_id,
+			turn_start_ms,
+			media_rels=terminal.get("media_rels"),
+		)
 
 		# Chat-ask materialization (notify-approvals design Part 2): a final
 		# reply carrying a ```jarvis-ask fence surfaces on the Approval Board

@@ -2676,22 +2676,32 @@ def _resolve_recovery_tail(ctx: PumpContext, pr: _PendingRecovery, frame: dict) 
 	turn's answer), Amendment D 'never fabricate'."""
 	payload = frame.get("payload") or frame.get("result") or {}
 	messages = payload.get("messages") or []
-	from jarvis.chat.turn_recovery import _latest_assistant_text
+	from jarvis.chat import egress_rules
+	from jarvis.chat.turn_recovery import _latest_assistant_raw
 
-	text = _latest_assistant_text(messages, min_seq=pr.min_seq, max_seq=pr.max_seq)
-	if text:
-		_settle_recovered_final(ctx, pr.r, text)
+	raw = _latest_assistant_raw(messages, min_seq=pr.min_seq, max_seq=pr.max_seq)
+	text, _rels, marker_stripped = egress_rules.redact_final_with_media(raw)
+	# A media/marker-only reply strips to "" but IS real in-window output — settle
+	# final with the clean (empty) text so the raw marker never lingers in stored
+	# content, rather than erroring and leaving the streamed tail. Parity with cron
+	# _recover_one. An empty window with no marker still errors honestly (Amendment D).
+	if text or marker_stripped:
+		_settle_recovered_final(ctx, pr.r, text, marker_stripped=marker_stripped)
 	else:
 		_settle_recovered_errored(ctx, pr.r)
 
 
-def _settle_recovered_final(ctx: PumpContext, r: dict, text: str) -> None:
+def _settle_recovered_final(ctx: PumpContext, r: dict, text: str, *, marker_stripped: bool = False) -> None:
 	"""Genuine missed-terminal recovery: advance streaming->terminal_observed under
 	this epoch with the in-window durable text, mark ``was_recovered`` (SUX-6 — the
-	client may do a visible replacement), and settle to final."""
+	client may do a visible replacement), and settle to final. ``marker_stripped``
+	rides the payload so settlement forces the content overwrite on a marker-only
+	reply (empty text) instead of keeping the raw streamed tail."""
 	run_id = r["run_id"]
 	v = int(r["version"])
 	payload = {"text": text}
+	if marker_stripped:
+		payload["marker_stripped"] = True
 	if not ts.mark_terminal_observed(run_id, v, ctx.epoch, "relay:final", payload):
 		if _epoch_lost(ctx, run_id):
 			ts.lease_lost_exit(run_id)
