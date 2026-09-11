@@ -362,7 +362,16 @@ class _PollingSess:
 class TestFetchFreshSessionRow(_UsageTestBase):
 	def test_retries_until_fresh(self):
 		stale = {"key": "agent:poll", "totalTokensFresh": False, "inputTokens": 1, "outputTokens": 1}
-		fresh = {"key": "agent:poll", "totalTokensFresh": True, "inputTokens": 5, "outputTokens": 3}
+		# contextTokens already resolved here - this fixture is exercising the
+		# TOKEN-freshness retry only; jarvis#1170's capacity retry has its own
+		# tests below.
+		fresh = {
+			"key": "agent:poll",
+			"totalTokensFresh": True,
+			"inputTokens": 5,
+			"outputTokens": 3,
+			"contextTokens": 272000,
+		}
 		sess = _PollingSess([[stale], [fresh]])
 		with patch("jarvis.chat.usage.time.sleep", return_value=None) as mock_sleep:
 			row = usage.fetch_fresh_session_row(sess, "agent:poll")
@@ -377,6 +386,47 @@ class TestFetchFreshSessionRow(_UsageTestBase):
 			row = usage.fetch_fresh_session_row(sess, "agent:neverfresh", attempts=3)
 		self.assertEqual(row, stale)
 		self.assertEqual(sess.calls, 3)
+
+	def test_retries_when_fresh_but_capacity_missing(self):
+		# jarvis#1170: a session pinned to a model that has never run in this
+		# container reads back fresh usage before the gateway has resolved
+		# the model's contextTokens (context-window capacity) into the row.
+		no_capacity = {
+			"key": "agent:pinned",
+			"totalTokensFresh": True,
+			"inputTokens": 5,
+			"outputTokens": 3,
+			"contextTokens": None,
+		}
+		with_capacity = {
+			"key": "agent:pinned",
+			"totalTokensFresh": True,
+			"inputTokens": 5,
+			"outputTokens": 3,
+			"contextTokens": 272000,
+		}
+		sess = _PollingSess([[no_capacity], [with_capacity]])
+		with patch("jarvis.chat.usage.time.sleep", return_value=None) as mock_sleep:
+			row = usage.fetch_fresh_session_row(sess, "agent:pinned")
+		self.assertEqual(row, with_capacity, "keeps polling past a fresh-but-capacity-less row")
+		self.assertEqual(sess.calls, 2)
+		mock_sleep.assert_called_once()
+
+	def test_capacity_never_arrives_returns_last_fresh_row(self):
+		# The budget is bounded: real usage must still be recorded (a fresh
+		# row, just never carrying a capacity) rather than retried forever.
+		no_capacity = {
+			"key": "agent:pinned-stuck",
+			"totalTokensFresh": True,
+			"inputTokens": 5,
+			"outputTokens": 3,
+			"contextTokens": 0,
+		}
+		sess = _PollingSess([[no_capacity]])
+		with patch("jarvis.chat.usage.time.sleep", return_value=None):
+			row = usage.fetch_fresh_session_row(sess, "agent:pinned-stuck", attempts=3)
+		self.assertEqual(row, no_capacity, "still returns the fresh row so usage is recorded")
+		self.assertEqual(sess.calls, 3, "exhausts the same bounded budget, no infinite retry")
 
 
 # --------------------------------------------------------------------------- #

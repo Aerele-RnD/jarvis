@@ -573,6 +573,27 @@ def get_billing_payment_state() -> dict:
 	return _post(path=_m("api.account.get_billing_payment_state"), body={})
 
 
+def get_invoices() -> list:
+	"""The customer's own submitted GST invoices for the billing page (Phase 3b)."""
+	return _post(path=_m("api.invoices.get_invoices"), body={})
+
+
+def download_invoice(erp_name: str) -> dict:
+	"""Base64 PDF of one of the customer's invoices; admin re-verifies ownership."""
+	return _post(path=_m("api.invoices.get_invoice_pdf"), body={"erp_name": erp_name})
+
+
+def get_billing_profile() -> dict:
+	"""The billing-details card: an editable party for a direct customer, or a
+	read-only 'billed through <partner>' notice for a reseller-billed customer."""
+	return _post(path=_m("api.invoices.get_billing_profile"), body={})
+
+
+def update_billing_details(billing) -> dict:
+	"""Save a direct customer's billing party (validated admin-side)."""
+	return _post(path=_m("api.invoices.update_billing_details"), body={"billing": billing})
+
+
 def check_billing_payment_status() -> dict:
 	"""Provider-truth check on the current BILLING checkout, converged through the
 	same apply seam as the browser confirm and the webhook. Never creates or
@@ -886,16 +907,23 @@ def get_connection(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	finished the apply (F2). Pass a short ``timeout_s`` for those hot status
 	probes so a slow admin can't stretch a convergence loop past its job budget.
 
-	Also reports this bench's jarvis version so the control plane can close out a
-	release rollout; an older admin ignores the key.
+	Also reports this bench's Jarvis version, checked-out branch and exact release
+	tag. The control plane uses the version to close release rollouts and exposes
+	the source details to support; an older admin ignores the extra keys.
 	"""
 	from jarvis import __version__
+	from jarvis.source_version import source_details
 
-	return _post(
-		path=_m("api.tenant.get_connection"),
-		body={"jarvis_version": __version__},
-		timeout_s=timeout_s,
-	)
+	body = {"jarvis_version": __version__}
+	source = source_details()
+	# A value Git confirmed is sent even when empty, so a checkout that moved off a
+	# branch or tag clears stale metadata upstream. A value Git could not give in
+	# time is left out, and the control plane keeps what it already has.
+	for key, value in (("jarvis_branch", source["branch"]), ("jarvis_tag", source["tag"])):
+		if value is not None:
+			body[key] = value
+
+	return _post(path=_m("api.tenant.get_connection"), body=body, timeout_s=timeout_s)
 
 
 def get_role_profile_config(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
@@ -919,6 +947,24 @@ def get_role_profile_config(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	return _post(
 		path=_m("api.tenant.get_role_profile_config"),
 		body={},
+		timeout_s=timeout_s,
+	)
+
+
+def get_release_notes(track: str, since_version: str, *, timeout_s: int = 8) -> dict:
+	"""Fetch the cumulative changelog notes newer than ``since_version`` for a
+	release ``track`` (the tenant's major line, e.g. "16").
+
+	Fetched on demand when the customer opens the What's-new panel, so it carries a
+	short 8s budget by default - a slow control plane must not stall the click.
+	``_post`` (via ``_do_post``) unwraps the ``{"ok", "data"}`` envelope, so this
+	returns the bare ``{"notes": [...]}`` payload. Raises the usual
+	``AdminAuthError`` / ``AdminUnreachableError`` family, which the caller
+	(``jarvis.release_notice.notes``) degrades to an empty list.
+	"""
+	return _post(
+		path=_m("api.tenant.get_release_notes"),
+		body={"track": track, "since_version": since_version},
 		timeout_s=timeout_s,
 	)
 
@@ -1779,6 +1825,49 @@ def push_bench_heartbeat(heartbeat: dict) -> dict:
 	return _post(path=_m("api.tenant.ingest_bench_heartbeat"), body={"heartbeat": heartbeat})
 
 
+def push_chat_feedback(item: dict) -> dict:
+	"""Push one chat-reply rating (thumbs up/down + optional note) to admin for the
+	tenant-wise Feedback dashboard. Admin upserts on (tenant, message). Called
+	best-effort from jarvis.chat.feedback.submit_feedback, which swallows failures
+	so a lost rating never blocks the tap.
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
+	return _post(path=_m("api.tenant.ingest_chat_feedback"), body={"item": item})
+
+
+# Short timeout for the two feedback pushes below, for the same reason as
+# _MODEL_CATALOG_TIMEOUT_S: they run SYNCHRONOUSLY inside a customer web request
+# (submit_session_feedback / submit_pulse_feedback, neither is enqueued), so at
+# the DEFAULT_TIMEOUT_S = 150 an admin that hangs rather than refuses would pin
+# a web worker for 2.5 minutes per submit. Both callers already treat any
+# failure as "lost response, acceptable", so a timeout is just the same loss
+# reached sooner. Admin's ingest is a single upsert; 10s is generous for it.
+# push_chat_feedback above predates this and keeps the default on purpose: it
+# is out of this change's scope, not a considered exception.
+_FEEDBACK_TIMEOUT_S = 10
+
+
+def push_session_feedback(item: dict) -> dict:
+	"""Push one once-per-session popup response to admin. Called best-effort
+	from jarvis.chat.feedback._forward_session, which swallows failures -- a
+	lost response is acceptable, a blocked popup is not.
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
+	return _post(
+		path=_m("api.tenant.ingest_session_feedback"),
+		body={"item": item},
+		timeout_s=_FEEDBACK_TIMEOUT_S,
+	)
+
+
+def push_pulse_feedback(item: dict) -> dict:
+	"""Push one periodic business-pulse response to admin. Same best-effort
+	contract as push_session_feedback."""
+	return _post(
+		path=_m("api.tenant.ingest_pulse_feedback"),
+		body={"item": item},
+		timeout_s=_FEEDBACK_TIMEOUT_S,
+	)
+
+
 def pair_chat_device(public_key: str, device_id: str, *, request_timeout_s: int = 30) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
 	to write a PairedDevice record into the customer's agent container and
@@ -1795,6 +1884,38 @@ def pair_chat_device(public_key: str, device_id: str, *, request_timeout_s: int 
 	"""
 	return _post(
 		path=_m("api.tenant.pair_chat_device"),
+		body={
+			"public_key": public_key,
+			"device_id": device_id,
+			"request_timeout_s": request_timeout_s,
+		},
+	)
+
+
+def request_chat_pairing(public_key: str, device_id: str, *, request_timeout_s: int = 30) -> dict:
+	"""Additive successor to ``pair_chat_device`` for the agent 9.3
+	device-pairing fix (Mechanism A). POSTs the customer's chat device pubkey to
+	the CP, which decides - per its own per-tenant gate - HOW this tenant pairs
+	and returns an ACK describing the ``mode`` (NOT necessarily a token):
+
+	  - ``{"mode": "legacy", "device_token": "..."}`` - un-upgraded / 6.8 tenant:
+	    the CP forged a device token synchronously (identical to what
+	    ``pair_chat_device`` returns today). The bench presents that token
+	    (steady-state connect, unchanged).
+	  - ``{"mode": "mechanism_a", "accepted": true}`` - 9.x tenant: NO token yet.
+	    The CP has told the fleet-agent to poll + approve this deviceId; the
+	    gateway issues the device token on the bench's approved connect. The bench
+	    connects token-less (gateway-token bootstrap) and adopts the reissued token
+	    (see ``jarvis.chat.device._pair_mechanism_a`` / ``agent_client``).
+
+	Additive on purpose (plan-check gap #1 / D-b): ``pair_chat_device`` is left
+	intact for old/6.8 benches so a CP deploy never flips pairing semantics under
+	a not-yet-upgraded bench. Authenticates the caller as the tenant exactly like
+	``pair_chat_device`` (same signed ``_post`` transport). ``request_timeout_s``
+	is the budget the bench asks the CP to allow for its CP -> fleet-agent leg
+	(the CP clamps it), same contract as ``pair_chat_device``."""
+	return _post(
+		path=_m("api.tenant.request_chat_pairing"),
 		body={
 			"public_key": public_key,
 			"device_id": device_id,

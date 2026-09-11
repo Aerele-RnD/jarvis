@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 from dataclasses import dataclass
 
 import frappe
@@ -23,13 +24,31 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from jarvis import admin_client
 from jarvis.exceptions import AgentUnreachableError
 
+_logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class ChatDeviceCredentials:
 	device_id: str
 	public_key: str  # base64url, no padding
 	private_key: Ed25519PrivateKey
-	device_token: str  # bearer for auth.deviceToken at connect
+	device_token: str  # bearer for auth.deviceToken at connect ("" until paired, Mechanism A)
+	# Gateway (shared) token from Jarvis Settings ``agent_token``, carried ONLY on
+	# a Mechanism-A pairing that has no device token yet. The connect-first
+	# bootstrap presents it as ``auth.token`` and signs the v3 payload's token
+	# slot with it (spike invariant #2); steady state and legacy leave it "".
+	bootstrap_token: str = ""
+
+	@property
+	def needs_bootstrap(self) -> bool:
+		"""True for a Mechanism-A pairing with no device token yet: the connect
+		must present the gateway token (``auth.token``) to create/await a pending
+		pairing request and receive the device token on the approved reconnect.
+
+		Steady state (``device_token`` set) and the legacy path (token forged
+		synchronously by the CP) are both False -> today's steady-state connect,
+		unchanged."""
+		return not self.device_token and bool(self.bootstrap_token)
 
 
 def _b64u(raw: bytes) -> str:
@@ -78,6 +97,71 @@ def _save_credentials(
 	frappe.db.commit()
 
 
+def _priv_b64u(priv: Ed25519PrivateKey) -> str:
+	"""base64url-no-padding of an Ed25519 private key's raw bytes."""
+	return _b64u(
+		priv.private_bytes(
+			encoding=serialization.Encoding.Raw,
+			format=serialization.PrivateFormat.Raw,
+			encryption_algorithm=serialization.NoEncryption(),
+		)
+	)
+
+
+def _save_keypair(*, device_id: str, public_key_b64u: str, private_key_b64u: str) -> None:
+	"""Persist ONLY the stable keypair (device_id + public + private), no token.
+
+	Mechanism A separates keypair persistence from token acquisition: the keypair
+	is written once, under the cold-start lock, and stays stable across every
+	connect/approve/reconnect so the deviceId never moves (a moving deviceId is a
+	pending the fleet-agent can never catch up to -> thrash). The device token is
+	written LATER, out of the lock, by ``update_device_token`` once the gateway
+	issues it on the approved connect."""
+	from jarvis._password_utils import set_settings_password
+
+	settings_doc = frappe.get_single("Jarvis Settings")
+	settings_doc.db_set("chat_device_id", device_id)
+	settings_doc.db_set("chat_device_public_key", public_key_b64u)
+	set_settings_password(settings_doc, "chat_device_private_key", private_key_b64u)
+	frappe.db.commit()
+
+
+def _read_keypair() -> tuple[str, str, Ed25519PrivateKey] | None:
+	"""Return the persisted STABLE keypair ``(device_id, public_key_b64u,
+	private_key)``, or None when it is absent/corrupt (caller generates a fresh
+	one). Deliberately does NOT require a device token: a Mechanism-A bench that
+	is paired-pending (keypair present, no token yet) must be able to reuse its
+	keypair without regenerating it."""
+	s = frappe.get_single("Jarvis Settings")
+	device_id = (s.chat_device_id or "").strip()
+	public_key = (s.chat_device_public_key or "").strip()
+	private_key_b64u = (s.get_password("chat_device_private_key", raise_exception=False) or "").strip()
+	if not (device_id and public_key and private_key_b64u):
+		return None
+	try:
+		priv = _load_private_key(private_key_b64u)
+	except (ValueError, TypeError):
+		return None
+	return device_id, public_key, priv
+
+
+def _read_gateway_token() -> str:
+	"""The shared gateway token from Jarvis Settings ``agent_token`` (a Password
+	field). This is the ``auth.token`` the Mechanism-A bootstrap connect presents
+	(spike invariant #2). Empty string when unset -> the caller fails closed."""
+	s = frappe.get_single("Jarvis Settings")
+	return (s.get_password("agent_token", raise_exception=False) or "").strip()
+
+
+def has_paired_token(settings_doc=None) -> bool:
+	"""Cheap UX gate for the turn path: True iff a chat device token is already
+	persisted (steady state). When False the next connect must (re)pair, so the
+	turn renders a "Setting up your assistant…" state before it blocks on the
+	connect. Accepts an already-loaded Settings doc to avoid a second fetch."""
+	s = settings_doc or frappe.get_single("Jarvis Settings")
+	return bool((s.get_password("chat_device_token", raise_exception=False) or "").strip())
+
+
 def _read_credentials() -> ChatDeviceCredentials | None:
 	"""Load creds from Jarvis Settings, or None if any field is missing.
 
@@ -105,59 +189,144 @@ def _read_credentials() -> ChatDeviceCredentials | None:
 
 
 def ensure_paired() -> ChatDeviceCredentials:
-	"""Return current chat device credentials, generating + registering them
-	if missing. Idempotent: a fully-populated Settings row is reused as-is.
+	"""Return current chat device credentials, establishing them if missing.
+	Idempotent: a fully-populated Settings row (keypair + device token) is the
+	steady-state hot path and is reused as-is with NO round-trip.
 
-	Raises AgentUnreachableError if pairing fails (no creds to fall back
-	to - the caller has no way to chat without them, so we surface the error
-	cleanly instead of half-persisting an unusable state).
+	Raises AgentUnreachableError if pairing fails (no creds to fall back to - the
+	caller has no way to chat without them, so we surface the error cleanly
+	instead of half-persisting an unusable state).
 
-	Cold-start concurrency: send_message (web) and the RQ worker (background)
-	both call ensure_paired before each turn. On a fresh bench (no
-	credentials persisted yet) two concurrent callers both observe
-	``_read_credentials() is None`` and both call ``_generate_and_pair``,
-	each generating a different Ed25519 keypair and each round-tripping to
-	admin.pair_chat_device. Last writer to Jarvis Settings wins; the other
-	caller holds in-memory creds that admin's PairedDevice row doesn't know
-	about. Cross-repo punch-list "Race: send_message + RQ worker both invoke
-	ensure_paired() concurrently" from the 2026-06-16 review.
-
-	Fix: serialize the generate+pair window under a Redis advisory lock.
-	Double-checked: re-read inside the lock so the second arrival finds the
-	winner's creds and skips the duplicate pair entirely. The lock has a
-	60s TTL backstop so a crashed holder can't deadlock cold-start forever;
-	on lock unavailability we fall through and pair anyway (better one
-	duplicate keypair than a permanently broken chat).
-	"""
+	When there is no usable device token yet, the actual work is delegated to
+	``_establish_pairing`` - which keeps the keypair stable and forks on the CP's
+	pairing ``mode`` (legacy synchronous forge vs Mechanism-A connect-first)."""
 	existing = _read_credentials()
 	if existing is not None:
 		return existing
-	return _generate_and_pair_under_lock()
+	return _establish_pairing()
 
 
-def _generate_and_pair_under_lock() -> ChatDeviceCredentials:
-	"""Convoy-collapse helper for the cold-start race. Acquires the
-	chat_device_initial_pair lock with a bounded wait; inside the lock,
-	re-reads to see if the winner already paired; if so, returns their
-	creds; if not, runs the actual pair flow."""
+def _establish_pairing() -> ChatDeviceCredentials:
+	"""Establish a pairing when no usable device token is persisted.
+
+	Two-stage, and the split is load-bearing (plan-check gap #10):
+
+	  1. Ensure a STABLE keypair (generate + persist only if absent). This is the
+	     ONLY step serialized under the ``chat_device_initial_pair`` Redis lock:
+	     two cold-start callers must not each mint a different keypair (two
+	     deviceIds -> the fleet-agent can never converge on one pending -> thrash).
+	  2. Fork on the CP's pairing ``mode``, OUTSIDE the lock:
+	       - ``legacy``       -> the CP forged a device token synchronously
+	                             (today's behaviour): persist + present it.
+	       - ``mechanism_a``  -> NO token yet; return bootstrap creds so the
+	                             connect-first flow in ``agent_client`` obtains the
+	                             token on the gateway-approved reconnect.
+
+	Keeping the CP call + the connect/approve/token cascade OUT of the lock is
+	safe precisely BECAUSE the keypair is now stable: concurrent callers act on
+	the SAME deviceId (idempotent), rather than the pre-fix race where each minted
+	a fresh keypair and flapped the container's pairing state.
+	"""
+	device_id, pub_b64u, priv = _ensure_keypair_under_lock()
+
+	# A peer may have finished pairing (adopted + persisted a token) while we ran
+	# keypair-gen; reuse it rather than re-requesting.
+	existing = _read_credentials()
+	if existing is not None:
+		return existing
+
+	try:
+		resp = admin_client.request_chat_pairing(public_key=pub_b64u, device_id=device_id) or {}
+	except Exception as e:
+		raise AgentUnreachableError(f"chat device pairing request failed: {e}") from e
+
+	mode = (resp.get("mode") or "").strip()
+	if mode == "legacy":
+		return _pair_legacy(resp, device_id=device_id, pub_b64u=pub_b64u, priv=priv)
+	if mode == "mechanism_a":
+		return _pair_mechanism_a(device_id=device_id, pub_b64u=pub_b64u, priv=priv)
+	# Unknown/blank mode: fail closed (D-d) - never fabricate a credential.
+	raise AgentUnreachableError(f"request_chat_pairing returned unknown mode {mode!r}")
+
+
+def _ensure_keypair_under_lock() -> tuple[str, str, Ed25519PrivateKey]:
+	"""Return a STABLE ``(device_id, public_key_b64u, private_key)``, generating +
+	persisting a fresh keypair only when none exists yet.
+
+	Keypair generation is the ONLY thing under the ``chat_device_initial_pair``
+	lock (plan-check gap #10): the token cascade runs outside it. Double-checked
+	inside the lock so a contended cold-start mints exactly one keypair - the
+	winner persists, followers read it back. Lock unavailable + no keypair: fall
+	through and generate anyway (a Redis outage must not wedge chat forever;
+	at-worst-one-duplicate-keypair beats permanently-broken, and the stable-write
+	below means a duplicate is quickly reconciled by the next read)."""
+	existing = _read_keypair()
+	if existing is not None:
+		return existing
+
 	from jarvis._redis_lock import redis_lock
 
 	with redis_lock(
 		"chat_device_initial_pair",
 		timeout_s=60,
 		blocking_timeout_s=30.0,
-	) as _acquired:  # deliberately unchecked - see below
-		# Re-check inside the lock window. The winner of a contended cold-
-		# start has already populated Jarvis Settings; followers read those
-		# creds and return without a second pair_chat_device round-trip.
-		existing = _read_credentials()
+	) as _acquired:  # unchecked: see the fall-through note above
+		existing = _read_keypair()
 		if existing is not None:
 			return existing
-		# Lock-unavailable + no creds: a Redis outage during cold-start
-		# would otherwise block the bench's chat path indefinitely.
-		# Falling through accepts at-worst-one-duplicate-pair; that's a
-		# strictly better failure mode than chat-permanently-broken.
-		return _generate_and_pair()
+		priv, _pub_raw, pub_b64u, device_id = _generate_keypair()
+		_save_keypair(device_id=device_id, public_key_b64u=pub_b64u, private_key_b64u=_priv_b64u(priv))
+		return device_id, pub_b64u, priv
+
+
+def _pair_legacy(
+	resp: dict, *, device_id: str, pub_b64u: str, priv: Ed25519PrivateKey
+) -> ChatDeviceCredentials:
+	"""Legacy / 6.8 tenant: the CP forged a device token synchronously (today's
+	behaviour, routed via ``request_chat_pairing`` mode=legacy). Persist + present
+	it. A missing token fails closed - never half-persist an unusable state."""
+	device_token = ((resp or {}).get("device_token") or "").strip()
+	if not device_token:
+		raise AgentUnreachableError("request_chat_pairing (legacy mode) returned no device_token")
+	settings = frappe.get_single("Jarvis Settings")
+	_save_credentials(
+		settings_doc=settings,
+		private_key_b64u=_priv_b64u(priv),
+		public_key_b64u=pub_b64u,
+		device_id=device_id,
+		device_token=device_token,
+	)
+	_logger.info("chat pairing: legacy mode device_id=%s", device_id)
+	return ChatDeviceCredentials(
+		device_id=device_id,
+		public_key=pub_b64u,
+		private_key=priv,
+		device_token=device_token,
+	)
+
+
+def _pair_mechanism_a(*, device_id: str, pub_b64u: str, priv: Ed25519PrivateKey) -> ChatDeviceCredentials:
+	"""Mechanism-A tenant (9.x): there is NO token yet, and that is a VALID state.
+	The CP has told the fleet-agent to poll + approve this deviceId; the gateway
+	issues the device token on the approved connect. Return bootstrap creds
+	carrying the gateway ``agent_token`` so ``agent_client`` can connect-first
+	(present ``auth.token``), drive NOT_PAIRED -> approved, and adopt the reissued
+	token. The stable keypair is already persisted, so re-requesting per turn
+	never regenerates the deviceId (no thrash).
+
+	Fail closed (D-d) if the gateway token is unset: without it the bootstrap
+	connect can neither be presented nor signed."""
+	bootstrap_token = _read_gateway_token()
+	if not bootstrap_token:
+		raise AgentUnreachableError("mechanism_a pairing needs the gateway agent_token, but none is set")
+	_logger.info("chat pairing: mechanism_a connect-first device_id=%s", device_id)
+	return ChatDeviceCredentials(
+		device_id=device_id,
+		public_key=pub_b64u,
+		private_key=priv,
+		device_token="",
+		bootstrap_token=bootstrap_token,
+	)
 
 
 def _generate_and_pair() -> ChatDeviceCredentials:
@@ -165,20 +334,17 @@ def _generate_and_pair() -> ChatDeviceCredentials:
 	relays to the customer's openclaw container as a PairedDevice
 	record), and persist the resulting credentials.
 
-	Shared between ensure_paired (cold-start path) and
-	rotate_chat_device (operator-triggered rotation path). The two
-	previously share-and-fork happened inline; pulling it out lets
-	rotation reuse the validation + error surface without
-	duplicating the keypair generation logic.
+	Used ONLY by ``rotate_chat_device`` now (the operator-triggered
+	force-repair): it still routes through the legacy synchronous forge
+	(``admin_client.pair_chat_device``), which the CP keeps intact per the
+	additive-endpoint decision. The cold-start / first-turn pairing path moved to
+	``_establish_pairing`` (mode fork). Operator rotation under Mechanism A -
+	regenerate keypair, then connect-first to re-pair - is a named follow-on
+	(same family as the deferred ``unpair_devices`` fix); on a Mechanism-A tenant
+	the CP's legacy forge is the broken path, so this stays legacy-only until then.
 	"""
 	priv, _pub_raw, pub_b64u, device_id = _generate_keypair()
-	priv_b64u = _b64u(
-		priv.private_bytes(
-			encoding=serialization.Encoding.Raw,
-			format=serialization.PrivateFormat.Raw,
-			encryption_algorithm=serialization.NoEncryption(),
-		)
-	)
+	priv_b64u = _priv_b64u(priv)
 
 	try:
 		resp = admin_client.pair_chat_device(public_key=pub_b64u, device_id=device_id)

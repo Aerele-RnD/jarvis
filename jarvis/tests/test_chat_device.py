@@ -80,22 +80,31 @@ def _clear_settings():
 
 
 class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
+	"""ensure_paired() forks on the CP's pairing ``mode`` (agent 9.3
+	device-pairing fix). The cold-start path now calls the additive
+	``request_chat_pairing`` (not the legacy ``pair_chat_device``): LEGACY mode
+	reproduces today's synchronous-token behaviour, MECHANISM_A returns
+	token-absent bootstrap creds (see TestEnsurePairedMechanismA). A fully
+	populated (keypair + token) Settings row is still the steady-state hot path,
+	reused with no CP call."""
+
 	def setUp(self):
 		_clear_settings()
 
-	def test_generates_keypair_calls_admin_and_persists(self):
+	def test_legacy_mode_generates_keypair_and_persists(self):
 		captured = {}
 
-		def _fake_pair(public_key, device_id):
+		def _fake_request(public_key, device_id, **kw):
 			captured["public_key"] = public_key
 			captured["device_id"] = device_id
-			return {"device_token": "tok-from-admin"}
+			return {"mode": "legacy", "device_token": "tok-from-cp"}
 
-		with patch("jarvis.chat.device.admin_client.pair_chat_device", side_effect=_fake_pair):
+		with patch("jarvis.chat.device.admin_client.request_chat_pairing", side_effect=_fake_request):
 			creds = chat_device.ensure_paired()
 
-		# Returned object is internally consistent.
-		self.assertEqual(creds.device_token, "tok-from-admin")
+		# Returned object is internally consistent + a steady-state (not bootstrap) pairing.
+		self.assertEqual(creds.device_token, "tok-from-cp")
+		self.assertFalse(creds.needs_bootstrap)
 		self.assertEqual(creds.public_key, captured["public_key"])
 		self.assertEqual(creds.device_id, captured["device_id"])
 		# deviceId must match sha256(rawPublicKey) - same invariant agent enforces.
@@ -105,11 +114,11 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.chat_device_id, creds.device_id)
 		self.assertEqual(s.chat_device_public_key, creds.public_key)
-		self.assertEqual(s.get_password("chat_device_token"), "tok-from-admin")
+		self.assertEqual(s.get_password("chat_device_token"), "tok-from-cp")
 		self.assertTrue(s.get_password("chat_device_private_key"))
 
-	def test_reuses_existing_creds_without_admin_call(self):
-		# Seed Settings with a valid keypair + token.
+	def test_reuses_existing_creds_without_cp_call(self):
+		# Seed Settings with a valid keypair + token (steady state).
 		priv = Ed25519PrivateKey.generate()
 		pub_raw = priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 		priv_raw = priv.private_bytes(
@@ -122,49 +131,55 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 		s.db_set("chat_device_token", "tok-existing")
 		frappe.db.commit()
 
-		with patch("jarvis.chat.device.admin_client.pair_chat_device") as mock_pair:
+		with patch("jarvis.chat.device.admin_client.request_chat_pairing") as mock_req:
 			creds = chat_device.ensure_paired()
-		self.assertFalse(mock_pair.called)
+		self.assertFalse(mock_req.called)
 		self.assertEqual(creds.device_token, "tok-existing")
+		self.assertFalse(creds.needs_bootstrap)
 		self.assertEqual(creds.device_id, hashlib.sha256(pub_raw).hexdigest())
 
-	def test_admin_failure_raises_and_does_not_persist(self):
-		with patch("jarvis.chat.device.admin_client.pair_chat_device", side_effect=RuntimeError("boom")):
+	def test_cp_failure_raises_and_persists_no_token(self):
+		"""A CP failure surfaces as AgentUnreachableError and NEVER persists a
+		device TOKEN. The stable keypair MAY be persisted (that is the deliberate
+		anti-thrash design - token-absent is a valid state), so the assertion is
+		on the usable credential (the token), not on the keypair."""
+		with patch("jarvis.chat.device.admin_client.request_chat_pairing", side_effect=RuntimeError("boom")):
 			with self.assertRaises(AgentUnreachableError):
 				chat_device.ensure_paired()
-		# Nothing persisted on failure.
 		s = frappe.get_single("Jarvis Settings")
-		self.assertFalse(s.chat_device_id)
-		self.assertFalse(s.get_password("chat_device_private_key", raise_exception=False))
+		self.assertFalse(s.get_password("chat_device_token", raise_exception=False) or "")
 
-	def test_empty_device_token_raises_unreachable(self):
-		with patch("jarvis.chat.device.admin_client.pair_chat_device", return_value={"device_token": ""}):
+	def test_legacy_empty_token_raises(self):
+		with patch(
+			"jarvis.chat.device.admin_client.request_chat_pairing",
+			return_value={"mode": "legacy", "device_token": ""},
+		):
 			with self.assertRaises(AgentUnreachableError):
 				chat_device.ensure_paired()
+		s = frappe.get_single("Jarvis Settings")
+		self.assertFalse(s.get_password("chat_device_token", raise_exception=False) or "")
 
-	def test_concurrent_callers_share_one_admin_pair_call(self):
-		"""Cold-start convoy collapse. Cross-repo punch-list "Race:
-		send_message + RQ worker both invoke ensure_paired() concurrently".
+	def test_unknown_mode_fails_closed(self):
+		"""An unrecognised/blank mode must fail closed - never fabricate a
+		credential (D-d)."""
+		with patch(
+			"jarvis.chat.device.admin_client.request_chat_pairing",
+			return_value={"mode": "something-new"},
+		):
+			with self.assertRaises(AgentUnreachableError):
+				chat_device.ensure_paired()
+		s = frappe.get_single("Jarvis Settings")
+		self.assertFalse(s.get_password("chat_device_token", raise_exception=False) or "")
 
-		Before the fix: a fresh bench with no chat_device_* fields and
-		two concurrent callers (web request + RQ worker) BOTH observed
-		``_read_credentials() is None`` and BOTH called
-		``_generate_and_pair`` - last writer to Jarvis Settings wins;
-		the other caller holds in-memory creds that don't match what
-		admin saw.
+	def test_concurrent_callers_share_one_pairing(self):
+		"""Cold-start convoy collapse (now on the keypair-gen lock). A follower
+		that enters the lock after the winner populated Settings reads the
+		winner's creds and returns without any CP round-trip.
 
-		After the fix: a Redis lock collapses the convoy. The first
-		caller pairs; the second waits on the lock, re-reads inside it,
-		and returns the winner's creds without a second admin call.
-
-		Real concurrency on a single-threaded test runner is tricky to
-		stage. We simulate the convoy by patching the lock context
-		manager so the "second" caller pre-populates Settings before
-		entering the lock body - the re-check inside the lock must
-		short-circuit on those existing creds.
-		"""
-		# First caller paints credentials into Settings as if it had won
-		# the lock race.
+		Real concurrency on a single-threaded test runner is tricky to stage; we
+		simulate the convoy by patching the lock context manager so the "second"
+		caller pre-populates Settings before entering the lock body - the re-check
+		inside the lock must short-circuit on those existing creds."""
 		first_priv = Ed25519PrivateKey.generate()
 		first_pub_raw = first_priv.public_key().public_bytes(
 			serialization.Encoding.Raw,
@@ -197,24 +212,22 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 			def __exit__(_self, *a):
 				return False
 
-		mock_pair = patch("jarvis.chat.device.admin_client.pair_chat_device").start()
+		mock_req = patch("jarvis.chat.device.admin_client.request_chat_pairing").start()
 		mock_lock = patch("jarvis._redis_lock.redis_lock", return_value=_FakeLockCtx()).start()
 		try:
 			creds = chat_device.ensure_paired()
 		finally:
 			patch.stopall()
 
-		# Second caller picked up the winner's creds; no admin pair call
-		# was made.
-		self.assertFalse(mock_pair.called)
+		# Follower picked up the winner's creds; no CP request was made.
+		self.assertFalse(mock_req.called)
 		self.assertEqual(creds.device_token, "tok-winner")
 		self.assertEqual(creds.device_id, first_device_id)
 		self.assertTrue(mock_lock.called)
 
-	def test_partial_state_triggers_repair(self):
-		"""If only some fields are set, treat the whole pairing as missing
-		so the next call re-pairs atomically - protects against half-failed
-		writes from a previous deploy/migration."""
+	def test_partial_state_regenerates_keypair(self):
+		"""Only device_id set (a half-failed prior write): the keypair itself is
+		absent, so a fresh one is generated and a legacy token acquired."""
 		s = frappe.get_single("Jarvis Settings")
 		s.db_set("chat_device_id", "abc")
 		s.db_set("chat_device_public_key", "")  # incomplete
@@ -223,11 +236,149 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 		frappe.db.commit()
 
 		with patch(
-			"jarvis.chat.device.admin_client.pair_chat_device", return_value={"device_token": "tok-repaired"}
+			"jarvis.chat.device.admin_client.request_chat_pairing",
+			return_value={"mode": "legacy", "device_token": "tok-repaired"},
 		):
 			creds = chat_device.ensure_paired()
 		self.assertEqual(creds.device_token, "tok-repaired")
 		self.assertNotEqual(creds.device_id, "abc")  # fresh keypair was generated
+
+
+class TestEnsurePairedMechanismA(_SettingsSnapshotMixin, FrappeTestCase):
+	"""Mechanism-A (agent 9.x) pairing: ensure_paired returns token-absent
+	bootstrap creds, the keypair stays STABLE across pending turns (no deviceId
+	thrash - plan-check gap #3), and it fails closed without a gateway token."""
+
+	def setUp(self):
+		_clear_settings()
+		# The gateway token the bootstrap connect presents (auth.token). Not
+		# covered by _SettingsSnapshotMixin, so snapshot + restore it ourselves.
+		s = frappe.get_single("Jarvis Settings")
+		self._agent_token_snap = s.get_password("agent_token", raise_exception=False) or ""
+		self._set_agent_token("gw-secret")
+
+	def tearDown(self):
+		self._set_agent_token(self._agent_token_snap)
+
+	def _set_agent_token(self, value):
+		from frappe.utils.password import remove_encrypted_password
+
+		from jarvis._password_utils import set_settings_password
+
+		s = frappe.get_single("Jarvis Settings")
+		if value:
+			set_settings_password(s, "agent_token", value)
+		else:
+			s.db_set("agent_token", "")
+			remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "agent_token")
+		frappe.db.commit()
+
+	def test_returns_bootstrap_creds_with_no_token(self):
+		with patch(
+			"jarvis.chat.device.admin_client.request_chat_pairing",
+			return_value={"mode": "mechanism_a", "accepted": True},
+		):
+			creds = chat_device.ensure_paired()
+		# Token-absent is a VALID state; the gateway token rides bootstrap_token.
+		self.assertEqual(creds.device_token, "")
+		self.assertEqual(creds.bootstrap_token, "gw-secret")
+		self.assertTrue(creds.needs_bootstrap)
+		raw = base64.urlsafe_b64decode(creds.public_key + "=" * (-len(creds.public_key) % 4))
+		self.assertEqual(creds.device_id, hashlib.sha256(raw).hexdigest())
+		# Keypair persisted; token NOT persisted.
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.chat_device_id, creds.device_id)
+		self.assertTrue(s.get_password("chat_device_private_key"))
+		self.assertFalse(s.get_password("chat_device_token", raise_exception=False) or "")
+
+	def test_without_gateway_token_fails_closed(self):
+		self._set_agent_token("")
+		with patch(
+			"jarvis.chat.device.admin_client.request_chat_pairing",
+			return_value={"mode": "mechanism_a", "accepted": True},
+		):
+			with self.assertRaises(AgentUnreachableError):
+				chat_device.ensure_paired()
+		# Fail-closed: no device token fabricated.
+		s = frappe.get_single("Jarvis Settings")
+		self.assertFalse(s.get_password("chat_device_token", raise_exception=False) or "")
+
+	def test_keypair_is_stable_across_pending_turns(self):
+		"""THE anti-thrash guarantee (plan-check gap #3): while pairing is pending
+		(no token yet), every ensure_paired returns the SAME deviceId. A keypair
+		regenerated each turn would be a moving target the fleet-agent can never
+		approve."""
+		with patch(
+			"jarvis.chat.device.admin_client.request_chat_pairing",
+			return_value={"mode": "mechanism_a", "accepted": True},
+		):
+			first = chat_device.ensure_paired()
+			second = chat_device.ensure_paired()
+		self.assertEqual(first.device_id, second.device_id)
+		self.assertEqual(first.public_key, second.public_key)
+
+	def test_token_adoption_switches_to_steady_state_same_keypair(self):
+		"""Once the gateway-issued token is persisted (adopted), ensure_paired
+		returns STEADY-state creds (needs_bootstrap False) on the SAME keypair -
+		the pending->paired transition never changes the deviceId."""
+		with patch(
+			"jarvis.chat.device.admin_client.request_chat_pairing",
+			return_value={"mode": "mechanism_a", "accepted": True},
+		):
+			pending = chat_device.ensure_paired()
+		# Gateway approves + issues a token; the bench adopts it.
+		self.assertTrue(chat_device.update_device_token("tok-issued", device_id=pending.device_id))
+		with patch("jarvis.chat.device.admin_client.request_chat_pairing") as mock_req:
+			steady = chat_device.ensure_paired()
+		self.assertFalse(mock_req.called)
+		self.assertFalse(steady.needs_bootstrap)
+		self.assertEqual(steady.device_token, "tok-issued")
+		self.assertEqual(steady.device_id, pending.device_id)
+
+
+class TestNeedsBootstrap(FrappeTestCase):
+	"""The connect-mode discriminator: needs_bootstrap is True ONLY for a
+	Mechanism-A pairing with no device token yet (token absent + gateway token
+	present)."""
+
+	def _creds(self, *, device_token, bootstrap_token):
+		priv = Ed25519PrivateKey.generate()
+		return chat_device.ChatDeviceCredentials(
+			device_id="d",
+			public_key="p",
+			private_key=priv,
+			device_token=device_token,
+			bootstrap_token=bootstrap_token,
+		)
+
+	def test_true_only_when_token_absent_and_bootstrap_present(self):
+		self.assertTrue(self._creds(device_token="", bootstrap_token="gw").needs_bootstrap)
+
+	def test_steady_state_is_not_bootstrap(self):
+		self.assertFalse(self._creds(device_token="tok", bootstrap_token="gw").needs_bootstrap)
+		self.assertFalse(self._creds(device_token="tok", bootstrap_token="").needs_bootstrap)
+
+	def test_no_gateway_token_is_not_bootstrap(self):
+		self.assertFalse(self._creds(device_token="", bootstrap_token="").needs_bootstrap)
+
+
+class TestHasPairedToken(_SettingsSnapshotMixin, FrappeTestCase):
+	"""The cheap UX gate the turn path reads to decide whether to render the
+	'Setting up your assistant…' state before it connects."""
+
+	def setUp(self):
+		_clear_settings()
+
+	def test_true_when_token_present(self):
+		from jarvis._password_utils import set_settings_password
+
+		s = frappe.get_single("Jarvis Settings")
+		set_settings_password(s, "chat_device_token", "tok")
+		frappe.db.commit()
+		self.assertTrue(chat_device.has_paired_token())
+
+	def test_false_when_token_absent(self):
+		self.assertFalse(chat_device.has_paired_token())
 
 
 class TestRotateChatDevice(_SettingsSnapshotMixin, FrappeTestCase):

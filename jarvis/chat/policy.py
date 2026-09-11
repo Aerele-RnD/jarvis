@@ -9,9 +9,11 @@ this module's contract.
 Returns (True, None) on success or (False, reason: str) on rejection. The
 reason is a machine code the SPA maps to a human toast: ``"usage_limit"`` for
 enforcement, ``"subscription_suspended"`` for billing,
-``"release_update_required"`` while a release rollout is blocking this bench,
-and ``"insufficient_workers"`` when the site has confidently zero background
-workers able to run a chat turn.
+``"release_update_required"`` while a release rollout is blocking this
+bench, and ``"maintenance"`` during an upgrade maintenance hold. Worker
+health is never a gate here: RQ's worker registry can read zero
+while every worker is alive (see ``jarvis.chat.pump._registry_is_stale``), and a
+turn nobody picks up is the orphan sweep's job (``stale_scan``).
 """
 
 from __future__ import annotations
@@ -31,12 +33,15 @@ def validate_can_send(user: str, model: str | None = None) -> tuple[bool, str | 
 		return False, "subscription_suspended"
 	if _release_update_required():
 		return False, "release_update_required"
+	# Upgrade maintenance hold (operator- or roll-driven, resolved on the control plane).
+	# Before _workspace_resetting so the "upgrading, back shortly" copy wins over the
+	# generic "resetting" copy during a roll.
+	if _maintenance_hold():
+		return False, "maintenance"
 	if _workspace_resetting():
 		return False, "workspace_resetting"
 	if _llm_not_configured():
 		return False, "llm_not_configured"
-	if _insufficient_workers():
-		return False, "insufficient_workers"
 	# Per-model cap: only when a concrete model is known. ``model`` is resolved
 	# in chat.api (which knows the conversation) and passed in as a plain string,
 	# so policy never imports turn_handler (no import cycle). Pool "Auto" resolves
@@ -62,6 +67,26 @@ def _release_update_required() -> bool:
 			title="jarvis policy: release-notice check failed (allowing send)",
 			message=frappe.get_traceback(),
 		)
+		return False
+
+
+def _maintenance_hold() -> bool:
+	"""True while an upgrade maintenance hold applies to this bench (operator- or
+	roll-driven, resolved on the control plane, mirrored locally). Reads the local
+	mirror (no admin round-trip) so the send gate and the UI banner agree. Fails OPEN."""
+	try:
+		from jarvis import maintenance_notice
+
+		return bool(maintenance_notice.boot_payload().get("active"))
+	except Exception:
+		# See _workspace_resetting: don't let a logging failure defeat fail-open.
+		try:
+			frappe.log_error(
+				title="jarvis policy: maintenance-hold check failed (allowing send)",
+				message=frappe.get_traceback(),
+			)
+		except Exception:
+			pass
 		return False
 
 
@@ -131,34 +156,6 @@ def _llm_not_configured() -> bool:
 		try:
 			frappe.log_error(
 				title="jarvis policy: llm-configured check failed (allowing send)",
-				message=frappe.get_traceback(),
-			)
-		except Exception:
-			pass
-		return False
-
-
-def _insufficient_workers() -> bool:
-	"""True when the site has CONFIDENTLY zero background workers able to run a
-	chat turn (sustained past a grace window). Without this a send queues against
-	a dead worker lane and hangs with no feedback. Fails OPEN: a probe/import
-	error must never block a paying customer - only chat_worker_status's
-	debounced, confident 0-worker verdict blocks.
-
-	CI runs bench tests with NO live RQ workers, so the 0-worker reading is
-	genuinely confident there and would reject every chat-send test. Like
-	_llm_not_configured, the gate is inert under test unless a suite opts in via
-	``frappe.flags.test_worker_gate``."""
-	if frappe.flags.in_test and not frappe.flags.get("test_worker_gate"):
-		return False
-	try:
-		from jarvis.chat.pump import chat_worker_status
-
-		return bool(chat_worker_status().get("blocked"))
-	except Exception:
-		try:
-			frappe.log_error(
-				title="jarvis policy: worker check failed (allowing send)",
 				message=frappe.get_traceback(),
 			)
 		except Exception:
@@ -247,31 +244,25 @@ def _over_model_limit(user: str, model: str) -> bool:
 
 
 def _over_total_limit(user: str) -> bool:
-	"""True iff ``user`` has a positive all-time token cap and their all-time
-	recorded usage has reached it. Dependency-light: one ``db.get_value`` on the
-	settings row, no lazy create (a missing row = no limit). No rollover: unlike
-	the per-model gate, this cap never resets, so it compares against
-	``total_tokens`` (the cumulative, never-reset counter) rather than a
-	month-scoped bucket. Fails open on any error — an accounting lookup bug
+	"""True iff ``user`` has a positive token cap and the usage it applies to has
+	reached it: ``total_tokens`` (cumulative, never reset) for an All-time
+	``limit_period``, else the current day/week/month window (``period_tokens``,
+	read as 0 when its key is stale - the window restarts on the next send).
+	Dependency-light: one ``db.get_value`` on the settings row, no lazy create (a
+	missing row = no limit). Fails open on any error — an accounting lookup bug
 	must never block a legitimate send.
 
 	NOTE: the field is still named ``monthly_token_limit`` (kept to avoid a
-	migration for ~15 existing references / the wire contract) but the cap it
-	now enforces is all-time, not monthly."""
+	migration for ~15 existing references / the wire contract); the period it
+	covers is ``limit_period``."""
 	try:
-		row = frappe.db.get_value(
-			"Jarvis User Settings",
-			{"user": user},
-			["monthly_token_limit", "total_tokens"],
-			as_dict=True,
-		)
+		row = _cap_row(user)
 		if not row:
 			return False
 		limit = int(row.monthly_token_limit or 0)
 		if limit <= 0:
 			return False
-		used = int(row.total_tokens or 0)
-		return used >= limit
+		return _tokens_counted_against_cap(row) >= limit
 	except Exception:
 		# See _over_model_limit: don't let a logging failure defeat fail-open.
 		try:
@@ -282,3 +273,48 @@ def _over_total_limit(user: str) -> bool:
 		except Exception:
 			pass
 		return False
+
+
+def blocking_limit_period(user: str) -> str | None:
+	"""The day/week/month window whose cap is refusing ``user``'s sends, or
+	None: no cap, cap not reached, or an All-time cap. One settings read; the
+	send-rejection envelope uses it so the toast can name the reset without
+	re-running the gate. Never raises (a rejection must still go out)."""
+	try:
+		row = _cap_row(user)
+		if not row:
+			return None
+		limit = int(row.monthly_token_limit or 0)
+		if limit <= 0 or _tokens_counted_against_cap(row) < limit:
+			return None
+		period = row.limit_period or _all_time()
+		return None if period == _all_time() else period
+	except Exception:
+		return None
+
+
+def _cap_row(user: str):
+	"""The settings columns the cap reads. The window columns are added only
+	once they exist (see usage.period_select_fields)."""
+	from jarvis.chat.usage import period_select_fields
+
+	return frappe.db.get_value(
+		"Jarvis User Settings",
+		{"user": user},
+		["monthly_token_limit", "total_tokens", *period_select_fields()],
+		as_dict=True,
+	)
+
+
+def _tokens_counted_against_cap(row) -> int:
+	from jarvis.chat.usage import period_tokens_effective
+
+	if (row.limit_period or _all_time()) == _all_time():
+		return int(row.total_tokens or 0)
+	return period_tokens_effective(row.limit_period, row.period_key, row.period_tokens)
+
+
+def _all_time() -> str:
+	from jarvis.chat.usage import LIMIT_PERIOD_ALL_TIME
+
+	return LIMIT_PERIOD_ALL_TIME

@@ -12,6 +12,7 @@ import frappe
 
 from jarvis.chat import admission, user_settings_api
 from jarvis.chat.usage import current_month_key as _usage_month_key
+from jarvis.chat.usage import period_select_fields
 from jarvis.permissions import (
 	has_jarvis_access,
 	require_jarvis_access,
@@ -159,6 +160,30 @@ def _allowed_pin_models(settings) -> set[str]:
 # send context — a literal allow-list (not passthrough), mirrors the DocType
 # `theme` Select + frontend/src/lib/dashboardThemes.js.
 _DASHBOARD_THEME_KEYS = {"jarvis", "insight", "claude", "graphite", "custom"}
+_BUILDER_ORIGINS = {"dashboards", "triggers"}
+_ISOLATED_ORIGINS = {"dashboards"}
+
+
+def _normalise_origin_page(origin_page: str | None) -> str:
+	"""Validate an explicit conversation namespace used by first-party builders."""
+	origin = str(origin_page or "").strip().lower()
+	if origin and origin not in _BUILDER_ORIGINS:
+		frappe.throw(_("Invalid conversation origin."))
+	return origin
+
+
+def _origin_page_from_context(context: str | dict | None) -> str:
+	"""Read only the literal builder namespace from an otherwise wider context."""
+	if not context:
+		return ""
+	try:
+		parsed = frappe.parse_json(context)
+	except Exception:
+		return ""
+	if not isinstance(parsed, dict):
+		return ""
+	origin = str(parsed.get("page") or "").strip().lower()
+	return origin if origin in _BUILDER_ORIGINS else ""
 
 
 @frappe.whitelist()
@@ -204,6 +229,7 @@ def list_conversations() -> list[dict]:
 		        WHERE m.conversation = c.name) AS message_count
 		FROM `tabJarvis Conversation` c
 		WHERE c.owner = %s AND c.status = 'Active'
+		  AND COALESCE(c.origin_page, '') != 'dashboards'
 		  AND EXISTS (
 		    SELECT 1 FROM `tabJarvis Chat Message` m2
 		    WHERE m2.conversation = c.name
@@ -237,6 +263,10 @@ def search_conversations(search: str = "", start: int = 0, page_length: int = 20
 	conds = [
 		"c.owner = %(me)s",
 		"c.status = 'Active'",
+		# Dashboard Builder threads have their own in-context history and must not
+		# leak into the general chat palette. Other origin markers retain their
+		# established behavior.
+		"COALESCE(c.origin_page, '') != 'dashboards'",
 		# Hide empty (message-less) drafts, mirroring list_conversations.
 		"EXISTS (SELECT 1 FROM `tabJarvis Chat Message` m WHERE m.conversation = c.name)",
 	]
@@ -561,7 +591,7 @@ def search_workspace(search: str = "", limit: int = 6) -> dict:
 
 
 @frappe.whitelist()
-def create_or_focus_empty() -> str:
+def create_or_focus_empty(origin_page: str = "") -> str:
 	"""Return an empty active conversation for the current user, creating
 	one only if no empty conversation already exists.
 
@@ -570,6 +600,7 @@ def create_or_focus_empty() -> str:
 	"""
 	require_jarvis_access()
 	user = frappe.session.user
+	origin = _normalise_origin_page(origin_page)
 	# Reuse only a genuine blank chat. A File-Box drop that failed to send
 	# (filebox.drop_file) leaves a 0-message file_box conversation with the
 	# uploaded File attached - reusing THAT as a "New Chat" would silently inherit
@@ -581,6 +612,7 @@ def create_or_focus_empty() -> str:
 		SELECT c.name
 		FROM `tabJarvis Conversation` c
 		WHERE c.owner = %s AND c.status = 'Active'
+		  AND COALESCE(c.origin_page, '') = %s
 		  AND c.file_box = 0
 		  AND NOT EXISTS (
 		    SELECT 1 FROM `tabJarvis Chat Message` m
@@ -594,7 +626,7 @@ def create_or_focus_empty() -> str:
 		ORDER BY c.last_active_at DESC
 		LIMIT 1
 		""",
-		(user,),
+		(user, origin),
 	)
 	if empty:
 		# Focusing an existing empty as the target of a New Chat is activity: bump
@@ -602,17 +634,19 @@ def create_or_focus_empty() -> str:
 		# delete it out from under a tab the user just opened onto it.
 		frappe.db.set_value(CONV, empty[0][0], "last_active_at", frappe.utils.now())
 		return empty[0][0]
-	# Count only genuinely-new interactive chats toward the business-greeting
-	# cadence (every third new chat surfaces the card). Hooked here rather than
-	# in create_conversation() so unattended File Box drops don't count. A
-	# counter failure must never break chat creation.
-	try:
-		from jarvis.chat.greeting import increment_new_chat_count
+	# Count only genuinely-new MAIN chats toward the business-greeting cadence
+	# (every third new chat surfaces the card). Dashboard history is a separate
+	# workspace namespace and must not silently advance the main-chat greeting.
+	# Hooked here rather than in create_conversation() so unattended File Box
+	# drops do not count. A counter failure must never break chat creation.
+	if origin != "dashboards":
+		try:
+			from jarvis.chat.greeting import increment_new_chat_count
 
-		increment_new_chat_count(user)
-	except Exception as e:
-		frappe.log_error(title="jarvis greeting count", message=str(e))
-	return create_conversation()
+			increment_new_chat_count(user)
+		except Exception as e:
+			frappe.log_error(title="jarvis greeting count", message=str(e))
+	return create_conversation(origin_page=origin)
 
 
 @frappe.whitelist()
@@ -800,14 +834,16 @@ def preview_file(file_url: str) -> dict:
 
 
 @frappe.whitelist()
-def create_conversation() -> str:
+def create_conversation(origin_page: str = "") -> str:
 	"""Create an empty conversation owned by the current user; return its name."""
 	require_jarvis_access()
+	origin = _normalise_origin_page(origin_page)
 	doc = frappe.get_doc(
 		{
 			"doctype": CONV,
 			"title": "New chat",
 			"status": "Active",
+			"origin_page": origin,
 		}
 	)
 	doc.insert()
@@ -886,9 +922,23 @@ from frappe import _
 from jarvis.chat import role_profiles
 from jarvis.chat.agent_client import AgentSession
 from jarvis.chat.entities import scrub
-from jarvis.chat.policy import validate_can_send
+from jarvis.chat.policy import blocking_limit_period, validate_can_send
 
 _INFLIGHT_FRESH_SECONDS = 180
+
+
+def _send_rejection(user: str, reason: str) -> dict:
+	"""The ``{ok: False, reason}`` envelope for a refused send. A ``usage_limit``
+	rejection also names the window (``limit_period``) when the AGGREGATE cap is
+	what blocked, so the toast can say when it resets. A per-model cap (still
+	monthly) fires the same code but leaves the window out, and the SPA keeps
+	its period-neutral copy."""
+	out = {"ok": False, "reason": reason}
+	if reason == "usage_limit":
+		period = blocking_limit_period(user)
+		if period:
+			out["limit_period"] = period
+	return out
 
 
 def _conversation_busy(conversation: str) -> bool:
@@ -899,6 +949,10 @@ def _conversation_busy(conversation: str) -> bool:
 	composer is intentionally unlocked while recovering), and a stale streaming
 	row from a crashed worker ages out of the freshness window (stale_scan
 	finalizes it) so it never blocks sends forever."""
+	from jarvis.chat import compaction
+
+	if compaction.is_compacting(conversation):
+		return True
 	rows = frappe.db.sql(
 		"""SELECT streaming, recovering, modified FROM `tabJarvis Chat Message`
 		WHERE conversation = %s AND role = 'assistant'
@@ -923,6 +977,15 @@ def _conversation_busy(conversation: str) -> bool:
 		return False
 	age = (frappe.utils.now_datetime() - frappe.utils.get_datetime(last)).total_seconds()
 	return age < _INFLIGHT_FRESH_SECONDS
+
+
+def _compacting_reject(conversation: str) -> dict | None:
+	"""The send-path front door while a compaction holds the conversation."""
+	from jarvis.chat import compaction
+
+	if compaction.is_compacting(conversation):
+		return {"ok": False, "reason": _("Compacting this chat, try again in a moment")}
+	return None
 
 
 def _ordered_parked_cards(user: str, conversation: str) -> list[dict] | None:
@@ -1195,6 +1258,7 @@ def send_message(
 	thinking_override: str | None = None,
 	background: int = 0,
 	approval_tokens: str | list | None = None,
+	voice: bool = False,
 ) -> dict:
 	"""Validate, persist the user message, enqueue the worker.
 
@@ -1237,6 +1301,10 @@ def send_message(
 	Note: this differs from `model_override`, which treats both None and empty
 	string as "leave the existing value alone".
 
+	`voice` (optional): True when this message's text came from mic dictation
+	rather than typing. Stamped verbatim onto the created user message's
+	`via_voice` column; no other behaviour changes.
+
 	Returns {ok: True, run_id, message_id, conversation_id} on success or
 	{ok: False, reason: str} on validation failure. A human (non-delegated) send
 	whose ``conversation`` no longer exists falls back to a fresh empty
@@ -1264,13 +1332,14 @@ def send_message(
 
 	ok, reason = validate_can_send(user)
 	if not ok:
-		return {"ok": False, "reason": reason}
+		return _send_rejection(user, reason)
+	requested_origin = _origin_page_from_context(context)
 
 	# No conversation yet (first send from a fresh chat surface): create or
 	# focus the user's empty conversation here instead of a separate
 	# round-trip from the SPA.
 	if not conversation:
-		conversation = create_or_focus_empty()
+		conversation = create_or_focus_empty(origin_page=requested_origin)
 
 	# Attachments arrive as a JSON string of [{file_url, file_name}, ...] from
 	# the composer's file picker (already uploaded to the Frappe File doctype).
@@ -1302,8 +1371,21 @@ def send_message(
 	except frappe.DoesNotExistError:
 		if _delegated:
 			raise
-		conversation = create_or_focus_empty()
+		conversation = create_or_focus_empty(origin_page=requested_origin)
 		conv_doc = _get_owned_conversation(conversation)
+
+	# Builder threads are application-scoped workspaces, not aliases for main
+	# chat. A direct /c/<id> visit therefore cannot post into one without the
+	# matching first-party page context, and one builder cannot take over another
+	# builder's thread. Trusted delegated continuations (approval resume,
+	# scheduler, recovery) are allowed because they act on an already-owned row
+	# rather than a browser-selected surface.
+	existing_origin = (conv_doc.get("origin_page") or "").strip().lower()
+	if not _delegated and existing_origin in _ISOLATED_ORIGINS and requested_origin != existing_origin:
+		return {
+			"ok": False,
+			"reason": _("Continue this conversation in Dashboard Builder."),
+		}
 
 	_reject_send_into_armed_conversation(conv_doc)
 
@@ -1329,12 +1411,21 @@ def send_message(
 	# second turn becomes a durable QUEUED turn with a visible position. So skip
 	# the legacy reject and let accept_or_queue serialize + queue it. We still
 	# reject up front on OVERLOAD (queue too deep) before inserting the user row,
-	# so an overloaded site never accretes orphaned messages.
+	# so an overloaded site never accretes orphaned messages, and the compaction
+	# front door (_compacting_reject) still gates both branches below it.
 	if admission.turn_machine_enabled():
 		if admission.shard_overloaded(conversation):
 			return {"ok": False, "reason": _("The site is busy — please try again in a moment.")}
-	elif _conversation_busy(conversation):
-		return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
+		if _rej := _compacting_reject(conversation):
+			return _rej
+	else:
+		# Check the compaction front door first so a compacting conversation
+		# doesn't pay for is_compacting twice (once here, once inside the
+		# _conversation_busy() call below).
+		if _rej := _compacting_reject(conversation):
+			return _rej
+		if _conversation_busy(conversation):
+			return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
 
 	# Apply model override BEFORE enqueueing so the worker sees the new value
 	# when it loads the conversation. (If we set this after the enqueue, the
@@ -1373,7 +1464,7 @@ def send_message(
 		eff_model = ""
 	ok, reason = validate_can_send(user, model=eff_model)
 	if not ok:
-		return {"ok": False, "reason": reason}
+		return _send_rejection(user, reason)
 
 	# A genuine new top-level message ENDS any approved skill run on this conversation
 	# (skill "Approve & run", design §3.4 "Other close-triggers"): it is not a covered
@@ -1419,6 +1510,7 @@ def send_message(
 			"content": display_content,
 			"streaming": 0,
 			"canvas": canvas_json,
+			"via_voice": 1 if voice else 0,
 		}
 	)
 	# Delegated re-entry (scheduler/approval-resume/agent-run/File-Box): the
@@ -1444,25 +1536,19 @@ def send_message(
 	# Session row BEFORE streaming starts (2026-07 latency plan, Phase 1.1).
 	first_turn = 1 if not conv_doc.session_key else 0
 
-	# Remember which builder page this thread came from. A builder conversation is
-	# an ordinary Jarvis Conversation that also shows up in the main chat list,
-	# where nothing else tells a dashboard artifact apart from any other html
-	# canvas - so the origin has to be data, not client state. Stamped on EVERY
-	# qualifying send rather than at creation, so a thread that predates the field
-	# self-heals the next time the user chats from the builder.
+	# Remember which builder page owns this thread. Dashboard conversations have
+	# native, origin-scoped history and are excluded from main chat, so the marker
+	# must be durable data rather than a client-only routing hint. Stamp every
+	# qualifying builder send rather than only at creation so a pre-field legacy
+	# thread self-heals the next time the user continues it from its builder.
 	#
 	# It rides the save+commit below deliberately: admission.accept_or_queue rolls
 	# back on its overload-reject and duplicate-replay paths, so a stamp written
 	# after that commit would be silently discarded on a busy site. The parse is
 	# side-effect-free and reads the same two-value literal allow-list the enqueue
 	# payload applies further down.
-	if context and not (conv_doc.get("origin_page") or ""):
-		try:
-			_octx = frappe.parse_json(context)
-			if isinstance(_octx, dict) and _octx.get("page") in ("triggers", "dashboards"):
-				conv_doc.origin_page = _octx["page"]
-		except Exception:
-			pass
+	if requested_origin and not existing_origin:
+		conv_doc.origin_page = requested_origin
 
 	if _delegated:
 		conv_doc.flags.ignore_permissions = True
@@ -2184,6 +2270,8 @@ def _measured_usage(user: str) -> dict | None:
 		"month_output_tokens": 0,
 		"total_tokens": 0,
 		"monthly_token_limit": 0,
+		"limit_period": "All time",
+		"period_tokens": 0,
 		"usage_month": None,
 		"last_usage_at": None,
 		"per_model": [],
@@ -2199,6 +2287,7 @@ def _measured_usage(user: str) -> dict | None:
 			"total_tokens",
 			"monthly_token_limit",
 			"last_usage_at",
+			*period_select_fields(),
 		],
 		as_dict=True,
 	)
@@ -2212,6 +2301,7 @@ def _measured_usage(user: str) -> dict | None:
 			"month_output_tokens": 0 if stale else int(row.month_output_tokens or 0),
 			"total_tokens": int(row.total_tokens or 0),
 			"monthly_token_limit": int(row.monthly_token_limit or 0),
+			**user_settings_api._period_fields(row),
 			"usage_month": row.usage_month,
 			"last_usage_at": row.last_usage_at,
 		}
@@ -2262,6 +2352,9 @@ def get_usage(conversation: str | None = None) -> dict:
 	# is the ownership check: this endpoint never loads the conversation doc.
 	if conversation and conversation in convs:
 		out["chat_tool_calls"] = sum(r["tools"] for r in _tool_runs(conversation))
+		from jarvis.chat import compaction
+
+		out["context"] = compaction.context_payload(conversation)
 
 	rows = frappe.get_all(
 		MSG,
@@ -2276,6 +2369,86 @@ def get_usage(conversation: str | None = None) -> dict:
 		if conversation and m.conversation == conversation:
 			out["chat_tokens"] += t
 	return out
+
+
+@frappe.whitelist()
+def get_conversation_context(conversation: str) -> dict:
+	"""Context-window meter for one conversation (owner only). Bench snapshot
+	only; never calls the runtime."""
+	require_jarvis_access()
+	_get_owned_conversation(conversation)
+	from jarvis.chat import compaction
+
+	payload = compaction.context_payload(conversation)
+	# The composer's usage pill rides this payload (fetched on open and after
+	# every turn anyway) instead of making a request of its own: one indexed
+	# read of the caller's own settings row, no doc load.
+	payload["usage"] = _cap_reading(frappe.session.user)
+	return payload
+
+
+def _cap_reading(user: str) -> dict:
+	"""The caller's token cap and what counts against it, for the usage pill.
+	No row yet (recording has not started) reads as no cap."""
+	row = frappe.db.get_value(
+		"Jarvis User Settings",
+		{"user": user},
+		["monthly_token_limit", "total_tokens", *period_select_fields()],
+		as_dict=True,
+	)
+	if not row:
+		return {"monthly_token_limit": 0, "total_tokens": 0, "limit_period": "All time", "period_tokens": 0}
+	return {
+		"monthly_token_limit": int(row.monthly_token_limit or 0),
+		"total_tokens": int(row.total_tokens or 0),
+		**user_settings_api._period_fields(row),
+	}
+
+
+@frappe.whitelist()
+def compact_conversation(conversation: str, hint: str | None = None) -> dict:
+	"""Summarise older turns of one conversation (owner only). Refuses with a
+	typed reason while a turn or another compaction is in flight; otherwise
+	takes the lock and enqueues jarvis.chat.compaction.run_compact."""
+	require_jarvis_access()
+	doc = _get_owned_conversation(conversation)
+	from jarvis.chat import compaction
+
+	if doc.get("skip_confirmation"):
+		return {"ok": False, "reason": "macro_armed"}
+	if not (doc.get("session_key") or "").strip():
+		return {"ok": False, "reason": "nothing_to_compact"}
+	# A second Compact with no turn in between would just re-summarise the summary:
+	# refuse it the same way as "nothing to compact" rather than burn a gateway
+	# round trip. run_compact stamps last_compacted_at but never last_usage_at;
+	# record_turn_usage stamps last_usage_at on the NEXT completed turn, so
+	# last_compacted_at >= last_usage_at (or no usage at all yet) means no turn
+	# has run since the last compaction.
+	session_row = (
+		frappe.db.get_value(
+			"Jarvis Chat Session",
+			{"session_key": doc.session_key},
+			["last_compacted_at", "last_usage_at"],
+			as_dict=True,
+		)
+		or {}
+	)
+	last_compacted_at = session_row.get("last_compacted_at")
+	last_usage_at = session_row.get("last_usage_at")
+	if last_compacted_at and (not last_usage_at or last_compacted_at >= last_usage_at):
+		return {"ok": False, "reason": "nothing_to_compact"}
+	# This check races the same way is_compacting below does - the compare-and-set
+	# in compaction.start_compaction is the actual authority, this is just a
+	# cheap pre-check that saves a gateway round trip for the common case.
+	if compaction.is_compacting(conversation):
+		return {"ok": False, "reason": "already_compacting"}
+	if _conversation_busy(conversation) or admission._conv_has_other_active_turn(conversation, ""):
+		return {"ok": False, "reason": "conversation_busy"}
+	try:
+		clean = compaction.sanitize_hint(hint)
+	except frappe.ValidationError:
+		return {"ok": False, "reason": "bad_hint"}
+	return compaction.start_compaction(conversation, frappe.session.user, clean)
 
 
 @frappe.whitelist()
@@ -2425,8 +2598,16 @@ def retry_message(message: str) -> dict:
 	if admission.turn_machine_enabled():
 		if admission.shard_overloaded(doc.conversation):
 			return {"ok": False, "reason": _("The site is busy — please try again in a moment.")}
-	elif _conversation_busy(doc.conversation):
-		return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
+		if _rej := _compacting_reject(doc.conversation):
+			return _rej
+	else:
+		# Check the compaction front door first so a compacting conversation
+		# doesn't pay for is_compacting twice (once here, once inside the
+		# _conversation_busy() call below).
+		if _rej := _compacting_reject(doc.conversation):
+			return _rej
+		if _conversation_busy(doc.conversation):
+			return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
 	if doc.role != "assistant":
 		return {"ok": False, "reason": _("only assistant messages can be retried")}
 	if not doc.error:

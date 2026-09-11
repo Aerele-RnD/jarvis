@@ -68,8 +68,16 @@
 				></div>
 			</template>
 			<div class="jvp-head">
-				<div class="jvp-avatar">
+				<div class="jvp-avatar" :class="{ 'jvp-sleeping': maintenanceActive }">
 					<img v-if="brandLogoUrl" :src="brandLogoUrl" class="jvp-avatar-img" alt="" />
+					<!-- Upgrading: sleepy drooping lids (the desk twin of JarvisMark's
+					     "upgrading" mood). The online dot goes amber via .jvp-sleeping. -->
+					<span v-else-if="maintenanceActive" class="jvp-face" aria-hidden="true">
+						<i class="jvp-eye"></i><i class="jvp-eye"></i>
+					</span>
+					<span v-if="maintenanceActive" class="jvp-zzz" aria-hidden="true"
+						><i>z</i><i>z</i><i>z</i></span
+					>
 					<svg v-else viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
 						<path
 							d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
@@ -181,6 +189,19 @@
 			     replaces the conversation below it. Sits above the scrollable thread
 			     so it reads as a thin banner at the top, not inline with any one
 			     message. -->
+			<!-- Upgrade maintenance hold (Stream E): a proactive "back shortly" strip,
+			     shown regardless of readiness. The composer stays enabled below; a held
+			     send gets the friendly refusal and this self-clears when one gets
+			     through. Amber, like the worker notice; aria-live announces it. -->
+			<div
+				v-if="maintenanceActive"
+				class="jvp-maint-notice"
+				role="status"
+				aria-live="polite"
+			>
+				{{ maintenanceText }}
+			</div>
+
 			<div
 				v-if="workerWarning && readiness === 'ready'"
 				class="jvp-worker-notice"
@@ -238,8 +259,16 @@
 						v-else-if="!shownMessages.length && !stream.live && !thinking"
 						class="jvp-welcome"
 					>
-						<div class="jvp-hero">
-							<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+						<div class="jvp-hero" :class="{ 'jvp-sleeping': maintenanceActive }">
+							<!-- Upgrading: the hero mark sleeps too, so it matches the header
+							     avatar instead of showing a wide-awake face during a hold. -->
+							<span v-if="maintenanceActive" class="jvp-face" aria-hidden="true">
+								<i class="jvp-eye"></i><i class="jvp-eye"></i>
+							</span>
+							<span v-if="maintenanceActive" class="jvp-zzz" aria-hidden="true"
+								><i>z</i><i>z</i><i>z</i></span
+							>
+							<svg v-else viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
 								<path
 									d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z"
 								/>
@@ -301,6 +330,63 @@
 								</div>
 								<div class="jvp-m-bot jv-md" v-html="renderReply(m.content)"></div>
 							</div>
+							<div v-if="fbFor === m.name" class="jvp-fb">
+								<div v-if="fbState === 'idle'" class="jvp-fb-pills">
+									<span class="jvp-fb-q">Was this helpful?</span>
+									<button
+										type="button"
+										class="jvp-fb-pill"
+										@click="fbUp(m.name)"
+									>
+										<svg
+											viewBox="0 0 24 24"
+											fill="currentColor"
+											aria-hidden="true"
+										>
+											<path
+												d="M9 21h8.2a2 2 0 0 0 1.96-1.6l1.4-7A2 2 0 0 0 18.6 10H14V5a2.5 2.5 0 0 0-2.5-2.5L8 11v10zM2 11h4v10H2z"
+											/></svg
+										>Yes
+									</button>
+									<button
+										type="button"
+										class="jvp-fb-pill"
+										@click="fbNo(m.name)"
+									>
+										<svg
+											viewBox="0 0 24 24"
+											fill="currentColor"
+											aria-hidden="true"
+										>
+											<path
+												d="M15 3H6.8a2 2 0 0 0-1.96 1.6l-1.4 7A2 2 0 0 0 5.4 14H10v5a2.5 2.5 0 0 0 2.5 2.5L16 13V3zM22 3h-4v10h4z"
+											/></svg
+										>No
+									</button>
+								</div>
+								<div v-else-if="fbState === 'comment'" class="jvp-fb-cmt">
+									<textarea
+										v-model="fbNote"
+										class="jvp-fb-ta"
+										rows="2"
+										maxlength="1000"
+										placeholder="What went wrong? (optional)"
+									></textarea>
+									<div class="jvp-fb-actions">
+										<button
+											type="button"
+											class="jvp-fb-send"
+											@click="fbSend(m.name)"
+										>
+											Send
+										</button>
+										<button type="button" class="jvp-fb-skip" @click="fbSkip">
+											Skip
+										</button>
+									</div>
+								</div>
+								<div v-else class="jvp-fb-done">Thanks for the feedback</div>
+							</div>
 						</template>
 
 						<div v-if="stream.live && stream.live.text" class="jvp-row">
@@ -344,28 +430,58 @@
 
 						<!-- A turn that failed server-side. Shows the same headline the
 						     full chat uses; the raw provider text (an OAuth 401 arrives
-						     as a JSON blob) stays folded away behind "Show details" so it
+						     as a JSON blob) stays folded away behind "Details" so it
 						     cannot swamp a 400px panel. -->
-						<div v-if="turnError" class="jvp-turn-err" role="alert">
+						<!-- A cancelled / aged-out queued turn: muted note, no retry. -->
+						<div
+							v-if="turnError && turnErrorDetails.code === 'cancelled'"
+							class="jvp-turn-err-muted"
+							role="status"
+						>
+							{{ turnErrorHeadline }}
+						</div>
+						<div v-else-if="turnError" class="jvp-turn-err" role="alert">
 							<div class="jvp-turn-err-h">{{ turnErrorHeadline }}</div>
-							<div v-if="turnErrorHint" class="jvp-turn-err-hint">
+							<div
+								v-if="
+									turnErrorHint ||
+									turnErrorDetails.statusUrl ||
+									turnErrorHasDetail
+								"
+								class="jvp-turn-err-hint"
+							>
 								{{ turnErrorHint }}
+								<a
+									v-if="turnErrorDetails.statusUrl"
+									class="jvp-turn-err-link"
+									:href="turnErrorDetails.statusUrl"
+									target="_blank"
+									rel="noopener noreferrer"
+									>{{ turnErrorDetails.statusLabel }}
+									<span aria-hidden="true">&#8599;</span></a
+								>
+								<template v-if="turnErrorHasDetail">
+									<span v-if="turnErrorHint" aria-hidden="true"> &middot; </span>
+									<button
+										type="button"
+										class="jvp-turn-err-link"
+										:aria-expanded="turnErrorOpen ? 'true' : 'false'"
+										aria-controls="jvp-turn-err-raw"
+										@click="turnErrorOpen = !turnErrorOpen"
+									>
+										{{ turnErrorOpen ? "Hide details" : "Details" }}
+									</button>
+								</template>
 							</div>
-							<pre v-if="turnErrorOpen" class="jvp-turn-err-raw">{{
-								turnError
-							}}</pre>
-							<div class="jvp-turn-err-acts">
+							<pre
+								v-if="turnErrorOpen"
+								id="jvp-turn-err-raw"
+								class="jvp-turn-err-raw"
+								>{{ turnError }}</pre
+							>
+							<div v-if="turnErrorDetails.retryable" class="jvp-turn-err-acts">
 								<button class="jvp-btn-subtle" type="button" @click="retryLast">
 									Retry
-								</button>
-								<button
-									v-if="turnErrorHasDetail"
-									class="jvp-btn-subtle"
-									type="button"
-									:aria-expanded="turnErrorOpen ? 'true' : 'false'"
-									@click="turnErrorOpen = !turnErrorOpen"
-								>
-									{{ turnErrorOpen ? "Hide details" : "Show details" }}
 								</button>
 							</div>
 						</div>
@@ -527,7 +643,7 @@
 						class="jvp-cib"
 						type="button"
 						aria-label="Attach a file"
-						:disabled="uploading"
+						:disabled="uploading || maintenanceActive"
 						@click="pickFile"
 					>
 						<svg
@@ -551,6 +667,8 @@
 							contextText ? `Ask about ${contextText}…` : 'Ask Jarvis anything…'
 						"
 						v-model="draft"
+						:disabled="maintenanceActive"
+						:style="maintenanceActive ? 'opacity:0.55;cursor:not-allowed' : null"
 						@focus="composerFocused = true"
 						@blur="composerFocused = false"
 						@input="onComposerInput"
@@ -563,7 +681,7 @@
 						:class="{ 'jvp-cib--rec': recording }"
 						type="button"
 						:aria-label="recording ? 'Stop recording' : 'Dictate a message'"
-						:disabled="transcribing"
+						:disabled="transcribing || maintenanceActive"
 						@click="toggleVoice"
 					>
 						<svg
@@ -605,7 +723,7 @@
 						class="jvp-send"
 						type="button"
 						aria-label="Send message"
-						:disabled="!canSend"
+						:disabled="!canSend || maintenanceActive"
 						@click="send"
 					>
 						<svg
@@ -628,12 +746,15 @@
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
+import { turnErrorInfo } from "../../turn_errors.mjs";
 import { contextLabel } from "./desk_context.mjs";
 import { isDarkNow, watchTheme } from "./desk_theme.mjs";
 import { renderReply } from "./panel_markdown.mjs";
 import { resizeFrom } from "./panel_size.mjs";
 import { greetingLine, suggestionsFor } from "./panel_welcome.mjs";
 import { classifyReadiness, degradedActionable, shouldWarnWorkers } from "./panel_readiness.mjs";
+import { sendRefusalMessage } from "./panel_send_copy.mjs";
+import { maintenance, foldSend, startPollIfHeld } from "./maintenance_state.mjs";
 import {
 	emptyStream,
 	applyEvent,
@@ -655,7 +776,9 @@ import {
 	getChatUiSettings,
 	isReadyForChat,
 	resyncLlm,
+	submitFeedback,
 } from "./panel_api.mjs";
+import { shouldOfferFeedback, markRated, markIgnored } from "./feedback_gate.mjs";
 
 const props = defineProps({
 	open: { type: Boolean, default: false },
@@ -758,76 +881,22 @@ const loadError = ref("");
 // reload it triggers, and the panel showed nothing at all. A dead LLM credential
 // (auth_permanent) looked exactly like a reply that never came.
 const turnError = ref("");
-const turnErrorOpen = ref(false); // "Show details" disclosure
-// Mirrors the full chat's turnErrorInfo / classifyTurnErrorCode
-// (frontend/src/lib/errors.js, formerly ChatView.vue's own ERROR_HEADLINES /
-// classifyErrorCode before #702) so both surfaces name the same failure the
-// same way. This widget is a separate Desk-bundled build with no import path
-// into frontend/src/lib, so the mapping is kept here as its own copy - keep
-// this in sync by hand whenever errors.js's taxonomy changes (#702 review:
-// this copy had silently drifted once already, still showing the old
-// generic "Something went wrong" for the exact failure #702 was filed on).
-// Raw provider errors are unreadable here - an OAuth 401 arrives as a
-// multi-line JSON blob - so the headline is what shows and the raw text
-// hides behind "Show details".
-const _ERROR_HEADLINES = {
-	unreachable: "I couldn't reach the assistant",
-	timeout: "That took too long",
-	provider: "The model is busy right now",
-	"recovery-expired": "This took too long, so I stopped waiting",
-	gateway: "A temporary problem interrupted this",
-	internal: "Something went wrong",
-	cancelled: "This message was cancelled",
-};
-const _ERROR_HINTS = {
-	unreachable: "Check your connection, then try again.",
-	timeout: "This can happen on a large request. Try again, or ask for less at once.",
-	provider:
-		"This looks like a provider limit or billing issue. Check your plan, then try again.",
-	"recovery-expired": "Send your message again to start a fresh run.",
-	gateway: "This is usually a brief hiccup on our side. Try sending your message again.",
-	internal: "Try again. If it keeps happening, contact support.",
-};
-function classifyErrorCode(raw) {
-	const low = String(raw ?? "").toLowerCase();
-	if (
-		low.startsWith("you cancelled this message") ||
-		low.startsWith("waited too long in the queue")
-	)
-		return "cancelled";
-	if (low.startsWith("unexpected worker error")) return "internal";
-	if (
-		low.includes("ws open failed") ||
-		low.includes("unreachable") ||
-		low.includes("connection timed out")
-	)
-		return "unreachable";
-	if (low.includes("recovery window")) return "recovery-expired";
-	if (low.includes("timed out") || low.includes("timeout") || low.includes("deadline"))
-		return "timeout";
-	if (
-		[
-			"quota",
-			"rate limit",
-			"rate-limit",
-			"cooldown",
-			"overloaded",
-			"insufficient",
-			"credit",
-			"billing",
-		].some((k) => low.includes(k))
-	)
-		return "provider";
-	// #702: a run that reached here already started - a mid-run gateway/relay
-	// hiccup, not "internal". See errors.js's classifyTurnErrorCode for the
-	// full reasoning (this is the fallback that regressed once already).
-	return "gateway";
-}
-const turnErrorCode = computed(() => classifyErrorCode(turnError.value));
-const turnErrorHeadline = computed(
-	() => _ERROR_HEADLINES[turnErrorCode.value] || "Something went wrong"
-);
-const turnErrorHint = computed(() => _ERROR_HINTS[turnErrorCode.value] || "");
+// The live run:error event's own code, when this session saw it - always
+// wins over reclassifying `turnError` from text alone (mirrors the full
+// chat's errorMeta). Not persisted, so a reload has only the string.
+const turnErrorCode = ref("");
+// The failed assistant row's id: after the reload that run:error triggers,
+// its persisted `provider` (which model actually served the turn) is what
+// decides the status link, exactly as the full chat passes m.provider.
+const turnErrorMsgId = ref("");
+const turnErrorOpen = ref(false); // "Details" disclosure
+const turnErrorDetails = computed(() => {
+	const id = turnErrorMsgId.value;
+	const row = id ? messages.value.find((m) => m.name === id) : undefined;
+	return turnErrorInfo(turnError.value, turnErrorCode.value, { provider: row?.provider });
+});
+const turnErrorHeadline = computed(() => turnErrorDetails.value.headline);
+const turnErrorHint = computed(() => turnErrorDetails.value.hint);
 // Only offer the raw text when it says more than the headline already does.
 const turnErrorHasDetail = computed(() => {
 	const t = (turnError.value || "").trim();
@@ -835,6 +904,8 @@ const turnErrorHasDetail = computed(() => {
 });
 function clearTurnError() {
 	turnError.value = "";
+	turnErrorCode.value = "";
+	turnErrorMsgId.value = "";
 	turnErrorOpen.value = false;
 }
 const draft = ref("");
@@ -979,10 +1050,88 @@ const rootStyle = computed(() => {
 // Tool rows and empty shells are filtered out: this panel is text-only, and
 // the raw list is mostly machine chatter (see chat_stream.visibleMessages).
 const shownMessages = computed(() => visibleMessages(messages.value));
+
+// ---- post-reply feedback pills (feedback_gate decides IF/when they appear) ----
+const fbFor = ref(null); // message name currently showing the pills
+const fbState = ref("idle"); // idle | comment | done
+const fbNote = ref("");
+const fbRated = ref(false);
+const fbSeen = new Set(); // message names already run through the gate
+let fbAwaiting = false; // a user-initiated turn is in flight
+function offerFeedbackFor(m) {
+	if (!m || m.role !== "assistant" || m.streaming || m.error) return;
+	if (fbSeen.has(m.name)) return;
+	fbSeen.add(m.name);
+	if (shouldOfferFeedback(Number(m.reply_duration_ms || 0))) {
+		fbFor.value = m.name;
+		fbState.value = "idle";
+		fbNote.value = "";
+		fbRated.value = false;
+	}
+}
+watch(shownMessages, (list) => {
+	// Only after a turn the user just sent settles as an assistant reply - never
+	// on history load (fbAwaiting is false then).
+	if (!fbAwaiting) return;
+	const last = list[list.length - 1];
+	if (last && last.role === "assistant" && !last.streaming) {
+		fbAwaiting = false;
+		offerFeedbackFor(last);
+	}
+});
+function fbCommit(name, rating, note) {
+	fbRated.value = true;
+	markRated();
+	submitFeedback(name, rating, note || "").catch(() => {});
+}
+function fbDone() {
+	fbState.value = "done";
+	setTimeout(() => {
+		fbFor.value = null;
+		fbState.value = "idle";
+		fbNote.value = "";
+	}, 1600);
+}
+function fbUp(name) {
+	fbCommit(name, "up", "");
+	fbDone();
+}
+function fbNo(name) {
+	fbCommit(name, "down", ""); // commit the down; note folds in on Send
+	fbState.value = "comment";
+}
+function fbSend(name) {
+	const t = (fbNote.value || "").trim();
+	if (t) fbCommit(name, "down", t);
+	fbDone();
+}
+function fbSkip() {
+	fbDone();
+}
+function dismissFeedback() {
+	if (!fbFor.value) return;
+	if (!fbRated.value) markIgnored();
+	fbFor.value = null;
+	fbState.value = "idle";
+	fbNote.value = "";
+}
 // Whitelabel: the desk widget reads branding from bootinfo (set_jarvis_boot),
 // synchronously so there's no flash. Blank => Jarvis defaults.
 const brandName = (window.frappe?.boot?.jarvis_agent_name || "").trim() || "Jarvis";
 const brandLogoUrl = (window.frappe?.boot?.jarvis_brand_logo_url || "").trim();
+// Upgrade maintenance hold (Stream E): the panel + the FAB share ONE reactive source
+// (maintenance_state.mjs, seeded from boot) so they can never disagree, and a 60s poll
+// (armed on mount / on a raised send) lifts the banner when the roll finishes even on an
+// idle open bubble. The composer never blocks - a held send shows the friendly refusal,
+// not a dead box. The custom operator message (brand-scrubbed server-side) wins over the
+// branded default; the server refusal carries only the reason.
+const maintenanceActive = computed(() => maintenance.active);
+const maintenanceMessage = computed(() => maintenance.message);
+const maintenanceText = computed(
+	// Reuse the single-sourced copy (sendRefusalMessage) instead of a 3rd hardcoded copy of the
+	// sentence, so a wording change can't leave this banner out of sync with the inline refusal.
+	() => maintenanceMessage.value || sendRefusalMessage("maintenance", brandName)
+);
 // A turn is in flight from the moment the POST is away until the first token
 // lands. Without this the panel looks inert for the whole worker round-trip.
 const greeting = computed(() => {
@@ -1414,10 +1563,15 @@ async function send() {
 	// never onboarded. Unresolved counts too: sending into a verdict that has not
 	// landed is exactly how a message got swallowed by the arriving gate.
 	if (readiness.value === null || readiness.value === "gate") return;
+	// Maintenance HARD block: guard the direct send() callers (retryLast etc.); the composer is
+	// disabled too. First mid-session send has maintenanceActive false, so detection is preserved.
+	if (maintenanceActive.value) return;
 	const text = draft.value.trim();
 	const atts = attachments.value.slice();
 	if ((!text && !atts.length) || sending.value || stream.value.live) return;
 	sending.value = true;
+	dismissFeedback(); // a new turn clears any pending feedback pills
+	fbAwaiting = true; // watch shownMessages for this turn's reply
 	loadError.value = "";
 	// A new attempt supersedes the previous failure's notice.
 	clearTurnError();
@@ -1453,6 +1607,31 @@ async function send() {
 		const approvalTokens = orderedPending.value.map((p) => p.token);
 		const res = await sendMessage(convId.value, text, props.context, atts, approvalTokens);
 		if (res?.conversation_id) convId.value = res.conversation_id;
+		// Fold this response into the shared maintenance state: raise on a "maintenance"
+		// refusal (and arm the lift-poll), clear once any send/confirm gets past the gate.
+		foldSend(res);
+		// A send the server refused outright (e.g. a required app update, via the
+		// same validate_can_send gate as the full chat) starts no turn and returns
+		// no conversation. Surface the reason and STOP — otherwise the fall-through
+		// below flips the panel busy and polls for a run that never comes. The full
+		// nudge (pill/banner) stays off the bubble by design; this is just the
+		// legible reason for the refusal.
+		if (res && res.ok === false && !res.confirmed) {
+			sending.value = false;
+			messages.value = messages.value.filter((m) => !String(m.name).startsWith("local-"));
+			if (res.reason === "maintenance") {
+				// The proactive amber banner (raised above) carries the message; restore
+				// the typed text and do NOT set the red loadError - on an empty conversation
+				// that would replace the whole welcome screen.
+				draft.value = lastSent.value;
+				return;
+			}
+			loadError.value =
+				res.reason === "release_update_required"
+					? sendRefusalMessage(res.reason, brandName)
+					: res.error?.message || sendRefusalMessage(res.reason, brandName);
+			return;
+		}
 		// A go-ahead on the parked card ran the confirmation instead of starting a
 		// turn. No run is coming, so marking the panel busy would spin forever, and
 		// nothing was persisted for the typed words. Reload: the durable receipt
@@ -1549,7 +1728,11 @@ function onRealtime(payload) {
 		// A failed turn has to outlive the reload it just triggered, so it goes to
 		// turnError, which load() leaves alone. Sending it to loadError meant
 		// load()'s own reset erased it before it ever rendered.
-		if (next.error) turnError.value = next.error;
+		if (next.error) {
+			turnError.value = next.error;
+			turnErrorCode.value = payload?.code || "";
+			turnErrorMsgId.value = payload?.message_id || "";
+		}
 		load();
 		return;
 	}
@@ -1559,7 +1742,11 @@ function onRealtime(payload) {
 		sending.value = false;
 		stickToBottom();
 	}
-	if (next.error) turnError.value = next.error;
+	if (next.error) {
+		turnError.value = next.error;
+		turnErrorCode.value = payload?.code || "";
+		turnErrorMsgId.value = payload?.message_id || "";
+	}
 }
 
 // Load lazily on first open, not at mount: the FAB is on every Desk page and
@@ -1684,6 +1871,9 @@ function startPolling() {
 }
 
 onMounted(() => {
+	// Arm the maintenance lift-poll if the panel opens already held (the FAB self-arms it at
+	// module load too, so an unopened held bubble also self-heals).
+	startPollIfHeld();
 	isDark.value = isDarkNow();
 	unwatchTheme = watchTheme((d) => {
 		isDark.value = d;
@@ -1936,6 +2126,7 @@ defineExpose({ load, startNewChat, convId });
 }
 .jvp-avatar {
 	position: relative;
+	--sz: 30px;
 	width: 30px;
 	height: 30px;
 	flex: 0 0 auto;
@@ -2160,6 +2351,23 @@ defineExpose({ load, startNewChat, convId });
 	color: var(--jv-text-2, inherit);
 	opacity: 0.85;
 }
+.jvp-turn-err-muted {
+	margin: 6px 0;
+	font-size: 11.5px;
+	line-height: 1.4;
+	color: var(--jv-text-3, inherit);
+	opacity: 0.8;
+}
+.jvp-turn-err-link {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
 .jvp-turn-err-raw {
 	margin: 0;
 	max-height: 160px;
@@ -2187,6 +2395,10 @@ defineExpose({ load, startNewChat, convId });
 	padding: 24px 9px 8px;
 }
 .jvp-hero {
+	/* position: relative so the sleepy .jvp-face (position:absolute) centres inside
+	   this 52px tile, not against the whole panel - matching .jvp-avatar. */
+	position: relative;
+	--sz: 52px;
 	width: 52px;
 	height: 52px;
 	border-radius: 14px;
@@ -2390,6 +2602,94 @@ defineExpose({ load, startNewChat, convId });
 	line-height: 1.5;
 	color: var(--jv-ink);
 	overflow-wrap: anywhere;
+}
+
+/* post-reply feedback pills (mini widget) */
+.jvp-fb {
+	margin: 8px 0 2px 36px;
+}
+.jvp-fb-pills {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 7px;
+}
+.jvp-fb-q {
+	font-size: 12px;
+	color: var(--jv-ink-2);
+}
+.jvp-fb-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	padding: 4px 10px;
+	border-radius: 20px;
+	border: 1px solid var(--jv-rule-2);
+	color: var(--jv-accent);
+	background: var(--jv-chip-3);
+	transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.jvp-fb-pill svg {
+	width: 13px;
+	height: 13px;
+}
+.jvp-fb-pill:hover {
+	background: var(--jv-accent);
+	color: #fff;
+	border-color: var(--jv-accent);
+}
+.jvp-fb-cmt {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	max-width: calc(100% - 36px);
+}
+.jvp-fb-ta {
+	width: 100%;
+	resize: vertical;
+	min-height: 46px;
+	font-family: inherit;
+	font-size: 13px;
+	line-height: 1.45;
+	color: var(--jv-ink);
+	background: var(--jv-comp-bg);
+	border: 1px solid var(--jv-comp-bd);
+	border-radius: 10px;
+	padding: 7px 9px;
+	outline: none;
+}
+.jvp-fb-ta:focus {
+	border-color: var(--jv-accent);
+}
+.jvp-fb-actions {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+}
+.jvp-fb-send {
+	font-size: 12px;
+	font-weight: 600;
+	color: #fff;
+	background: var(--jv-grad);
+	border: 0;
+	border-radius: 8px;
+	padding: 5px 13px;
+	cursor: pointer;
+}
+.jvp-fb-skip {
+	font-size: 12px;
+	color: var(--jv-ink-3);
+	background: transparent;
+	border: 0;
+	cursor: pointer;
+}
+.jvp-fb-done {
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--jv-accent);
 }
 
 /* "Open in full chat" chip: stands in for content this panel can't draw
@@ -2665,6 +2965,122 @@ defineExpose({ load, startNewChat, convId });
 	font-size: 12px;
 	line-height: 1.4;
 	text-align: center;
+}
+
+/* ---- upgrade maintenance hold (Stream E) ---- */
+.jvp-maint-notice {
+	flex: none;
+	margin: 10px 15px 0;
+	padding: 6px 11px;
+	border: 1px solid var(--jv-warn-bd);
+	border-radius: 9px;
+	background: var(--jv-warn-bg);
+	color: var(--jv-warn);
+	font-size: 12px;
+	line-height: 1.4;
+	text-align: center;
+	/* The message is operator-authored (maintenance_message); a long unbroken token
+	   (e.g. a status-page URL) must wrap, not overflow the fixed-width panel. */
+	overflow-wrap: anywhere;
+}
+/* Sleepy header avatar: heavy drooping white pill lids over the brand tile - the
+   desk twin of JarvisMark's "upgrading" mood. #fff explicit (the tile fills the
+   spark). The online dot goes amber to match the paused state. */
+.jvp-face {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: calc(var(--sz) * 0.19);
+	animation: jvp-breathe 4.6s ease-in-out infinite;
+}
+.jvp-eye {
+	width: calc(var(--sz) * 0.135);
+	height: calc(var(--sz) * 0.055);
+	background: #fff;
+	border-radius: 999px;
+	animation: jvp-lid 4.6s ease-in-out infinite;
+}
+.jvp-eye:first-child {
+	transform: rotate(-13deg);
+}
+.jvp-eye:last-child {
+	transform: rotate(13deg);
+}
+.jvp-sleeping .jvp-online {
+	background: var(--jv-warn, #e8a845);
+}
+/* Sleep "z z z", white over the gradient tile - the z's fade out as they rise
+   past the tile edge, so only the on-tile part shows (overflow is visible). */
+.jvp-zzz {
+	position: absolute;
+	top: 9%;
+	right: 8%;
+	display: flex;
+	align-items: flex-end;
+	gap: 1px;
+	line-height: 1;
+	pointer-events: none;
+}
+.jvp-zzz i {
+	font-style: normal;
+	font-weight: 800;
+	color: #fff;
+	opacity: 0;
+}
+.jvp-zzz i:nth-child(1) {
+	font-size: calc(var(--sz) * 0.14);
+	animation: jvp-zfloat 3.2s ease-out infinite;
+}
+.jvp-zzz i:nth-child(2) {
+	font-size: calc(var(--sz) * 0.18);
+	animation: jvp-zfloat 3.2s ease-out 0.6s infinite;
+}
+.jvp-zzz i:nth-child(3) {
+	font-size: calc(var(--sz) * 0.24);
+	animation: jvp-zfloat 3.2s ease-out 1.2s infinite;
+}
+@keyframes jvp-zfloat {
+	0% {
+		opacity: 0;
+		transform: translateY(20%) scale(0.7);
+	}
+	30% {
+		opacity: 0.9;
+	}
+	100% {
+		opacity: 0;
+		transform: translateY(-30%) scale(1.05);
+	}
+}
+@keyframes jvp-breathe {
+	0%,
+	100% {
+		transform: scale(0.99);
+	}
+	50% {
+		transform: scale(1.02);
+	}
+}
+@keyframes jvp-lid {
+	0%,
+	100% {
+		height: calc(var(--sz) * 0.055);
+	}
+	50% {
+		height: calc(var(--sz) * 0.022);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.jvp-face,
+	.jvp-eye,
+	.jvp-zzz i {
+		animation: none;
+	}
+	.jvp-zzz i {
+		opacity: 0.85;
+	}
 }
 
 /* ---- pending write confirmation ---- */

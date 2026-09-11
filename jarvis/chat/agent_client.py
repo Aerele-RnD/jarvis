@@ -117,6 +117,10 @@ CONNECT_OPEN_RETRY_BACKOFF_SECONDS = 2.0
 # openclaw accepts — send one of the seeded values, NOT a bare "http://localhost"
 # (which the old "*" config used to wave through and now gets rejected).
 _GATEWAY_ORIGIN = "http://127.0.0.1:18789"
+# The primary (default) agent id the fleet-agent template keys the main roster
+# entry as; named on sessions.create when a 2026.9+ multi-agent roster requires
+# explicit agent selection (see create_session).
+_PRIMARY_AGENT_ID = "main"
 # Wall-clock cap on one agent turn waiting for the WS lifecycle to
 # complete (final lifecycle "end" frame from openclaw). Was 180s when
 # the bench + openclaw container ran on the same host (sub-ms WS
@@ -300,6 +304,66 @@ def _is_stale_pairing(err: Exception) -> bool:
 	if details.get("authReason") in _STALE_PAIRING_AUTH_REASONS:
 		return True
 	return details.get("code") in _STALE_PAIRING_DETAIL_CODES
+
+
+# --- Mechanism A: connect-first device pairing ------------------------------
+#
+# On a Mechanism-A tenant (openclaw 9.x) the bench has a STABLE keypair but no
+# device token yet. It presents the shared gateway token (auth.token) on a
+# signed connect; openclaw answers NOT_PAIRED and opens a DURABLE pending pairing
+# request, then closes the socket (WS 1008) with a pauseReconnect hint. The CP
+# has told the fleet-agent to poll + approve this deviceId; on the approved
+# reconnect openclaw issues the device token on hello-ok.auth.deviceToken. We
+# drive that by reconnecting on OUR OWN timer, ignoring the pause hint.
+#
+# Bounded (D-e): ONE pairing episode per turn-that-needs-pairing, capped WELL
+# inside openclaw's ~5-min pending TTL and the chat-turn budget; fail-closed at
+# the cap (D-d). The deadline sits a little above the fleet-agent's
+# tens-of-seconds poll+approve window so an approval lands within one turn.
+PAIRING_APPROVAL_DEADLINE_SECONDS = 75
+PAIRING_RECONNECT_BACKOFF_SECONDS = 3.0
+
+# User-facing copy for a pairing that has not been approved yet when we hit the
+# cap (fail-closed). Honest, not a fake success or a dead card: normal chat
+# resumes on the next turn once the fleet-agent's approval lands. Kept generic so
+# _classify_error still files it under "unreachable" (assistant starting up).
+PAIRING_PENDING_USER_MESSAGE = "Still getting your assistant ready — try again in a moment."
+
+# openclaw's wire signal for "presented the gateway token, no paired device yet"
+# (spike-proven on the real 9.3 dist, invariant #3): error.code NOT_PAIRED, and
+# on the generic INVALID_REQUEST envelope the machine-readable marker sits in
+# error.details.code = PAIRING_REQUIRED / error.details.{authReason,reason} =
+# not-paired. This set is DISJOINT from the stale-pairing markers above
+# (device_token_mismatch / AUTH_DEVICE_TOKEN_MISMATCH), and the two paths are
+# further separated by connect MODE - a bootstrap connect presents auth.token
+# (no deviceToken to mismatch), a steady-state connect presents auth.deviceToken
+# - so a NOT_PAIRED response can never route into the keypair-wiping
+# stale-pairing repair path (plan-check gap #3).
+_NOT_PAIRED_CODES = frozenset({"NOT_PAIRED"})
+_NOT_PAIRED_DETAIL_CODES = frozenset({"PAIRING_REQUIRED", "NOT_PAIRED"})
+_NOT_PAIRED_REASONS = frozenset({"not-paired"})
+
+
+def _is_not_paired(err: Exception) -> bool:
+	"""Return True iff ``err`` is openclaw's connect-first PENDING signal: the
+	bench presented the gateway token (bootstrap) and openclaw created/returned a
+	pending pairing request instead of authenticating.
+
+	Strictly typed, exactly like ``_is_stale_pairing``: only ``.code``/``.details``
+	are consulted, never message text. This is the ONLY classifier the bootstrap
+	loop reads, so a NOT_PAIRED response is structurally kept OUT of the
+	keypair-wiping stale-pairing self-heal."""
+	code = getattr(err, "code", None)
+	if code in _NOT_PAIRED_CODES:
+		return True
+	details = getattr(err, "details", None)
+	if not isinstance(details, dict):
+		return False
+	if details.get("code") in _NOT_PAIRED_DETAIL_CODES:
+		return True
+	if details.get("authReason") in _NOT_PAIRED_REASONS:
+		return True
+	return details.get("reason") in _NOT_PAIRED_REASONS
 
 
 def _chat_final_text(payload: dict) -> str | None:
@@ -514,6 +578,16 @@ class AgentSession:
 		t_pair_start = time.monotonic()
 		creds = ensure_paired()
 		t_pair_done = time.monotonic()
+
+		# Mechanism-A tenant with no device token yet: take the connect-first
+		# bootstrap path. It presents the gateway token, drives NOT_PAIRED ->
+		# approved on its own bounded timer, and adopts the reissued device token.
+		# DISJOINT from the stale-pairing repair below: it never wipes the stable
+		# keypair (a wiped keypair mints a new deviceId every turn -> a pending the
+		# fleet-agent can never approve -> thrash, plan-check gap #3).
+		if creds.needs_bootstrap:
+			return cls._bootstrap_pair_connect(gateway_url, creds, t_pair_start=t_pair_start)
+
 		ws = cls._open_ws_with_retry(gateway_url)
 		t_ws_done = time.monotonic()
 
@@ -550,6 +624,114 @@ class AgentSession:
 			gateway_url,
 		)
 		return cls(ws, creds)
+
+	@classmethod
+	def _bootstrap_pair_connect(
+		cls,
+		gateway_url: str,
+		creds: ChatDeviceCredentials,
+		*,
+		t_pair_start: float | None = None,
+	) -> AgentSession:
+		"""Connect-first device pairing (Mechanism A).
+
+		The bench has a stable keypair but NO device token. It presents the
+		gateway token (``auth.token``) on a signed connect; openclaw answers
+		NOT_PAIRED and opens a durable pending request (and closes the socket with
+		a pauseReconnect hint). The CP has already told the fleet-agent to poll +
+		approve this deviceId. We ignore the pause and reconnect on our own timer
+		until the approval lands, at which point openclaw issues the device token
+		on ``hello-ok.auth.deviceToken`` and we adopt it (steady state from there).
+
+		DISJOINT from the stale-pairing self-heal (``_repair_and_reconnect``): this
+		NEVER wipes the keypair. Wiping it would mint a new deviceId every turn ->
+		a moving target the fleet-agent can never approve (thrash, plan-check gap
+		#3). Token-absent is a valid state; the keypair stays put and the pending is
+		re-found/re-created each turn until approved.
+
+		Bounded (D-e): ONE episode per turn-that-needs-pairing, capped at
+		PAIRING_APPROVAL_DEADLINE_SECONDS (well inside the 5-min pending TTL and the
+		chat-turn budget). Fail-CLOSED at the cap (D-d): raise the honest
+		"still getting ready" error, NEVER fabricate a token.
+		"""
+		if not creds.bootstrap_token:
+			# Can neither present nor sign a bootstrap connect without the gateway
+			# token. Fail closed rather than send an unsignable/empty auth.
+			raise AgentUnreachableError(
+				"device pairing needs the gateway token but none is set",
+				code="pairing-no-bootstrap-token",
+			)
+
+		t_start = t_pair_start if t_pair_start is not None else time.monotonic()
+		deadline = time.monotonic() + PAIRING_APPROVAL_DEADLINE_SECONDS
+		attempt = 0
+		while True:
+			attempt += 1
+			ws = cls._open_ws_with_retry(gateway_url)
+			try:
+				reissued_token = cls._handshake(ws, creds)
+			except AgentUnreachableError as e:
+				try:
+					ws.close()
+				except Exception:
+					pass
+				if _is_not_paired(e):
+					# Still pending. Reconnect on our own timer within the deadline;
+					# openclaw's pauseReconnect hint is deliberately ignored.
+					if time.monotonic() < deadline:
+						_logger.info(
+							"chat pairing: pending approval device_id=%s attempt=%d elapsed_ms=%d",
+							creds.device_id,
+							attempt,
+							int((time.monotonic() - t_start) * 1000),
+						)
+						time.sleep(PAIRING_RECONNECT_BACKOFF_SECONDS)
+						continue
+					# Cap reached: fail closed (D-d). This is the new NOT_PAIRED
+					# branch's own distinct log line (D-f).
+					_logger.warning(
+						"chat pairing: NOT approved within %ss device_id=%s attempts=%d - failing closed",
+						PAIRING_APPROVAL_DEADLINE_SECONDS,
+						creds.device_id,
+						attempt,
+					)
+					raise AgentUnreachableError(
+						PAIRING_PENDING_USER_MESSAGE,
+						code="pairing-pending",
+					) from e
+				# Any non-NOT_PAIRED failure is a real error - do NOT loop on it.
+				raise
+			except Exception:
+				try:
+					ws.close()
+				except Exception:
+					pass
+				raise
+
+			# hello-ok arrived: the pending was approved and the gateway issued the
+			# device token. Adopt it (persist + in-memory) and proceed steady-state.
+			if not reissued_token:
+				try:
+					ws.close()
+				except Exception:
+					pass
+				_logger.warning(
+					"chat pairing: approved connect issued NO device token device_id=%s - failing closed",
+					creds.device_id,
+				)
+				raise AgentUnreachableError(
+					PAIRING_PENDING_USER_MESSAGE,
+					code="pairing-no-token",
+				)
+			creds = cls._adopt_reissued_token(creds, reissued_token)
+			_logger.info(
+				"chat pairing: approved device_id=%s attempts=%d total_ms=%d gateway=%s",
+				creds.device_id,
+				attempt,
+				int((time.monotonic() - t_start) * 1000),
+				gateway_url,
+			)
+			return cls(ws, creds)
 
 	@classmethod
 	def _open_ws_with_retry(cls, gateway_url: str):
@@ -692,7 +874,32 @@ class AgentSession:
 	# -- protocol methods -------------------------------------------------
 
 	def create_session(self, label: str = "jarvis-chat") -> str:
-		res = self._request("sessions.create", {"label": label}, timeout_s=CONNECT_TIMEOUT_SECONDS)
+		params = {"label": label}
+		try:
+			res = self._request("sessions.create", params, timeout_s=CONNECT_TIMEOUT_SECONDS)
+		except AgentUnreachableError as e:
+			# openclaw 2026.9+ makes a MULTI-AGENT roster (>=1 marketplace-agent
+			# delegate installed) reject an unscoped session and demand the caller
+			# name an agent. Retry naming the primary agent (the fleet-agent template
+			# keys it "main" - see _PRIMARY_AGENT_ID). Kept as a fallback rather than
+			# sent upfront so single-agent tenants and pre-2026.9 gateways - whose
+			# sessions.create rejects an unknown agentId - are untouched.
+			#
+			# openclaw sends only the GENERIC code "INVALID_REQUEST" with details=None
+			# for this (verified against 2026.9.3), so - unlike the structured
+			# _STALE_PAIRING_* classifier above - the code alone can't distinguish it
+			# from other INVALID_REQUEST rejections; the message substring is the only
+			# specific signal available. Gate on both (code narrows the class, prose
+			# pins the case). test_chat_agent_client pins the exact wire message so a
+			# future reword breaks CI instead of silently disabling the retry; if a
+			# later image adds a structured reason, prefer it.
+			if e.code != "INVALID_REQUEST" or "no explicit owner" not in str(e).lower():
+				raise
+			res = self._request(
+				"sessions.create",
+				{**params, "agentId": _PRIMARY_AGENT_ID},
+				timeout_s=CONNECT_TIMEOUT_SECONDS,
+			)
 		key = (res.get("payload") or {}).get("key")
 		if not key:
 			raise AgentUnreachableError(f"sessions.create returned no key: {res}")
@@ -752,6 +959,49 @@ class AgentSession:
 		if run_id:
 			params["runId"] = run_id
 		return self._request("chat.abort", params, timeout_s=timeout_s)
+
+	def compact_session(
+		self,
+		session_key: str,
+		hint: str | None = None,
+		*,
+		timeout_s: float = 200.0,
+	) -> dict:
+		"""Compact one session by sending the runtime's text command
+		``/compact <hint>`` through chat.send (the ONLY surface that accepts a
+		hint; the sessions.compact RPC has none). The command path emits no
+		agent lifecycle frames, only session.message frames and one ``chat``
+		event with a terminal state, so this waits for THAT and nothing else.
+		Verified live 2026-09-05: about 6 s, notice text
+		"⚙️ Compacted (58k before) • Context 58k/200k (29%)"."""
+		message = "/compact" + (f" {hint.strip()}" if hint and hint.strip() else "")
+		run_id = uuid.uuid4().hex
+		self.subscribe_session(session_key)
+		ack = self.chat_send(session_key, message, run_id, timeout_s=CONNECT_TIMEOUT_SECONDS)
+		rid = ack.get("runId") or run_id
+		deadline = time.monotonic() + timeout_s
+		while time.monotonic() < deadline:
+			try:
+				frame = self._recv(min(5.0, max(deadline - time.monotonic(), 0.01)))
+			except AgentUnreachableError as e:
+				# A hard close after the ack is the same "sent it, never heard
+				# back" outcome as a plain timeout (the command may have
+				# landed) - recode a codeless close so the caller's
+				# code == "compact-timeout" check still routes it that way.
+				if getattr(e, "code", None):
+					raise
+				raise AgentUnreachableError(str(e), code="compact-timeout") from e
+			if not frame or frame.get("type") != "event" or frame.get("event") != "chat":
+				continue
+			payload = frame.get("payload") or {}
+			if payload.get("runId") != rid or payload.get("sessionKey") != session_key:
+				continue
+			state = payload.get("state")
+			if state == "final":
+				return {"state": "final", "text": _chat_final_text(payload), "run_id": rid}
+			if state in ("error", "aborted"):
+				return {"state": state, "text": str(payload.get("errorMessage") or state), "run_id": rid}
+		raise AgentUnreachableError("compact timed out", code="compact-timeout")
 
 	def subscribe_session(
 		self,
@@ -1002,9 +1252,16 @@ class AgentSession:
 							"error": failed_final_error(failure_detail),
 						}
 						return
-					# Not a failed-final -> redact the surfaced reply + fire the
-					# once-per-turn tripwire (classification above ran on raw text).
-					yield {"kind": "relay:final", "text": egress_rules.redact_and_flag(text, run_id=run_id)}
+					# Not a failed-final -> consume the MEDIA marker, redact the surfaced
+					# reply + fire the once-per-turn tripwire (classification ran on raw
+					# text). media_rels rides the terminal so the worker seeds the image.
+					_red, _rels, _marked = egress_rules.redact_final_with_media(text, run_id=run_id)
+					_final = {"kind": "relay:final", "text": _red}
+					if _rels:  # fetchable media -> seed downstream (only set when present)
+						_final["media_rels"] = _rels
+					if _marked:  # any MEDIA: line stripped -> force the content overwrite
+						_final["marker_stripped"] = True
+					yield _final
 					return
 				if state in ("error", "aborted"):
 					yield {
@@ -1168,13 +1425,21 @@ class AgentSession:
 	def _handshake(cls, ws: websocket.WebSocket, creds: ChatDeviceCredentials) -> str | None:
 		"""Receive connect.challenge → sign v3 payload → send connect → expect hello-ok.
 
+		Presents ``auth`` per connect mode and signs the v3 payload's token slot
+		with the SAME token (spike invariant #2 - openclaw derives the signature
+		token via ``resolveSignatureToken`` = ``auth.token ?? auth.deviceToken ??
+		auth.bootstrapToken``, so the two MUST match or the signature is rejected):
+		  - steady state (device token in hand): ``auth.deviceToken`` = device token
+		    (today's behaviour, unchanged);
+		  - bootstrap / token-fetch (Mechanism A, no device token yet):
+		    ``auth.token`` = the shared gateway token.
+
 		Returns the REISSUED device token from hello-ok's ``auth.deviceToken``
-		when the gateway rotated it (None otherwise). openclaw's gateway
-		replaces the stored device token at connect whenever the existing
-		entry no longer lines up with the requested scopes/issuer; the new
-		token is already durable on the gateway side when hello-ok arrives,
-		so the caller MUST adopt it or every following connect fails with
-		"device token mismatch"."""
+		when the gateway issued/rotated one (None otherwise). In bootstrap this is
+		how the newly-approved device token reaches the bench; in steady state it
+		is the gateway rotating the stored token. Either way the new token is
+		already durable gateway-side when hello-ok arrives, so the caller MUST
+		adopt it or every following connect fails with "device token mismatch"."""
 		deadline = time.monotonic() + CONNECT_TIMEOUT_SECONDS
 
 		# 1. Wait for the challenge event.
@@ -1190,6 +1455,17 @@ class AgentSession:
 			raise AgentUnreachableError("did not receive connect.challenge before timeout")
 
 		# 2. Sign + send the connect frame.
+		# Build the auth block first, then derive the token slot FROM it in
+		# openclaw's exact resolveSignatureToken precedence, so the presented
+		# token and the signed token can never drift (invariant #2). Bootstrap
+		# (no device token) presents auth.token=<gateway token>; steady state
+		# presents auth.deviceToken=<device token>.
+		if creds.device_token:
+			auth = {"deviceToken": creds.device_token}
+		else:
+			auth = {"token": creds.bootstrap_token}
+		signing_token = auth.get("token") or auth.get("deviceToken") or auth.get("bootstrapToken") or ""
+
 		signed_at_ms = int(time.time() * 1000)
 		payload = build_payload_v3(
 			device_id=creds.device_id,
@@ -1198,7 +1474,7 @@ class AgentSession:
 			role=_ROLE,
 			scopes=_REQUESTED_SCOPES,
 			signed_at_ms=signed_at_ms,
-			device_token=creds.device_token,
+			device_token=signing_token,
 			nonce=nonce,
 			platform=_PLATFORM,
 			device_family="",
@@ -1216,7 +1492,7 @@ class AgentSession:
 			},
 			"role": _ROLE,
 			"scopes": _REQUESTED_SCOPES,
-			"auth": {"deviceToken": creds.device_token},
+			"auth": auth,
 			"device": {
 				"id": creds.device_id,
 				"publicKey": creds.public_key,
