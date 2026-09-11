@@ -562,10 +562,18 @@ class RelayMux:
 					{"state": "failed_final", "error": failed_final_error(lane.failure_detail)},
 				)
 			else:
-				# Not a failed-final -> redact the surfaced reply + fire the once-
-				# per-turn tripwire (classification above ran on raw text).
+				# Not a failed-final -> consume the MEDIA marker, redact the surfaced
+				# reply + fire the once-per-turn tripwire (classification ran on raw
+				# text). media_rels rides term_payload -> the Turn row, where
+				# finalize._effect_rich_outputs re-reads it to seed the image (the
+				# pump is the default transport, so this is the primary delivery path).
 				term_kind = "relay:final"
-				term_payload = {"text": egress_rules.redact_and_flag(text, run_id=lane.run_id)}
+				_red, _rels, _marked = egress_rules.redact_final_with_media(text, run_id=lane.run_id)
+				term_payload = {"text": _red}
+				if _rels:  # fetchable media -> seed downstream (only set when present)
+					term_payload["media_rels"] = _rels
+				if _marked:  # any MEDIA: line stripped -> force the content overwrite
+					term_payload["marker_stripped"] = True
 		elif state in ("error", "aborted"):
 			term_kind = "relay:error"
 			term_payload = {
