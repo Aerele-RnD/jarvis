@@ -906,7 +906,23 @@ def record_delegate_run(
 		"coverage_json": coverage_blob[:60000],
 	}
 	if scope:
-		run_values["scope_json"] = frappe.as_json(scope)[:60000]
+		# Merge the delegate's writeback scope ONTO the trigger-stamped scope rather
+		# than overwriting it. The delegate forwards only the core dims (company,
+		# fiscal_year, from_date, to_date), so a blind overwrite drops the
+		# bench-stamped as-of date (report_date) and prior-FY bounds -- and a run
+		# persisted without report_date replays against to_date, changing findings and
+		# the integrity digest. Delegate values win where present; bench-only keys survive.
+		import json as _json
+
+		base = {}
+		try:
+			base = _json.loads(frappe.db.get_value(RUN, run_doc.name, "scope_json") or "{}")
+			if not isinstance(base, dict):
+				base = {}
+		except Exception:
+			base = {}
+		base.update(scope)
+		run_values["scope_json"] = frappe.as_json(base)[:60000]
 	if integrity_digest:
 		run_values["integrity_digest"] = str(integrity_digest)[:64]
 	if canvas_ref:
