@@ -101,19 +101,17 @@ function close() {
 				</div>
 
 				<!-- notes, newest first: version heading via {{ }} (never v-html),
-				     body via renderMarkdown (escape-first, XSS-safe) in a prose block -->
+				     body via renderMarkdown (escape-first, XSS-safe), styled in
+				     component (`prose` is inert - no Tailwind Typography plugin) -->
 				<div v-else class="jv-wnew-notes">
-					<section v-for="note in notes" :key="note.version">
+					<section v-for="note in notes" :key="note.version" class="jv-wnew-card">
 						<div class="jv-wnew-note-head">
-							<h3 class="jv-wnew-note-version">{{ note.version }}</h3>
+							<h3 class="jv-wnew-badge">{{ note.version }}</h3>
 							<span v-if="note.title" class="jv-wnew-note-title">{{
 								note.title
 							}}</span>
 						</div>
-						<div
-							class="prose prose-sm max-w-none jv-wnew-note-body"
-							v-html="renderMarkdown(note.body)"
-						></div>
+						<div class="jv-wnew-note-body" v-html="renderMarkdown(note.body)"></div>
 					</section>
 				</div>
 			</div>
@@ -189,27 +187,100 @@ function close() {
 .jv-wnew-notes {
 	display: flex;
 	flex-direction: column;
-	gap: 22px;
+	gap: 14px;
+}
+/* Each release is its own card, so stacked notes read as distinct entries. */
+.jv-wnew-card {
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 14px 16px;
+	background: var(--card);
 }
 .jv-wnew-note-head {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: baseline;
 	gap: 8px;
+	margin-bottom: 10px;
 }
-.jv-wnew-note-version {
+/* Version as an accent pill (matches the update banner/pill). Kept an <h3> so
+   each release stays a screen-reader sub-heading under the sheet title. */
+.jv-wnew-badge {
+	display: inline-block;
 	margin: 0;
-	font-size: 15px;
-	font-weight: 700;
-	color: var(--ink9);
+	padding: 3px 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.2px;
+	color: var(--accent);
+	background: var(--accent-bg);
 }
 .jv-wnew-note-title {
 	font-size: 13px;
 	color: var(--ink6);
 }
+/* Markdown body: the renderer emits jv-md-* classes + bare <strong>/<em>/<a>;
+   style via :deep() since the v-html'd nodes carry no scope attribute. */
 .jv-wnew-note-body {
-	margin-top: 4px;
+	font-size: 14px;
+	line-height: 1.6;
 	color: var(--ink7);
+}
+.jv-wnew-note-body :deep(.jv-md-p) {
+	margin: 0 0 8px;
+}
+.jv-wnew-note-body :deep(.jv-md-p:last-child) {
+	margin-bottom: 0;
+}
+.jv-wnew-note-body :deep(strong) {
+	font-weight: 600;
+	color: var(--ink9);
+}
+.jv-wnew-note-body :deep(.jv-md-list + .jv-md-p) {
+	margin-top: 12px;
+}
+.jv-wnew-note-body :deep(.jv-md-list) {
+	margin: 4px 0 10px;
+	padding-left: 20px;
+	list-style: disc;
+}
+.jv-wnew-note-body :deep(ol.jv-md-list) {
+	list-style: decimal;
+}
+.jv-wnew-note-body :deep(.jv-md-list li) {
+	margin: 3px 0;
+}
+.jv-wnew-note-body :deep(.jv-md-list:last-child) {
+	margin-bottom: 0;
+}
+.jv-wnew-note-body :deep(.jv-md-h) {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--ink9);
+	margin: 14px 0 6px;
+}
+.jv-wnew-note-body :deep(.jv-md-hr) {
+	border: none;
+	border-top: 1px solid var(--border2);
+	margin: 12px 0;
+}
+.jv-wnew-note-body :deep(.jv-md-code) {
+	font-family: ui-monospace, monospace;
+	font-size: 12.5px;
+	padding: 1px 5px;
+	border-radius: 5px;
+	background: var(--card2);
+}
+.jv-wnew-note-body :deep(.jv-md-link) {
+	color: var(--accent);
+	text-decoration: underline;
+}
+.jv-wnew-note-body :deep(.jv-md-quote) {
+	margin: 8px 0;
+	padding-left: 10px;
+	border-left: 3px solid var(--border2);
+	color: var(--ink6);
 }
 .jv-spinner {
 	width: 20px;
