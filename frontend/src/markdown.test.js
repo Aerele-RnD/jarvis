@@ -178,3 +178,34 @@ test("an /app/ path inside BACKTICKS used as a markdown link's text also avoids 
 		"the path still renders as code, just not as its own link, inside the outer anchor"
 	);
 });
+
+// Thematic break: a release note (and agents) use "---" to divide sections. It
+// fell through to a paragraph and showed as literal "---" in the What's-new
+// panel; it must render as an <hr>.
+test("renders a thematic break (---, ***, ___, and spaced/longer runs) as an <hr>", () => {
+	for (const rule of ["---", "***", "___", "- - -", "****", "- - - -"]) {
+		const html = renderMarkdown(`New in 1.2\n\n${rule}\n\nOlder note`);
+		assert.ok(html.includes('<hr class="jv-md-hr">'), `"${rule}" becomes an <hr>`);
+		assert.ok(
+			!html.includes(`<p class="jv-md-p">${rule}</p>`),
+			`"${rule}" is not left as a literal paragraph`
+		);
+	}
+});
+
+test("a bullet list is NOT mistaken for a thematic break (checked before the list branch)", () => {
+	const html = renderMarkdown("- one\n- two");
+	assert.ok(!html.includes("<hr"), "list stays a list, no stray rule");
+	assert.ok(html.includes("<ul") && html.includes("<li>one"), "renders the list items");
+});
+
+test("fewer than three markers is NOT a thematic break", () => {
+	assert.ok(!renderMarkdown("--").includes("<hr"), '"--" stays a paragraph');
+	assert.ok(!renderMarkdown("**").includes("<hr"), '"**" stays a paragraph');
+});
+
+test("a pipe table separator row is not swallowed by the thematic-break rule", () => {
+	const html = renderMarkdown(["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n"));
+	assert.ok(html.includes("<table"), "the table still renders");
+	assert.ok(!html.includes("<hr"), "the |---| separator did not become a rule");
+});

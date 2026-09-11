@@ -25,22 +25,18 @@
 				<span>You're all caught up.</span>
 			</div>
 
-			<!-- notes, newest first: version heading via {{ }} (never v-html), body
-			     via renderMarkdown (escape-first, XSS-safe) in a prose block -->
-			<div v-else class="flex flex-col gap-6">
-				<section v-for="note in notes" :key="note.version">
-					<div class="flex flex-wrap items-baseline gap-2">
-						<h3 class="text-base font-semibold text-ink-gray-9">
-							{{ note.version }}
-						</h3>
-						<span v-if="note.title" class="text-sm text-ink-gray-6">
-							{{ note.title }}
-						</span>
-					</div>
-					<div
-						class="prose prose-sm mt-1 max-w-none"
-						v-html="renderMarkdown(note.body)"
-					></div>
+			<!-- notes, newest first: version badge via {{ }} (never v-html), body
+			     via renderMarkdown (escape-first, XSS-safe). Styling is
+			     component-scoped on purpose: the app ships no Tailwind Typography
+			     plugin (so `prose` was inert here) and the chat's jv-md-* styles
+			     are scoped to Message.vue, so this panel styles the markup itself. -->
+			<div v-else class="wn-list">
+				<section v-for="note in notes" :key="note.version" class="wn-card">
+					<header class="wn-card-head">
+						<h3 class="wn-badge">{{ note.version }}</h3>
+						<span v-if="note.title" class="wn-card-title">{{ note.title }}</span>
+					</header>
+					<div class="wn-body" v-html="renderMarkdown(note.body)"></div>
 				</section>
 			</div>
 		</template>
@@ -113,3 +109,112 @@ watch(open, (isOpen) => {
 	if (isOpen) load();
 });
 </script>
+
+<style scoped>
+.wn-list {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+/* Each release is its own card, so stacked notes read as distinct entries. */
+.wn-card {
+	border: 1px solid var(--ink-gray-3, #e5e7eb);
+	border-radius: 12px;
+	padding: 16px 18px;
+	background: var(--surface-white, #fff);
+}
+
+.wn-card-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+/* Version as an accent pill (matches the update-gate badge). Kept an <h3> so
+   each release stays a screen-reader sub-heading under the dialog title. */
+.wn-badge {
+	display: inline-block;
+	margin: 0;
+	padding: 3px 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.2px;
+	color: #6e5cf6;
+	background: rgba(110, 92, 246, 0.12);
+}
+
+.wn-card-title {
+	font-size: 13px;
+	color: var(--ink-gray-6, #6b7280);
+}
+
+/* Markdown body. The renderer emits jv-md-* classes and bare <strong>/<em>/
+   <a>; style them here via :deep() since the v-html'd nodes carry no scope
+   attribute. */
+.wn-body {
+	font-size: 14px;
+	line-height: 1.6;
+	color: var(--ink-gray-7, #4b5563);
+}
+.wn-body :deep(.jv-md-p) {
+	margin: 0 0 8px;
+}
+.wn-body :deep(.jv-md-p:last-child) {
+	margin-bottom: 0;
+}
+/* A bold-only line is how notes label a section (e.g. "**✨ New**"); give it a
+   little air above so sections separate, and let the emphasis carry weight. */
+.wn-body :deep(strong) {
+	font-weight: 600;
+	color: var(--ink-gray-9, #171717);
+}
+.wn-body :deep(.jv-md-list + .jv-md-p) {
+	margin-top: 12px;
+}
+.wn-body :deep(.jv-md-list) {
+	margin: 4px 0 10px;
+	padding-left: 20px;
+	list-style: disc;
+}
+.wn-body :deep(ol.jv-md-list) {
+	list-style: decimal;
+}
+.wn-body :deep(.jv-md-list li) {
+	margin: 3px 0;
+}
+.wn-body :deep(.jv-md-list:last-child) {
+	margin-bottom: 0;
+}
+.wn-body :deep(.jv-md-h) {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--ink-gray-9, #171717);
+	margin: 14px 0 6px;
+}
+.wn-body :deep(.jv-md-hr) {
+	border: none;
+	border-top: 1px solid var(--ink-gray-3, #e5e7eb);
+	margin: 12px 0;
+}
+.wn-body :deep(.jv-md-code) {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 12.5px;
+	padding: 1px 5px;
+	border-radius: 5px;
+	background: var(--surface-gray-2, #f3f4f6);
+}
+.wn-body :deep(.jv-md-link) {
+	color: #6e5cf6;
+	text-decoration: underline;
+}
+.wn-body :deep(.jv-md-quote) {
+	margin: 8px 0;
+	padding-left: 10px;
+	border-left: 3px solid var(--ink-gray-3, #e5e7eb);
+	color: var(--ink-gray-6, #6b7280);
+}
+</style>
