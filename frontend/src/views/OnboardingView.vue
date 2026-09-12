@@ -732,7 +732,13 @@
 											:message="detailsFieldErrors.state"
 										/>
 									</div>
-									<div class="col-span-2 flex flex-col gap-1">
+									<!-- GSTIN is India-only (place-of-supply / GST invoice). Hidden for a
+										 foreign customer; the watcher on billingIsIndia also CLEARS any value
+										 so a stale GSTIN is never submitted for a non-India customer. -->
+									<div
+										v-if="billingIsIndia"
+										class="col-span-2 flex flex-col gap-1"
+									>
 										<FormControl
 											type="text"
 											variant="outline"
@@ -2925,6 +2931,16 @@ const stateOptions = [
 	...INDIAN_STATES.map((s) => ({ label: s, value: s })),
 ];
 const billingIsIndia = computed(() => isIndia(billing.fields.country.value || "India"));
+// GSTIN is an India-only identifier, so a foreign customer must never carry one.
+// Whenever the country becomes non-India — the user picking it, an ERP-prefill, or a
+// resumed snapshot — clear the value (so it is never submitted) and drop any stale
+// error. The field itself is hidden via v-if="billingIsIndia" in the template.
+watch(billingIsIndia, (isIndiaNow) => {
+	if (!isIndiaNow && billing.fields.gstin.value) {
+		billing.setUserValue("gstin", "");
+		detailsFieldErrors.gstin = "";
+	}
+});
 function stateError(v) {
 	const s = (v || "").trim();
 	if (!billingIsIndia.value) return s ? "" : "Enter your state or region."; // non-India: free-text, required
